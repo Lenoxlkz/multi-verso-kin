@@ -1,7 +1,7 @@
 {
   "id": "multi-verso-kin",
   "name": "Multi-verso Kin",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "apiVersion": 18,
   "entry": "plugin.js",
   "description": "Manga y manhwa en español de 4 fuentes: ZonaTMO (net y org) y ManhwaShot (ss y hot). Lector propio, búsqueda global, seguir leyendo y lectura sin conexión.",
@@ -46,7 +46,13 @@
       "label": "Abrir Multi-verso",
       "labelEn": "Open Multi-verse"
     },
-    "settingsIn": "both"
+    "settingsIn": "both",
+    "every": [
+      {
+        "ms": 1000,
+        "event": "tickDescarga"
+      }
+    ]
   },
   "section": {
     "label": "Multi-verso",
@@ -272,13 +278,6 @@
   },
   "signature": {
     "authorKey": "b0bc4e128df02f948d02cd452328983c10a7834a4b824cd6dfb9276b52330544",
-    "value": "853fe2f2cb914520402b83f0738c8a83a8f15ad83f7308ae13d0fbbf3d74efa6dc5305f9bb6bd642c9937247c2451eab4d825f37572bd5a2f02eb15fc6891300"
-  },
-  "theme": {
-    "accent": "#A78BFA",
-    "onAccent": "#140F24",
-    "background": "#100E17",
-    "surface": "#181526",
-    "highlight": "#ECEAF5"
+    "value": "d3e1762ad89f7b43155672915bc05a7bac3a5c2fb791caa6d6f5e6be4af6cc2ba3d941f277731812140b9643ea190dc593ea73545e7bdc37cf41225be4de5a0d"
   }
 }

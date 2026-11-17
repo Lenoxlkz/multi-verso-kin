@@ -24,6 +24,12 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.1
+
+- **Descargas que no estorban**: el motor baja unas páginas por turno (tics de 1-3 s) en cualquier ruta del plugin, no solo en Descargas; los toques nunca esperan un capítulo entero. Página lenta = reintento (hasta 3), ya no mata la descarga ni el temporizador.
+- **Barra con sección Inicio**: Inicio / Ajustes / Descargas, con la sección activa marcada según la ruta de verdad; tocar Inicio vuelve hacia la portada y tocar Ajustes entra de verdad a la configuración de cuentas.
+- **Temas de la app aplicados dentro del plugin**: se quitó el tema propio del plugin, así que el tema que elijas (los 8) tiñe también estas páginas; el violeta es «Manhwa Violeta».
+
 ## Novedades v2
 
 - **Velocidad**: caché local de portada, detalle, capítulos y búsquedas (la segunda visita pinta al instante), cargas en paralelo y plazo corto para los dominios gemelos para que no frenen nada.

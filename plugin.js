@@ -68,7 +68,7 @@ async function fetchJson(url, opts) {
 }
 var UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 function timeoutFor(src) {
-  return src === "zo" || src === "mh" ? 7e3 : 12e3;
+  return src === "zo" || src === "mh" ? 5e3 : 12e3;
 }
 var TTL = { list: 6e5, rows: 6e5, detail: 18e5, chapter: 3e5, search: 3e5 };
 function cacheKey(...parts) {
@@ -807,12 +807,12 @@ function saveDlState(s) {
   } catch {
   }
 }
-function isDownloaded(cr) {
-  const s = dlState();
+function isDownloaded(cr, state) {
+  const s = state || dlState();
   return Boolean(s.lista[cr]);
 }
-function isQueued(cr) {
-  const s = dlState();
+function isQueued(cr, state) {
+  const s = state || dlState();
   return s.cola.some((e) => e.cr === cr);
 }
 function dlHash(cr) {
@@ -871,9 +871,15 @@ function mimeOf(b64) {
   if (b64.startsWith("R0lGO")) return "image/gif";
   return "image/webp";
 }
-async function processQueue(budgetMs = 15e3, only = null) {
+var PAGE_BUDGET_MS = 1500;
+var PAGE_TIMEOUT_MS = 12e3;
+var MAX_FALLOS = 3;
+function dlMetaKey(cr) {
+  return "dlMeta:" + dlHash(cr);
+}
+async function processTick() {
   const s = dlState();
-  const entry = only || s.cola.find((e) => e.estado === "pendiente");
+  const entry = s.cola.find((e) => e.estado === "bajando") || s.cola.find((e) => e.estado === "pendiente");
   if (!entry) return { nothing: true };
   if (s.bytes >= DL_QUOTA) {
     entry.estado = "error";
@@ -882,54 +888,83 @@ async function processQueue(budgetMs = 15e3, only = null) {
     return { failed: entry };
   }
   const t0 = Date.now();
-  entry.estado = "bajando";
-  saveDlState(s);
+  const p = parseRef(entry.cr);
+  if (!p || p.kind !== "c") {
+    entry.estado = "error";
+    entry.err = "Referencia de capítulo desconocida.";
+    saveDlState(s);
+    return { failed: entry };
+  }
   try {
-    const p = parseRef(entry.cr);
-    if (!p || p.kind !== "c") throw kino.error("invalid_request", "capítulo desconocido");
-    const ch = await adapter2(p.src).chapter(p.src, p.a, p.b);
-    if (!ch.pages.length) throw new Error("El capítulo no tiene imágenes");
-    const key = dlHash(entry.cr);
-    let total = 0;
-    const mimes = [];
-    let written = 0;
-    for (let i = 0; i < ch.pages.length; i++) {
-      if (Date.now() - t0 > budgetMs) {
-        entry.estado = "pendiente";
-        entry.hecho = written;
-        saveDlState(s);
-        return { paused: entry };
-      }
-      const url = ch.pages[i];
-      const r = await kino.fetch(url, { timeoutMs: 9e3 });
-      const b64 = r.base64();
-      if (entry.hecho && i < entry.hecho) {
-        mimes.push(mimeOf(b64));
-        continue;
-      }
-      const mime = mimeOf(b64);
-      mimes.push(mime);
-      kino.storage.set("dl:" + key + ":" + i, b64);
-      total += b64.length;
-      written = i + 1;
-      if (total > CHAPTER_MAX) throw new Error("El capítulo pesa más de 2 MB: no cabe en la descarga");
+    if (entry.estado === "pendiente") {
+      const ch = await adapter2(p.src).chapter(p.src, p.a, p.b);
+      if (!ch.pages.length) throw new Error("El capítulo no tiene imágenes");
+      kino.storage.set(dlMetaKey(entry.cr), JSON.stringify({
+        urls: ch.pages,
+        number: ch.number || entry.number,
+        title: ch.title || entry.number,
+        direction: ch.direction || "ltr"
+      }));
+      entry.estado = "bajando";
+      entry.total = ch.pages.length;
+      entry.hecho = 0;
+      entry.mimes = [];
+      entry.fallos = 0;
+      saveDlState(s);
+      return { progress: entry };
     }
-    const meta = {
+    const rawMeta = kino.storage.get(dlMetaKey(entry.cr));
+    if (!rawMeta) throw new Error("Se perdieron los datos del capítulo: reintenta.");
+    const meta = JSON.parse(rawMeta);
+    while (Date.now() - t0 < PAGE_BUDGET_MS) {
+      const i = entry.hecho || 0;
+      if (i >= meta.urls.length) break;
+      let b64 = null;
+      try {
+        const r = await kino.fetch(meta.urls[i], { timeoutMs: PAGE_TIMEOUT_MS });
+        b64 = r.base64();
+        if (!b64) throw new Error("vacía");
+      } catch (e) {
+        entry.fallos = (entry.fallos || 0) + 1;
+        if (entry.fallos >= MAX_FALLOS) {
+          entry.estado = "error";
+          entry.err = "Página " + (i + 1) + ": " + String(e && e.message || "fallo de red").slice(0, 120);
+          saveDlState(s);
+          return { failed: entry };
+        }
+        saveDlState(s);
+        return { progress: entry };
+      }
+      entry.mimes[i] = mimeOf(b64);
+      kino.storage.set("dl:" + dlHash(entry.cr) + ":" + i, b64);
+      entry.hecho = i + 1;
+      entry.fallos = 0;
+      saveDlState(s);
+      if (entry.hecho * 1 >= meta.urls.length) break;
+    }
+    if ((entry.hecho || 0) < meta.urls.length) return { progress: entry };
+    const key = dlHash(entry.cr);
+    let bytes = 0;
+    for (let i = 0; i < meta.urls.length; i++) {
+      const pg = kino.storage.get("dl:" + key + ":" + i);
+      bytes += pg ? pg.length : 0;
+    }
+    if (bytes > CHAPTER_MAX) throw new Error("El capítulo pesa más de 2 MB: no cabe en la descarga");
+    kino.storage.set("dl:" + key, JSON.stringify({
       cr: entry.cr,
       mr: mangaRef(p.src, p.a),
       src: p.src,
       mangaSlug: p.a,
-      number: ch.number || entry.number,
-      title: ch.title || entry.number,
+      number: meta.number,
+      title: meta.title,
       mTitle: entry.mTitle || "",
       mPoster: entry.mPoster || "",
-      mimes,
-      pages: ch.pages.length,
-      direction: ch.direction,
+      mimes: entry.mimes,
+      pages: meta.urls.length,
+      direction: meta.direction,
       ts: Date.now()
-    };
-    const json = JSON.stringify(meta);
-    kino.storage.set("dl:" + key, json);
+    }));
+    kino.storage.remove(dlMetaKey(entry.cr));
     const s2 = dlState();
     s2.cola = s2.cola.filter((e) => e.cr !== entry.cr);
     s2.lista[entry.cr] = {
@@ -937,24 +972,28 @@ async function processQueue(budgetMs = 15e3, only = null) {
       src: p.src,
       slug: p.a,
       number: meta.number,
-      mTitle: meta.mTitle,
-      mPoster: meta.mPoster,
-      bytes: total,
-      pages: ch.pages.length,
-      direction: ch.direction,
+      mTitle: entry.mTitle || "",
+      mPoster: entry.mPoster || "",
+      bytes,
+      pages: meta.urls.length,
+      direction: meta.direction,
       ts: Date.now()
     };
-    s2.bytes += total;
+    s2.bytes += bytes;
     s2.terminadas = (s2.terminadas || 0) + 1;
     saveDlState(s2);
-    return { done: entry, bytes: total, pages: ch.pages.length, ms: Date.now() - t0 };
+    return { done: entry, bytes };
   } catch (e) {
     const s3 = dlState();
     const ent = s3.cola.find((x) => x.cr === entry.cr);
     if (ent) {
-      ent.estado = "error";
-      ent.err = String(e && e.message || "error").slice(0, 160);
+      ent.fallos = (ent.fallos || 0) + 1;
+      if (ent.fallos >= MAX_FALLOS) {
+        ent.estado = "error";
+        ent.err = String(e && e.message || "error").slice(0, 160);
+      }
       saveDlState(s3);
+      if (ent.estado !== "error") return { progress: ent };
     }
     return { failed: entry, err: String(e && e.message || "error") };
   }
@@ -1249,10 +1288,11 @@ function scaffold(title, titleEn, ctx, body, opts) {
     // slot bottomNavigationBar: una NavigationBar
     type: "navigationBar",
     items: [
+      { key: "home", icon: "home", label: "Inicio", labelEn: "Home" },
       { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" },
       { key: "descargas", icon: "download", label: "Descargas", labelEn: "Downloads" }
     ],
-    value: o.navValue || "ajustes",
+    value: o.navValue || "home",
     onChanged: "navBar"
   };
   return s;
@@ -1265,16 +1305,6 @@ function errorBox(msg, retryEvent) {
     { type: "errorState", icon: "error", title: "Algo falló", titleEn: "Something failed", text: String(msg).slice(0, 300) },
     { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: retryEvent || "reintentar" } }
   ] };
-}
-function floatBar() {
-  return {
-    type: "Card",
-    margin: { x: 12, y: 8 },
-    children: [{ type: "Row", gap: 8, padding: { x: 8, y: 4 }, children: [
-      { type: "Button", variant: "secondary", icon: "settings", labelText: "Ajustes", labelTextEn: "Settings", onPressed: { go: { screen: { route: "ajustes" } } }, fill: true, span: 6 },
-      { type: "Button", variant: "secondary", icon: "download", labelText: "Descargas", labelTextEn: "Downloads", onPressed: { go: { screen: { route: "descargas" } } }, fill: true, span: 6 }
-    ] }]
-  };
 }
 function floatFab() {
   return { type: "FloatingActionButton", icon: "search", labelText: "Buscar en las 4 fuentes", labelTextEn: "Search all 4 sources", onPressed: { go: { screen: { route: "buscar" } } }, fabPosition: "end" };
@@ -1316,9 +1346,9 @@ function viewMain(ctx) {
     if (!rows.length) kids.push(empty("Sin filas por ahora", "No rows yet"));
   }
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
-  const opts = { close: true };
+  const opts = { close: true, navValue: "home" };
   if (!state.hideBar) {
-    opts.bottomBar = floatBar();
+    opts.bottomBar = true;
     opts.fab = floatFab();
   }
   return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", onScroll: "scrMain", children: kids }, opts);
@@ -1342,7 +1372,7 @@ function viewBuscar(ctx) {
     }
     if (!n) kids.push(empty('Sin resultados para "' + q.slice(0, 40) + '"', 'No results for "' + q.slice(0, 40) + '"'));
   }
-  return scaffold("Buscar", "Search", ctx, { type: "SingleChildScrollView", children: kids }, {});
+  return scaffold("Buscar", "Search", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home", bottomBar: true });
 }
 function deviceCols(ctx) {
   const c = ctx.size && ctx.size.widthClass;
@@ -1351,15 +1381,16 @@ function deviceCols(ctx) {
   if (c === "medium") return 4;
   return 6;
 }
-function dlBadgeOf(cr) {
-  if (isDownloaded(cr)) return "ok";
-  if (isQueued(cr)) return "cola";
+function dlBadgeOf(cr, dlS) {
+  if (isDownloaded(cr, dlS)) return "ok";
+  if (isQueued(cr, dlS)) return "cola";
   return null;
 }
 function viewDetalle(ctx) {
   const { state, device, lang } = ctx;
   const d = state.detail;
   const en = lang === "en";
+  const dlS = dlState();
   if (state.busyDetail && !d) {
     return scaffold("Cargando", "Loading", ctx, { type: "Column", padding: 16, gap: 12, children: [
       { type: "Row", gap: 12, children: [{ type: "Skeleton", shape: "card", width: 120, height: 180 }, { type: "Column", gap: 8, flex: 1, children: [{ type: "Skeleton", shape: "line", height: 24 }, { type: "Skeleton", shape: "line", height: 16 }, { type: "Skeleton", shape: "line", height: 16 }] }] }
@@ -1401,7 +1432,7 @@ function viewDetalle(ctx) {
   const shown = state.chShow || 60;
   const visibles = d.chapters.slice(0, shown);
   const chList = visibles.map((c, i) => {
-    const badge = dlBadgeOf(c.r);
+    const badge = dlBadgeOf(c.r, dlS);
     return {
       type: "Row",
       key: "ch" + i,
@@ -1423,7 +1454,7 @@ function viewDetalle(ctx) {
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
     d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente", labelTextEn: "Load more from source", onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null
   ].filter(Boolean);
-  return scaffold(String(d.title).slice(0, 30), String(d.title).slice(0, 30), ctx, { type: "SingleChildScrollView", children: kids }, { share: device !== "tv" ? { label: en ? "Share" : "Compartir" } : void 0 });
+  return scaffold(String(d.title).slice(0, 30), String(d.title).slice(0, 30), ctx, { type: "SingleChildScrollView", children: kids }, { share: device !== "tv" ? { label: en ? "Share" : "Compartir" } : void 0, navValue: "home", bottomBar: true });
 }
 function viewLeer(ctx) {
   const { state } = ctx;
@@ -1498,7 +1529,7 @@ function viewLeer(ctx) {
     });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   }
-  return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, {});
+  return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, { navValue: "home", bottomBar: true });
 }
 function mb(bytes) {
   return (bytes / 1024 / 1024).toFixed(1);
@@ -1514,7 +1545,7 @@ function viewDescargas(ctx) {
     gap: 8,
     children: [
       { type: "Text", text: "Descargas para leer sin conexión", textEn: "Downloads for offline reading", style: "h4" },
-      { type: "Text", text: "Deja esta pantalla abierta mientras descarga: un capítulo por turno, unos segundos cada uno.", textEn: "Keep this screen open while it downloads: one chapter per turn, a few seconds each.", style: "body", color: "muted" },
+      { type: "Text", text: "Las descargas avanzan solas mientras uses el plugin, en la ruta que sea. Unas páginas por turno para no estorbar los toques.", textEn: "Downloads keep going while you use the plugin, on any route. A few pages per turn so taps stay snappy.", style: "body", color: "muted" },
       { type: "LinearProgressIndicator", value: Math.min(1, s.bytes / DL_QUOTA), labelText: mb(s.bytes) + " de " + mb(DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " capítulos", labelTextEn: mb(s.bytes) + " of " + mb(DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " chapters" }
     ]
   });
@@ -1528,7 +1559,7 @@ function viewDescargas(ctx) {
       gap: 8,
       padding: { x: 12, y: 4 },
       children: [
-        { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Cap. " + (e.number || "?") + (e.estado === "bajando" ? " (bajando…)" : ""), textEn: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Ch. " + (e.number || "?") + (e.estado === "bajando" ? " (down…)" : ""), style: "body", flex: 1 },
+        { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Cap. " + (e.number || "?") + (e.estado === "bajando" && e.total ? " (página " + ((e.hecho || 0) + 1) + " de " + e.total + ")" : ""), textEn: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Ch. " + (e.number || "?") + (e.estado === "bajando" && e.total ? " (page " + ((e.hecho || 0) + 1) + " of " + e.total + ")" : ""), style: "body", flex: 1 },
         { type: "IconButton", icon: "close", labelText: "Quitar de la cola", labelTextEn: "Remove from queue", onPressed: { event: "dlQuitarCola", arg: e.cr } }
       ]
     })) });
@@ -1587,7 +1618,7 @@ function viewDescargas(ctx) {
       });
     });
   }
-  return { type: "Scaffold", appBar: appBar("Descargas", "Downloads", ctx, {}), every: [{ ms: 1300, event: "tickDescarga" }], body: { type: "SingleChildScrollView", children: kids } };
+  return scaffold("Descargas", "Downloads", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "descargas", bottomBar: true });
 }
 function viewAjustes(ctx) {
   const kids = [
@@ -1603,9 +1634,9 @@ function viewAjustes(ctx) {
       span: 6,
       fill: true
     })) },
-    { type: "Text", text: "Un tema cambia el look de toda la app mientras lo tengas puesto; se quita en Ajustes ▸ Apariencia. El violeta de Multi-verso ya tiñe sus páginas por defecto.", textEn: "A theme changes the whole app look while it is on; remove it in Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 }
+    { type: "Text", text: "Un tema se aplica a TODA la app, también a estas páginas, mientras lo tengas puesto; se quita en Ajustes ▸ Apariencia. El violeta de Multi-verso es el tema «Manhwa Violeta».", textEn: "A theme applies to the WHOLE app, these pages included, while it is on; remove it in Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 }
   ];
-  return scaffold("Ajustes", "Settings", ctx, { type: "SingleChildScrollView", children: kids });
+  return scaffold("Ajustes", "Settings", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "ajustes", bottomBar: true });
 }
 async function screen(ctx) {
   const route = ctx.route && ctx.route.name || "main";
@@ -1640,8 +1671,13 @@ async function screenEvent(ctx) {
       return null;
     case "navBar": {
       const key = String(value || "");
-      if (key === "descargas") return { go: { screen: { route: "descargas" } } };
-      if (key === "ajustes") return { go: { screen: { route: "ajustes" } } };
+      const here = ctx.route && ctx.route.name || "main";
+      if (key === "home") {
+        if (here === "main") return { state: { hideBar: false, lastPos: 0 } };
+        return { route: { pop: true } };
+      }
+      if (key === "ajustes") return here === "ajustes" ? null : { route: { push: "ajustes" } };
+      if (key === "descargas") return here === "descargas" ? null : { route: { push: "descargas" } };
       return null;
     }
     case "scrMain": {
@@ -1810,14 +1846,15 @@ async function screenEvent(ctx) {
       };
     }
     case "tickDescarga": {
-      const s = dlState();
-      const pendiente = (s.cola || []).some((e) => e.estado === "pendiente");
-      if (!pendiente) return null;
-      const res = await processQueue(15e3);
-      const patch = { dl: dlState() };
-      if (res.done) return { state: patch };
-      if (res.failed) return { state: patch, toast: en ? "Failed: " + String(res.failed.err || "").slice(0, 80) : "Falló: " + String(res.failed.err || "").slice(0, 80) };
-      return { state: patch };
+      try {
+        const res = await processTick();
+        if (res.nothing) return null;
+        const patch = { dl: dlState() };
+        if (res.failed) return { state: patch, toast: en ? "Failed: " + String(res.entry && res.entry.err || res.err || "").slice(0, 80) : "Falló: " + String(res.entry && res.entry.err || res.err || "").slice(0, 80) };
+        return { state: patch };
+      } catch (e) {
+        return null;
+      }
     }
     case "pickImgs": {
       if (!hasFiles()) return { toast: en ? "Needs Kino 0.9.82+" : "Necesita Kino 0.9.82+" };
