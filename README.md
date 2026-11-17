@@ -24,6 +24,14 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2
+
+- **Velocidad**: caché local de portada, detalle, capítulos y búsquedas (la segunda visita pinta al instante), cargas en paralelo y plazo corto para los dominios gemelos para que no frenen nada.
+- **Salida real**: Atrás del sistema y el botón ‹ de la barra desapilan (y en la portada cierran); ninguna ruta queda atrapada.
+- **Colores por defecto**: el violeta de Multi-verso tiñe las páginas del plugin sin configurar nada; 8 temas de toda la app (Naranja, Ámbar, Violeta, Esmeralda, Índigo, Cian, Rosa y Lima) con botón para ponerlos.
+- **Barra de navegación inferior** (Ajustes + Descargas) y **botón flotante de búsqueda** a la derecha: al bajar el contenido se esconden y al subir vuelven.
+- **Descargas de capítulos**: botón de descarga a la derecha de cada capítulo, lote de 5/10/20/30 con selector (se recuerda), cola con progreso en vivo, reintentos, cuota de 14 MB y borrado. Se descargan las páginas tal cual las sirve el sitio; el lector sin conexión las muestra una a una (las que pesen más de ~150 KB, el límite de Kino para imágenes `data:`, se avisan).
+
 ## Requisitos de versión
 
 - `apiVersion` 18 → necesita **Kino 0.9.81 o más nuevo**.

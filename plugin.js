@@ -67,6 +67,49 @@ async function fetchJson(url, opts) {
   return { status, ok, body };
 }
 var UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+function timeoutFor(src) {
+  return src === "zo" || src === "mh" ? 7e3 : 12e3;
+}
+var TTL = { list: 6e5, rows: 6e5, detail: 18e5, chapter: 3e5, search: 3e5 };
+function cacheKey(...parts) {
+  return ("c:" + parts.join("|")).slice(0, 250);
+}
+function cacheGet(key, ttlMs) {
+  try {
+    const raw = kino.storage.get(key);
+    if (!raw) return null;
+    const e = JSON.parse(raw);
+    if (!e || typeof e.t !== "number" || !("d" in e)) return null;
+    if (Date.now() - e.t > ttlMs) return null;
+    return e.d;
+  } catch {
+    return null;
+  }
+}
+function cacheSet(key, data) {
+  try {
+    kino.storage.set(key, JSON.stringify({ t: Date.now(), d: data }));
+    pruneCache();
+  } catch {
+  }
+}
+function pruneCache() {
+  try {
+    const keys = kino.storage.keys().filter((k) => k.indexOf("c:") === 0);
+    if (keys.length <= 90) return;
+    const items = keys.map((k) => {
+      try {
+        const e = JSON.parse(kino.storage.get(k) || "null");
+        return { k, t: e && e.t || 0 };
+      } catch {
+        return { k, t: 0 };
+      }
+    });
+    items.sort((a, b) => a.t - b.t);
+    for (const it of items.slice(0, items.length - 90)) kino.storage.remove(it.k);
+  } catch {
+  }
+}
 function netError(e, what) {
   if (e && e.code) throw e;
   const msg = "No se pudo leer " + (what || "la fuente") + " (" + String(e && e.message || "red").slice(0, 60) + ")";
@@ -205,12 +248,12 @@ async function list(src, { page = 1, order = "new", search: search4, genreId, de
   if (genreId) params.genres = String(genreId);
   if (demography) params.demography = String(demography);
   if (flags) params.flags = String(flags);
-  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO");
   return listingItems(src, body.data);
 }
 async function tops(src, { page = 1, postsPerPage = 24 } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO (populares)");
   return listingItems(src, body.data);
 }
@@ -218,7 +261,7 @@ async function search(src, q, { page = 1, postsPerPage = 24 } = {}) {
   return list(src, { page, order: "score", search: q, postsPerPage });
 }
 async function detail(src, slug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error || !body.data) {
     const e = new Error("HTTP " + status);
     if (status === 404) {
@@ -258,7 +301,7 @@ function demographyName(ids) {
   return nameOf(DEMOG, ids);
 }
 async function chapters(src, slug, { page = 1, postsPerPage = 50, order = "desc" } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "los capítulos");
   const d = body.data || {};
   const items = (Array.isArray(d.items) ? d.items : []).map((c) => ({
@@ -273,7 +316,7 @@ async function chapters(src, slug, { page = 1, postsPerPage = 50, order = "desc"
   return { items, next: pag.has_next ? String(Number(pag.current_page || 1) + 1) : null, total: pag.total };
 }
 async function chapter(src, slug, chapterSlug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error || !body.data || !body.data.chapter) {
     const e = new Error("HTTP " + status);
     if (status === 404) {
@@ -406,7 +449,7 @@ function asItems(src, cards) {
   return cards.map((c) => toItem(src, { slug: c.slug, title: c.title, poster: c.cover })).filter(Boolean);
 }
 async function search2(src, q) {
-  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads() });
+  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || !Array.isArray(body.results)) return { items: [], next: null, degraded: true };
   return {
     items: body.results.slice(0, 30).map((r) => toItem(src, { slug: r.slug, title: r.title, poster: r.cover })).filter(Boolean),
@@ -416,18 +459,18 @@ async function search2(src, q) {
 async function list2(src, { page = 1, estado } = {}) {
   const path = page > 1 ? "/explorar/page/" + page + "/" : "/explorar/";
   const url = join(src, path + (estado ? "?estado=" + encodeURIComponent(estado) : ""));
-  const r = await fetchText(url, { heads: heads() });
+  const r = await fetchText(url, { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "Manhwa");
   const cards = cardsOf(r.text, 30);
   return { items: asItems(src, cards), next: cards.length >= 15 ? String(page + 1) : null };
 }
 async function latest(src) {
-  const r = await fetchText(join(src, "/"), { heads: heads() });
+  const r = await fetchText(join(src, "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "la portada de Manhwa");
   return { items: asItems(src, cardsOf(r.text, 24)), next: null };
 }
 async function detail2(src, slug) {
-  const r = await fetchText(join(src, "/manga/" + slug + "/"), { heads: heads() });
+  const r = await fetchText(join(src, "/manga/" + slug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -474,7 +517,7 @@ function capNum(s) {
   return Number.isFinite(n) ? n : NaN;
 }
 async function chapter2(src, slug, chapterSlug) {
-  const r = await fetchText(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads() });
+  const r = await fetchText(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -742,11 +785,236 @@ var THEMES = [
   }
 ];
 
-// src/screen.js
+// src/downloads.js
 var adapter2 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : manhwa_exports;
+var KEY_STATE = "descargas";
+var DL_QUOTA = 14 * 1024 * 1024;
+var CHAPTER_MAX = 19e5;
+function dlState() {
+  try {
+    const raw = kino.storage.get(KEY_STATE);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s && Array.isArray(s.cola) && s.lista && typeof s.bytes === "number") return s;
+    }
+  } catch {
+  }
+  return { cola: [], lista: {}, bytes: 0, terminadas: 0 };
+}
+function saveDlState(s) {
+  try {
+    kino.storage.set(KEY_STATE, JSON.stringify(s));
+  } catch {
+  }
+}
+function isDownloaded(cr) {
+  const s = dlState();
+  return Boolean(s.lista[cr]);
+}
+function isQueued(cr) {
+  const s = dlState();
+  return s.cola.some((e) => e.cr === cr);
+}
+function dlHash(cr) {
+  let h = 5381;
+  for (let i = 0; i < cr.length; i++) h = (h << 5) + h + cr.charCodeAt(i) >>> 0;
+  return h.toString(16);
+}
+function enqueue(cr, meta) {
+  const s = dlState();
+  if (s.lista[cr] || s.cola.some((e) => e.cr === cr)) return false;
+  s.cola.push({
+    cr,
+    src: meta.src,
+    slug: meta.slug,
+    number: meta.number || "",
+    mTitle: meta.mTitle || "",
+    mPoster: meta.mPoster || "",
+    estado: "pendiente",
+    addedAt: Date.now()
+  });
+  while (s.cola.length > 60) s.cola.shift();
+  saveDlState(s);
+  return true;
+}
+function enqueueMany(refs, metaOf) {
+  let n = 0;
+  for (const cr of refs) {
+    if (enqueue(cr, metaOf(cr))) n++;
+  }
+  return n;
+}
+function removeFromQueue(cr) {
+  const s = dlState();
+  s.cola = s.cola.filter((e) => e.cr !== cr);
+  saveDlState(s);
+}
+function removeDl(cr) {
+  const s = dlState();
+  const e = s.lista[cr];
+  if (!e) return false;
+  dropKeys(e.key, e.pages);
+  s.bytes = Math.max(0, s.bytes - (e.bytes || 0));
+  delete s.lista[cr];
+  saveDlState(s);
+  return true;
+}
+function clearQueue() {
+  const s = dlState();
+  s.cola = s.cola.filter((e) => e.estado === "bajando");
+  saveDlState(s);
+}
+function mimeOf(b64) {
+  if (b64.startsWith("UklGR")) return "image/webp";
+  if (b64.startsWith("iVBOR")) return "image/png";
+  if (b64.startsWith("/9j/")) return "image/jpeg";
+  if (b64.startsWith("R0lGO")) return "image/gif";
+  return "image/webp";
+}
+async function processQueue(budgetMs = 15e3, only = null) {
+  const s = dlState();
+  const entry = only || s.cola.find((e) => e.estado === "pendiente");
+  if (!entry) return { nothing: true };
+  if (s.bytes >= DL_QUOTA) {
+    entry.estado = "error";
+    entry.err = "Cuota llena: borra capítulos para seguir.";
+    saveDlState(s);
+    return { failed: entry };
+  }
+  const t0 = Date.now();
+  entry.estado = "bajando";
+  saveDlState(s);
+  try {
+    const p = parseRef(entry.cr);
+    if (!p || p.kind !== "c") throw kino.error("invalid_request", "capítulo desconocido");
+    const ch = await adapter2(p.src).chapter(p.src, p.a, p.b);
+    if (!ch.pages.length) throw new Error("El capítulo no tiene imágenes");
+    const key = dlHash(entry.cr);
+    let total = 0;
+    const mimes = [];
+    let written = 0;
+    for (let i = 0; i < ch.pages.length; i++) {
+      if (Date.now() - t0 > budgetMs) {
+        entry.estado = "pendiente";
+        entry.hecho = written;
+        saveDlState(s);
+        return { paused: entry };
+      }
+      const url = ch.pages[i];
+      const r = await kino.fetch(url, { timeoutMs: 9e3 });
+      const b64 = r.base64();
+      if (entry.hecho && i < entry.hecho) {
+        mimes.push(mimeOf(b64));
+        continue;
+      }
+      const mime = mimeOf(b64);
+      mimes.push(mime);
+      kino.storage.set("dl:" + key + ":" + i, b64);
+      total += b64.length;
+      written = i + 1;
+      if (total > CHAPTER_MAX) throw new Error("El capítulo pesa más de 2 MB: no cabe en la descarga");
+    }
+    const meta = {
+      cr: entry.cr,
+      mr: mangaRef(p.src, p.a),
+      src: p.src,
+      mangaSlug: p.a,
+      number: ch.number || entry.number,
+      title: ch.title || entry.number,
+      mTitle: entry.mTitle || "",
+      mPoster: entry.mPoster || "",
+      mimes,
+      pages: ch.pages.length,
+      direction: ch.direction,
+      ts: Date.now()
+    };
+    const json = JSON.stringify(meta);
+    kino.storage.set("dl:" + key, json);
+    const s2 = dlState();
+    s2.cola = s2.cola.filter((e) => e.cr !== entry.cr);
+    s2.lista[entry.cr] = {
+      key,
+      src: p.src,
+      slug: p.a,
+      number: meta.number,
+      mTitle: meta.mTitle,
+      mPoster: meta.mPoster,
+      bytes: total,
+      pages: ch.pages.length,
+      direction: ch.direction,
+      ts: Date.now()
+    };
+    s2.bytes += total;
+    s2.terminadas = (s2.terminadas || 0) + 1;
+    saveDlState(s2);
+    return { done: entry, bytes: total, pages: ch.pages.length, ms: Date.now() - t0 };
+  } catch (e) {
+    const s3 = dlState();
+    const ent = s3.cola.find((x) => x.cr === entry.cr);
+    if (ent) {
+      ent.estado = "error";
+      ent.err = String(e && e.message || "error").slice(0, 160);
+      saveDlState(s3);
+    }
+    return { failed: entry, err: String(e && e.message || "error") };
+  }
+}
+function readDlMeta(cr) {
+  const s = dlState();
+  const e = s.lista[cr];
+  if (!e) return null;
+  try {
+    const raw = kino.storage.get("dl:" + e.key);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    return {
+      offline: "dl",
+      ref: cr,
+      mr: d.mr,
+      key: e.key,
+      mimes: d.mimes || [],
+      total: d.pages || (d.mimes ? d.mimes.length : 0),
+      number: d.number,
+      title: d.title,
+      mTitle: d.mTitle,
+      mPoster: d.mPoster,
+      direction: d.direction || "ltr",
+      prev: null,
+      next: null,
+      pages: []
+    };
+  } catch {
+    return null;
+  }
+}
+function readDlPage(meta, page) {
+  try {
+    const b64 = kino.storage.get("dl:" + meta.key + ":" + (page - 1));
+    if (!b64) return null;
+    return { b64, mime: meta.mimes && meta.mimes[page - 1] || "image/webp" };
+  } catch {
+    return null;
+  }
+}
+function dropKeys(key, pages) {
+  try {
+    kino.storage.remove("dl:" + key);
+  } catch {
+  }
+  for (let i = 0; i < (pages || 0); i++) {
+    try {
+      kino.storage.remove("dl:" + key + ":" + i);
+    } catch {
+    }
+  }
+}
+
+// src/screen.js
+var adapter3 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : manhwa_exports;
 var hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 var hasFiles = () => typeof kino.files === "object" && kino.files && typeof kino.files.pick === "function";
 var hasConvert = () => typeof kino.crypto === "object" && kino.crypto && typeof kino.crypto.convert === "function";
+var BATCHES = [5, 10, 20, 30];
 function card(src, slug, title, poster) {
   return {
     id: (src + "-" + String(slug)).slice(0, 120),
@@ -765,6 +1033,18 @@ function expandOne(c) {
   const parsed = parseRef(c.s);
   if (!parsed) return null;
   return card(parsed.src, parsed.a, c.t, c.p);
+}
+function errText(e) {
+  const codes = {
+    not_found: "No encontré eso en la fuente (puede que se haya movido de sitio).",
+    unavailable: "La fuente no respondió: prueba otra vez o cambia de fuente.",
+    rate_limited: "La fuente está pidiendo calma: espera unos segundos.",
+    invalid_request: "Esa referencia ya no vale: vuelve a buscar el título."
+  };
+  const code = e && e.code ? e.code : "";
+  if (codes[code]) return codes[code];
+  if (e && e.userMessage) return String(e.userMessage);
+  return "No se pudo cargar: prueba otra vez.";
 }
 var PROG_KEY = "leyendo";
 function storageProgress() {
@@ -824,115 +1104,39 @@ async function readProgress(mr) {
   const d = all[mr];
   return d && d.cr ? { cr: d.cr, n: d.n || "" } : null;
 }
-async function loadDetail(ref) {
-  const p = parseRef(ref);
-  if (!p || p.kind !== "m") throw kino.error("invalid_request", "referencia de manga desconocida");
-  const a = adapter2(p.src);
-  const d = await a.detail(p.src, p.a);
-  let chapters2 = d.chapters || [];
-  let next = null;
-  if (SOURCES[p.src].kind === "zonatmo") {
-    const c = await a.chapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" });
-    chapters2 = c.items;
-    next = c.next;
-  }
-  return {
-    src: p.src,
-    slug: p.a,
-    title: d.title,
-    overview: d.overview,
-    poster: d.poster,
-    genres: d.genres || [],
-    status: d.statusName,
-    demography: d.demographyName,
-    score: d.score,
-    total: d.totalChapters,
-    chapters: chapters2.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title })),
-    next,
-    adult: d.adult
-  };
+function rowSpecs() {
+  return [
+    { id: "zt-new", src: "zt", title: "ZonaTMO · Actualizados", titleEn: "ZonaTMO · Updated", params: { page: 1, order: "new", postsPerPage: 12 }, pop: "zt:new" },
+    { id: "zt-pop", src: "zt", title: "ZonaTMO · Lo más visto", titleEn: "ZonaTMO · Most read", params: { tops: true, page: 1, postsPerPage: 12 }, pop: "zt:pop" },
+    { id: "ms-new", src: "ms", title: "ManhwaSS · Últimas actualizaciones", titleEn: "ManhwaSS · Latest", params: { latest: true }, pop: "ms:latest" },
+    { id: "ms-emi", src: "ms", title: "ManhwaSS · En emisión", titleEn: "ManhwaSS · Ongoing", params: { page: 1, estado: "on-going" }, pop: "ms:on-going" },
+    { id: "zt-top", src: "zt", title: "ZonaTMO · Mejor valorados", titleEn: "ZonaTMO · Top rated", params: { page: 1, order: "score", postsPerPage: 12 }, pop: "zt:score" },
+    { id: "ms-end", src: "ms", title: "ManhwaSS · Completados", titleEn: "ManhwaSS · Completed", params: { page: 1, estado: "end" }, pop: "ms:end" }
+  ];
 }
-async function loadChapter(ref, args) {
-  const p = parseRef(ref);
-  if (!p || p.kind !== "c") throw kino.error("invalid_request", "referencia de capítulo desconocida");
-  const a = adapter2(p.src);
-  const c = await a.chapter(p.src, p.a, p.b);
-  return {
-    ref,
-    src: p.src,
-    mangaSlug: p.a,
-    mr: mangaRef(p.src, p.a),
-    pages: c.pages,
-    number: c.number,
-    title: c.title,
-    direction: c.direction,
-    prev: c.prev ? chapterRef(p.src, p.a, c.prev) : null,
-    next: c.next ? chapterRef(p.src, p.a, c.next) : null,
-    total: c.pages.length,
-    mTitle: args && args.t ? args.t : void 0,
-    mPoster: args && args.p ? args.p : void 0
-  };
-}
-function errText(e) {
-  const codes = {
-    not_found: "No encontré eso en la fuente (puede que se haya movido de sitio).",
-    unavailable: "La fuente no respondió: prueba otra vez o cambia de fuente.",
-    rate_limited: "La fuente está pidiendo calma: espera unos segundos.",
-    invalid_request: "Esa referencia ya no vale: vuelve a buscar el título."
-  };
-  const code = e && e.code ? e.code : "";
-  if (codes[code]) return codes[code];
-  if (e && e.userMessage) return String(e.userMessage);
-  return "No se pudo cargar: prueba otra vez.";
-}
-async function handleOpen(ctx) {
-  const { route } = ctx;
-  const args = route && (route.args || route.params) || null;
-  if (args && args.r && args.m) {
-    try {
-      const chapter3 = await loadChapter(args.r, { t: args.t, p: args.p });
-      return { route: { push: "leer", params: { r: args.r } }, state: { chapter: chapter3, imgPage: null, img: null, imgError: null } };
-    } catch (e) {
-      return { route: { push: "buscar" }, state: { error: errText(e) } };
-    }
-  }
-  if (args && args.r) {
-    try {
-      const detail3 = await loadDetail(args.r);
-      const prog = await readProgress(args.r);
-      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail3, detailRef: args.r, prog, error: null } };
-    } catch (e) {
-      return { route: { push: "buscar" }, state: { error: errText(e) } };
-    }
-  }
+function rowsFromCache() {
   const rows = [];
-  const settled = await Promise.allSettled([homeRowsZt(), homeRowsMs(), progressEntries()]);
-  for (const s of settled) if (s.status === "fulfilled" && s.value) rows.push(...s.value);
-  return { state: { rows, done: true, error: null } };
-}
-async function homeRowsZt() {
-  try {
-    const rec = await list("zt", { page: 1, order: "new", postsPerPage: 12 });
-    const pop = await tops("zt", { page: 1, postsPerPage: 12 });
-    const out = [];
-    if (rec.items.length) out.push({ id: "zt-new", title: "ZonaTMO · Actualizados", titleEn: "ZonaTMO · Updated", items: rec.items.slice(0, 12).map(compactCard) });
-    if (pop.items.length) out.push({ id: "zt-pop", title: "ZonaTMO · Lo más visto", titleEn: "ZonaTMO · Most read", items: pop.items.slice(0, 12).map(compactCard) });
-    return out;
-  } catch {
-    return [];
+  for (const spec of rowSpecs()) {
+    const items = cacheGet(cacheKey("rows", spec.id), TTL.rows);
+    if (items && items.length) rows.push({ id: spec.id, title: spec.title, titleEn: spec.titleEn, items });
   }
+  return rows;
 }
-async function homeRowsMs() {
-  try {
-    const rec = await latest("ms");
-    const emi = await list2("ms", { page: 1, estado: "on-going" });
-    const out = [];
-    if (rec.items.length) out.push({ id: "ms-new", title: "ManhwaSS · Últimas actualizaciones", titleEn: "ManhwaSS · Latest", items: rec.items.slice(0, 12).map(compactCard) });
-    if (emi.items.length) out.push({ id: "ms-emi", title: "ManhwaSS · En emisión", titleEn: "ManhwaSS · Ongoing", items: emi.items.slice(0, 12).map(compactCard) });
-    return out;
-  } catch {
-    return [];
-  }
+async function fetchOneRow(spec) {
+  const a = adapter3(spec.src);
+  let res;
+  if (spec.params.tops) res = await a.tops(spec.src, { page: spec.params.page, postsPerPage: spec.params.postsPerPage });
+  else if (spec.params.latest) res = await a.latest(spec.src);
+  else res = await a.list(spec.src, spec.params);
+  const items = res.items.slice(0, 12).map(compactCard);
+  if (items.length) cacheSet(cacheKey("rows", spec.id), items);
+  return { id: spec.id, title: spec.title, titleEn: spec.titleEn, ref: spec.pop, items };
+}
+async function fetchRows() {
+  const settled = await Promise.allSettled(rowSpecs().map(fetchOneRow));
+  const rows = [];
+  for (const r of settled) if (r.status === "fulfilled" && r.value.items.length) rows.push(r.value);
+  return rows;
 }
 async function progressEntries() {
   const out = [];
@@ -960,72 +1164,164 @@ async function progressEntries() {
       out.push({ r: d.cr, m: mr, t: "", p: "", b: d.n ? "Cap. " + d.n : "" });
     }
   }
-  return out.length ? [{ id: "seguir-screen", title: "Seguir leyendo", titleEn: "Keep reading", items: out.map((x) => ({ r: x.r, m: x.m, t: x.t, p: x.p, b: x.b })) }] : [];
+  return out.length ? [{ id: "seguir-screen", title: "Seguir leyendo", titleEn: "Keep reading", items: out }] : [];
+}
+async function loadDetail(ref, { skipCache = false } = {}) {
+  const p = parseRef(ref);
+  if (!p || p.kind !== "m") throw kino.error("invalid_request", "referencia de manga desconocida");
+  if (!skipCache) {
+    const cached = cacheGet(cacheKey("det", ref), TTL.detail);
+    if (cached && cached.title) return cached;
+  }
+  const a = adapter3(p.src);
+  let d, chapters2 = [], next = null;
+  if (SOURCES[p.src].kind === "zonatmo") {
+    const [dRes, cRes] = await Promise.allSettled([a.detail(p.src, p.a), a.chapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" })]);
+    if (dRes.status === "rejected") throw dRes.reason;
+    d = dRes.value;
+    if (cRes.status === "fulfilled") {
+      chapters2 = cRes.value.items;
+      next = cRes.value.next;
+    }
+  } else {
+    d = await a.detail(p.src, p.a);
+    chapters2 = d.chapters || [];
+  }
+  const det = {
+    src: p.src,
+    slug: p.a,
+    title: d.title,
+    overview: d.overview,
+    poster: d.poster,
+    genres: d.genres || [],
+    status: d.statusName,
+    demography: d.demographyName,
+    score: d.score,
+    total: d.totalChapters,
+    chapters: chapters2.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title })),
+    next,
+    adult: d.adult
+  };
+  cacheSet(cacheKey("det", ref), det);
+  return det;
+}
+async function loadChapter(ref, args, { skipCache = false } = {}) {
+  const p = parseRef(ref);
+  if (!p || p.kind !== "c") throw kino.error("invalid_request", "referencia de capítulo desconocida");
+  if (!skipCache) {
+    const cached = cacheGet(cacheKey("ch", ref), TTL.chapter);
+    if (cached && cached.pages && cached.pages.length) return withChapterMeta(cached, args);
+  }
+  const a = adapter3(p.src);
+  const c = await a.chapter(p.src, p.a, p.b);
+  const data = {
+    ref,
+    src: p.src,
+    mangaSlug: p.a,
+    mr: mangaRef(p.src, p.a),
+    pages: c.pages,
+    number: c.number,
+    title: c.title,
+    direction: c.direction,
+    prev: c.prev ? chapterRef(p.src, p.a, c.prev) : null,
+    next: c.next ? chapterRef(p.src, p.a, c.next) : null,
+    total: c.pages.length
+  };
+  cacheSet(cacheKey("ch", ref), data);
+  return withChapterMeta(data, args);
+}
+function withChapterMeta(c, args) {
+  return { ...c, mTitle: args && args.t ? args.t : c.mTitle, mPoster: args && args.p ? args.p : c.mPoster };
 }
 function appBar(title, titleEn, ctx, opts) {
   const o = opts || {};
-  const leading = o.close ? { type: "IconButton", icon: "close", labelText: "Cerrar", labelTextEn: "Close", onPressed: { close: true } } : { type: "IconButton", icon: "arrow_back", labelText: "Atrás", labelTextEn: "Back", onPressed: { event: "atras" } };
+  const onMain = o.close;
+  const leading = onMain ? { type: "IconButton", icon: "close", labelText: "Cerrar", labelTextEn: "Close", onPressed: { close: true } } : { type: "IconButton", icon: "arrow_back", labelText: "Atrás", labelTextEn: "Back", onPressed: { event: "atras" } };
   const actions = [];
   if (o.share) actions.push({ type: "IconButton", icon: "share", labelText: "Compartir", labelTextEn: "Share", onPressed: "share" });
-  if (o.search) actions.push({ type: "IconButton", icon: "search", labelText: "Buscar", labelTextEn: "Search", onPressed: { go: { screen: { route: "buscar" } } } });
   return { type: "AppBar", mergeWithKinoBar: true, dense: true, title, titleEn, leading, actions };
 }
 function scaffold(title, titleEn, ctx, body, opts) {
   const o = opts || {};
-  return { type: "Scaffold", appBar: appBar(title, titleEn, ctx, o), onBack: o.onBack, body };
+  const s = { type: "Scaffold", appBar: appBar(title, titleEn, ctx, o), body };
+  if (o.fab) s.floatingActionButton = o.fab;
+  if (o.bottomBar) s.bottomNavigationBar = {
+    // slot bottomNavigationBar: una NavigationBar
+    type: "navigationBar",
+    items: [
+      { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" },
+      { key: "descargas", icon: "download", label: "Descargas", labelEn: "Downloads" }
+    ],
+    value: o.navValue || "ajustes",
+    onChanged: "navBar"
+  };
+  return s;
 }
 function empty(text, en) {
   return { type: "emptyState", icon: "magic", title: text, titleEn: en || text };
 }
-function errorBox(msg) {
+function errorBox(msg, retryEvent) {
   return { type: "Column", gap: 12, padding: 16, children: [
     { type: "errorState", icon: "error", title: "Algo falló", titleEn: "Something failed", text: String(msg).slice(0, 300) },
-    { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" } }
+    { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: retryEvent || "reintentar" } }
   ] };
+}
+function floatBar() {
+  return {
+    type: "Card",
+    margin: { x: 12, y: 8 },
+    children: [{ type: "Row", gap: 8, padding: { x: 8, y: 4 }, children: [
+      { type: "Button", variant: "secondary", icon: "settings", labelText: "Ajustes", labelTextEn: "Settings", onPressed: { go: { screen: { route: "ajustes" } } }, fill: true, span: 6 },
+      { type: "Button", variant: "secondary", icon: "download", labelText: "Descargas", labelTextEn: "Downloads", onPressed: { go: { screen: { route: "descargas" } } }, fill: true, span: 6 }
+    ] }]
+  };
+}
+function floatFab() {
+  return { type: "FloatingActionButton", icon: "search", labelText: "Buscar en las 4 fuentes", labelTextEn: "Search all 4 sources", onPressed: { go: { screen: { route: "buscar" } } }, fabPosition: "end" };
 }
 function viewMain(ctx) {
   const { state } = ctx;
   const kids = [];
-  kids.push({
-    type: "Row",
-    wrap: true,
-    gap: 8,
-    padding: { x: 16, y: 8 },
-    children: [
-      { type: "Button", variant: "primary", icon: "search", labelText: "Buscar en las 4 fuentes", labelTextEn: "Search all 4 sources", onPressed: { go: { screen: { route: "buscar" } } }, span: 6, fill: true },
-      { type: "Button", variant: "secondary", icon: "download", labelText: "Sin conexión", labelTextEn: "Offline", onPressed: { go: { screen: { route: "offline" } } }, span: 3, fill: true },
-      { type: "Button", variant: "secondary", icon: "settings", labelText: "Ajustes", labelTextEn: "Settings", onPressed: { go: { screen: { route: "ajustes" } } }, span: 3, fill: true }
-    ]
-  });
-  if (state.error) kids.push({ type: "Text", text: String(state.error), color: "error", padding: { x: 16 } });
-  if (!state.done && !state.rows) {
+  let rows = state.rows;
+  let loading = false;
+  if (!rows || !rows.length) {
+    rows = rowsFromCache();
+    loading = !state.done && !rows.length;
+  }
+  if (loading) {
     kids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "Skeleton", shape: "card", height: 200 },
       { type: "Skeleton", shape: "card", height: 200 }
     ] });
-    return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", children: kids }, { close: true });
+  } else {
+    for (const row of rows) {
+      const isProgress = row.items && row.items.length && row.items[0].s === void 0;
+      kids.push({
+        type: "titleRail",
+        title: row.title || "",
+        titleEn: row.titleEn,
+        items: (row.items || []).map((x) => isProgress ? {
+          id: ("seg-" + String(x.r)).slice(0, 110).replace(/[^A-Za-z0-9._~-]/g, "_"),
+          ref: String(x.m || x.r),
+          title: x.t || "Seguir leyendo",
+          kind: "movie",
+          poster: x.p || void 0,
+          badges: x.b ? [String(x.b).slice(0, 20)] : void 0,
+          lang: "es",
+          open: { screen: { args: { r: x.r, m: x.m, t: x.t, p: x.p } } }
+        } : expandOne(x)).filter(Boolean),
+        size: "small"
+      });
+    }
+    if (!rows.length) kids.push(empty("Sin filas por ahora", "No rows yet"));
   }
-  for (const row of state.rows || []) {
-    const isProgress = row.items && row.items.length && row.items[0].s === void 0;
-    kids.push({
-      type: "titleRail",
-      title: row.title || "",
-      titleEn: row.titleEn,
-      items: (row.items || []).map((x) => isProgress ? {
-        id: ("seg-" + String(x.r)).slice(0, 110).replace(/[^A-Za-z0-9._~-]/g, "_"),
-        ref: String(x.m || x.r),
-        title: x.t || "Seguir leyendo",
-        kind: "movie",
-        poster: x.p || void 0,
-        badges: x.b ? [String(x.b).slice(0, 20)] : void 0,
-        lang: "es",
-        open: { screen: { args: { r: x.r, m: x.m, t: x.t, p: x.p } } }
-      } : expandOne(x)).filter(Boolean),
-      size: "small"
-    });
+  if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
+  const opts = { close: true };
+  if (!state.hideBar) {
+    opts.bottomBar = floatBar();
+    opts.fab = floatFab();
   }
-  if (!(state.rows || []).length) kids.push(empty("Sin filas por ahora", "No rows yet"));
-  return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", children: kids }, { close: true });
+  return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", onScroll: "scrMain", children: kids }, opts);
 }
 function viewBuscar(ctx) {
   const { state } = ctx;
@@ -1041,7 +1337,7 @@ function viewBuscar(ctx) {
     for (const g of state.results) {
       if (!g.items.length) continue;
       n += g.items.length;
-      kids.push({ type: "Text", text: SOURCES[g.src].name, style: "h4", padding: { x: 16, y: 8 } });
+      kids.push({ type: "Text", text: SOURCES[g.src].name, style: "h4", color: "accent", padding: { x: 16, y: 8 } });
       kids.push({ type: "titleGrid", items: g.items.map(expandOne).filter(Boolean), columns: deviceCols(ctx) });
     }
     if (!n) kids.push(empty('Sin resultados para "' + q.slice(0, 40) + '"', 'No results for "' + q.slice(0, 40) + '"'));
@@ -1055,21 +1351,31 @@ function deviceCols(ctx) {
   if (c === "medium") return 4;
   return 6;
 }
+function dlBadgeOf(cr) {
+  if (isDownloaded(cr)) return "ok";
+  if (isQueued(cr)) return "cola";
+  return null;
+}
 function viewDetalle(ctx) {
   const { state, device, lang } = ctx;
   const d = state.detail;
-  if (state.busyDetail && !d) return scaffold("Cargando", "Loading", ctx, { type: "Column", padding: 16, children: [{ type: "Skeleton", shape: "card", width: 400, height: 200 }] });
-  if (!d) return scaffold("Detalle", "Detail", ctx, errorBox(state.error || "Faltan datos"));
   const en = lang === "en";
+  if (state.busyDetail && !d) {
+    return scaffold("Cargando", "Loading", ctx, { type: "Column", padding: 16, gap: 12, children: [
+      { type: "Row", gap: 12, children: [{ type: "Skeleton", shape: "card", width: 120, height: 180 }, { type: "Column", gap: 8, flex: 1, children: [{ type: "Skeleton", shape: "line", height: 24 }, { type: "Skeleton", shape: "line", height: 16 }, { type: "Skeleton", shape: "line", height: 16 }] }] }
+    ] }, {});
+  }
+  if (!d) return scaffold("Detalle", "Detail", ctx, errorBox(state.error || "Faltan datos"));
   const header = {
     type: "Row",
     crossAxisAlignment: "start",
     gap: 16,
     padding: 16,
     children: [
-      { type: "Image", url: d.poster, aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "box", color: "surfaceVariant", width: 120, height: 200 } },
+      { type: "Image", url: d.poster, aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "box", color: "surfaceVariant", width: 120, height: 160 } },
       { type: "Column", flex: 1, gap: 8, children: [
         { type: "Text", text: d.title, style: "h3" },
+        { type: "Text", text: SOURCES[d.src] ? SOURCES[d.src].name : "", style: "body", color: "primary" },
         d.status ? { type: "Text", text: d.status + (d.demography ? " · " + d.demography : ""), style: "body", color: "muted" } : null,
         d.score ? { type: "Text", text: "★ " + d.score + (d.total ? "  ·  " + d.total + " caps" : ""), style: "body", color: "muted" } : d.total ? { type: "Text", text: d.total + " caps", style: "body", color: "muted" } : null,
         d.genres && d.genres.length ? { type: "Chips", key: "gens", value: d.genres[0], options: d.genres.slice(0, 4).map((g) => ({ value: g, label: g })) } : null
@@ -1087,20 +1393,35 @@ function viewDetalle(ctx) {
     actions.push({ type: "Button", variant: "secondary", labelText: "Primero (" + first.n + ")", labelTextEn: "First (" + first.n + ")", onPressed: { event: "cap", arg: first.r }, span: 6, fill: true });
     actions.push({ type: "Button", variant: "secondary", labelText: "Último (" + last.n + ")", labelTextEn: "Last (" + last.n + ")", onPressed: { event: "cap", arg: last.r }, span: 6, fill: true });
   }
-  const chList = d.chapters.map((c, i) => ({
-    type: "ListTile",
-    key: "ch" + i,
-    title: "Capítulo " + c.n + (c.t && c.t !== "Capítulo " + c.n ? " · " + String(c.t).slice(0, 40) : ""),
-    titleEn: "Chapter " + c.n,
-    trailing: { type: "Icon", name: "arrow_forward" },
-    onTap: { event: "cap", arg: c.r }
-  }));
+  const batch = state.dlBatch || 10;
+  const batchRow = d.chapters.length ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: [
+    { type: "Chips", key: "dlb", value: String(batch), options: BATCHES.map((b) => ({ value: String(b), label: String(b) })), onChanged: "dlBatch", span: 12 },
+    { type: "Button", variant: "primary", icon: "download", labelText: "Descargar lote de " + batch, labelTextEn: "Download batch of " + batch, onPressed: { event: "dlLote" }, fill: true, span: 12 }
+  ] } : null;
+  const shown = state.chShow || 60;
+  const visibles = d.chapters.slice(0, shown);
+  const chList = visibles.map((c, i) => {
+    const badge = dlBadgeOf(c.r);
+    return {
+      type: "Row",
+      key: "ch" + i,
+      gap: 4,
+      padding: { x: 12, y: 4 },
+      children: [
+        { type: "Text", text: "Cap. " + c.n + (c.t && c.t !== "Capítulo " + c.n ? " · " + String(c.t).slice(0, 28) : ""), textEn: "Ch. " + c.n, style: "body", flex: 1, onTap: { event: "cap", arg: c.r } },
+        badge === "cola" ? { type: "IconButton", icon: "schedule", labelText: "En la cola", labelTextEn: "Queued", onPressed: { event: "nada" } } : { type: "IconButton", icon: badge === "ok" ? "check" : "download", labelText: badge === "ok" ? en ? "Downloaded · tap to re-download" : "Descargado · toca para repetir" : en ? "Download this chapter" : "Descargar este capítulo", labelTextEn: badge === "ok" ? "Downloaded · tap to re-download" : "Download this chapter", onPressed: { event: "dlCap", arg: c.r } },
+        { type: "IconButton", icon: "play", labelText: "Leer", labelTextEn: "Read", onPressed: { event: "cap", arg: c.r } }
+      ]
+    };
+  });
   const kids = [
     { type: "Card", key: "tarjeta", children: [header] },
     ...actions.length ? [{ type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: actions }] : [],
+    ...batchRow ? [batchRow] : [],
     d.overview ? { type: "Text", text: String(d.overview).slice(0, 800), style: "body", padding: { x: 16, y: 8 } } : null,
     d.chapters.length ? { type: "Column", children: chList } : empty("Sin capítulos listados", "No chapters listed"),
-    d.chapters.length && d.next ? { type: "TextButton", labelText: "Más capítulos", labelTextEn: "More chapters", onPressed: { event: "caps" }, padding: 16 } : null
+    d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
+    d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente", labelTextEn: "Load more from source", onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null
   ].filter(Boolean);
   return scaffold(String(d.title).slice(0, 30), String(d.title).slice(0, 30), ctx, { type: "SingleChildScrollView", children: kids }, { share: device !== "tv" ? { label: en ? "Share" : "Compartir" } : void 0 });
 }
@@ -1115,7 +1436,26 @@ function viewLeer(ctx) {
     c.next ? { type: "Button", variant: "secondary", icon: "arrow_forward", labelText: "Siguiente", labelTextEn: "Next", onPressed: { event: "nav", arg: c.next }, span: 4, fill: true } : { type: "SizedBox", width: 16 }
   ];
   const kids = [];
-  if (c.offline) {
+  if (c.offline === "dl") {
+    const pg = Math.max(1, Math.min(c.total || 1, state.imgPage || 1));
+    const raw = readDlPage(c, pg);
+    let pageNode;
+    if (!raw) pageNode = { type: "errorState", icon: "warning", title: "Página " + pg, titleEn: "Page " + pg, text: "No se encontró la página." };
+    else if (raw.b64.length > 19e4) pageNode = { type: "errorState", icon: "warning", title: "Página " + pg, titleEn: "Page " + pg, text: "Esta página pesa más de 150 KB: es el límite de Kino para imágenes sin conexión." };
+    else pageNode = { type: "Image", url: "data:" + raw.mime + ";base64," + raw.b64, aspect: "600:2400", fit: "contain", alt: "Página " + pg, altEn: "Page " + pg };
+    kids.push({
+      type: "Column",
+      children: [
+        { type: "Column", flex: 1, children: [pageNode] },
+        { type: "Row", wrap: true, gap: 8, padding: 12, children: [
+          { type: "Button", variant: "secondary", labelText: "◀ Página", labelTextEn: "◀ Page", onPressed: { event: "pagOff", arg: "-1" }, span: 3, fill: true },
+          { type: "Button", variant: "secondary", labelText: "Página ▶", labelTextEn: "Page ▶", onPressed: { event: "pagOff", arg: "1" }, span: 3, fill: true },
+          { type: "Text", text: pg + " / " + c.total, style: "body", color: "muted", padding: 8 }
+        ] },
+        { type: "Row", wrap: true, gap: 8, padding: 12, children: nav }
+      ]
+    });
+  } else if (c.offline === "files") {
     kids.push({
       type: "Column",
       children: [
@@ -1160,47 +1500,100 @@ function viewLeer(ctx) {
   }
   return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, {});
 }
-function offlineLibrary() {
-  try {
-    const raw = kino.storage.get("offline");
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+function mb(bytes) {
+  return (bytes / 1024 / 1024).toFixed(1);
 }
-function viewOffline(ctx) {
-  const { state } = ctx;
+function viewDescargas(ctx) {
+  const { state, lang } = ctx;
+  const en = lang === "en";
+  const s = state.dl || dlState();
   const kids = [];
-  if (!hasFiles()) {
-    kids.push({ type: "errorState", icon: "warning", title: "Tu Kino no tiene archivos", titleEn: "Your Kino has no files", text: "La lectura sin conexión necesita Kino 0.9.82 o más nuevo." });
-    return scaffold("Sin conexión", "Offline", ctx, { type: "SingleChildScrollView", children: kids });
-  }
-  kids.push({ type: "Text", text: "Elige una carpeta de imágenes (un capítulo por carpeta) o imágenes sueltas. Quedan en este aparato.", textEn: "Pick a folder of images (one chapter per folder) or loose images. They stay on this device.", style: "body", padding: 16 });
-  kids.push({ type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: [
-    { type: "Button", variant: "primary", icon: "upload", labelText: "Elegir carpeta", labelTextEn: "Pick folder", onPressed: { event: "pickFolder" }, span: 6, fill: true },
-    { type: "Button", variant: "secondary", icon: "add", labelText: "Imágenes sueltas", labelTextEn: "Loose images", onPressed: { event: "pickImgs" }, span: 6, fill: true }
-  ] });
-  const lib = state.lib || offlineLibrary();
-  if (!lib.length) kids.push(empty("Todavía no guardaste nada", "Nothing saved yet"));
-  lib.forEach((it, i) => {
-    kids.push({
-      type: "ListTile",
-      key: "of" + i,
-      title: String(it.name || "Carpeta").slice(0, 60),
-      subtitle: (it.count ? it.count + " imágenes" : "imágenes") + (it.kind === "files" ? " · sueltas" : " · carpeta"),
-      subtitleEn: (it.count ? it.count + " images" : "images") + (it.kind === "files" ? " · loose" : " · folder"),
-      trailing: { type: "Icon", name: "arrow_forward" },
-      onTap: { event: "abrirOff", arg: it.id }
-    });
+  kids.push({
+    type: "Column",
+    padding: 16,
+    gap: 8,
+    children: [
+      { type: "Text", text: "Descargas para leer sin conexión", textEn: "Downloads for offline reading", style: "h4" },
+      { type: "Text", text: "Deja esta pantalla abierta mientras descarga: un capítulo por turno, unos segundos cada uno.", textEn: "Keep this screen open while it downloads: one chapter per turn, a few seconds each.", style: "body", color: "muted" },
+      { type: "LinearProgressIndicator", value: Math.min(1, s.bytes / DL_QUOTA), labelText: mb(s.bytes) + " de " + mb(DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " capítulos", labelTextEn: mb(s.bytes) + " of " + mb(DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " chapters" }
+    ]
   });
-  if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 200), style: "body", color: "muted", padding: 16 });
-  return scaffold("Leer sin conexión", "Read offline", ctx, { type: "SingleChildScrollView", children: kids });
+  const pendientes = (s.cola || []).filter((e) => e.estado !== "error");
+  const errores = (s.cola || []).filter((e) => e.estado === "error");
+  if (pendientes.length || errores.length) {
+    kids.push({ type: "Text", text: "En cola", textEn: "Queued", style: "h4", padding: { x: 16, y: 4 } });
+    kids.push({ type: "Column", children: pendientes.slice(0, 30).map((e, i) => ({
+      type: "Row",
+      key: "q" + i,
+      gap: 8,
+      padding: { x: 12, y: 4 },
+      children: [
+        { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Cap. " + (e.number || "?") + (e.estado === "bajando" ? " (bajando…)" : ""), textEn: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Ch. " + (e.number || "?") + (e.estado === "bajando" ? " (down…)" : ""), style: "body", flex: 1 },
+        { type: "IconButton", icon: "close", labelText: "Quitar de la cola", labelTextEn: "Remove from queue", onPressed: { event: "dlQuitarCola", arg: e.cr } }
+      ]
+    })) });
+    if (errores.length) {
+      kids.push({ type: "Text", text: "Con problemas", textEn: "Failed", style: "h4", color: "error", padding: { x: 16, y: 4 } });
+      kids.push({ type: "Column", children: errores.slice(0, 10).map((e, i) => ({
+        type: "Row",
+        key: "e" + i,
+        gap: 8,
+        padding: { x: 12, y: 4 },
+        children: [
+          { type: "Text", text: "Cap. " + (e.number || "?") + " · " + String(e.err || "error").slice(0, 40), textEn: "Ch. " + (e.number || "?") + " · " + String(e.err || "error").slice(0, 40), style: "body", color: "error", flex: 1 },
+          { type: "IconButton", icon: "refresh", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "dlReintentar", arg: e.cr } }
+        ]
+      })) });
+    }
+    kids.push({ type: "TextButton", labelText: "Vaciar la cola", labelTextEn: "Clear queue", onPressed: { event: "dlVaciar" }, padding: { x: 16, y: 4 } });
+  }
+  const lista = Object.entries(s.lista || {}).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+  kids.push({ type: "Text", text: "Descargados (" + lista.length + ")", textEn: "Downloaded (" + lista.length + ")", style: "h4", padding: { x: 16, y: 8 } });
+  if (!lista.length) kids.push(empty("Todavía no descargaste nada", "Nothing downloaded yet"));
+  kids.push({ type: "Column", children: lista.slice(0, 40).map(([cr, e], i) => ({
+    type: "Row",
+    key: "d" + i,
+    gap: 4,
+    padding: { x: 12, y: 4 },
+    children: [
+      { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 20) + " · " : "") + "Cap. " + (e.number || "?") + " · " + e.pages + " pág.", textEn: (e.mTitle ? e.mTitle.slice(0, 20) + " · " : "") + "Ch. " + (e.number || "?") + " · " + e.pages + " p.", style: "body", flex: 1, onTap: { event: "dlAbrir", arg: cr } },
+      { type: "IconButton", icon: "play", labelText: "Leer", labelTextEn: "Read", onPressed: { event: "dlAbrir", arg: cr } },
+      { type: "IconButton", icon: "delete", labelText: "Borrar", labelTextEn: "Delete", onPressed: { event: "dlBorrar", arg: cr } }
+    ]
+  })) });
+  const batch = state.dlBatch || 10;
+  kids.push({ type: "Text", text: "Tamaño de lote para «Descargar lote» en los títulos", textEn: 'Batch size for "Download batch" on titles', style: "body", padding: { x: 16, y: 8 } });
+  kids.push({ type: "Chips", key: "dlb2", value: String(batch), options: BATCHES.map((b) => ({ value: String(b), label: String(b) })), onChanged: "dlBatch" });
+  kids.push({ type: "Text", text: "Archivos del aparato", textEn: "Files on this device", style: "h4", padding: { x: 16, y: 8 } });
+  if (!hasFiles()) {
+    kids.push({ type: "Text", text: "Tu Kino no trae la función de archivos (0.9.82+).", textEn: "Your Kino has no files feature (0.9.82+).", style: "body", color: "muted", padding: { x: 16 } });
+  } else {
+    kids.push({ type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: [
+      { type: "Button", variant: "secondary", icon: "upload", labelText: "Elegir carpeta", labelTextEn: "Pick folder", onPressed: { event: "pickFolder" }, span: 6, fill: true },
+      { type: "Button", variant: "secondary", icon: "add", labelText: "Imágenes sueltas", labelTextEn: "Loose images", onPressed: { event: "pickImgs" }, span: 6, fill: true }
+    ] });
+    const lib = state.lib || offlineLibrary();
+    lib.forEach((it, i) => {
+      kids.push({
+        type: "Row",
+        key: "of" + i,
+        gap: 4,
+        padding: { x: 12, y: 4 },
+        children: [
+          { type: "Text", text: String(it.name || "Carpeta").slice(0, 40) + " (" + (it.count || 0) + ")", style: "body", flex: 1, onTap: { event: "abrirOff", arg: it.id } },
+          { type: "IconButton", icon: "play", labelText: "Leer", labelTextEn: "Read", onPressed: { event: "abrirOff", arg: it.id } },
+          { type: "IconButton", icon: "delete", labelText: "Borrar", labelTextEn: "Delete", onPressed: { event: "borrarOff", arg: it.id } }
+        ]
+      });
+    });
+  }
+  return { type: "Scaffold", appBar: appBar("Descargas", "Downloads", ctx, {}), every: [{ ms: 1300, event: "tickDescarga" }], body: { type: "SingleChildScrollView", children: kids } };
 }
 function viewAjustes(ctx) {
   const kids = [
     { type: "Text", text: "Cuentas y ajustes del plugin. También están en Ajustes ▸ Plugins ▸ Multi-verso Kin.", textEn: "Accounts and plugin settings. Also in Settings ▸ Plugins ▸ Multi-verso Kin.", style: "body", padding: 16 },
     { type: "settings", keys: ["cuentas", "zt_user", "zt_pass", "log_zt", "zt_token", "win_zt", "ms_user", "ms_pass", "log_ms", "ms_cookie", "win_ms", "salir"], onSaved: "saved" },
-    { type: "Text", text: "Temas de la app", textEn: "App themes", style: "h4", padding: { x: 16, y: 8 } },
+    { type: "Text", text: "Temas de la app (8)", textEn: "App themes (8)", style: "h4", padding: { x: 16, y: 8 } },
     { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: THEMES.map((t) => ({
       type: "Button",
       variant: "secondary",
@@ -1210,7 +1603,7 @@ function viewAjustes(ctx) {
       span: 6,
       fill: true
     })) },
-    { type: "Text", text: "Un tema cambia el look de toda la app mientras lo tengas puesto; se quita en Ajustes ▸ Apariencia.", textEn: "A theme changes the whole app look while it is on; remove it in Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 }
+    { type: "Text", text: "Un tema cambia el look de toda la app mientras lo tengas puesto; se quita en Ajustes ▸ Apariencia. El violeta de Multi-verso ya tiñe sus páginas por defecto.", textEn: "A theme changes the whole app look while it is on; remove it in Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 }
   ];
   return scaffold("Ajustes", "Settings", ctx, { type: "SingleChildScrollView", children: kids });
 }
@@ -1223,8 +1616,8 @@ async function screen(ctx) {
       return viewDetalle(ctx);
     case "leer":
       return viewLeer(ctx);
-    case "offline":
-      return viewOffline(ctx);
+    case "descargas":
+      return viewDescargas(ctx);
     case "ajustes":
       return viewAjustes(ctx);
     case "main":
@@ -1239,14 +1632,33 @@ async function screenEvent(ctx) {
     case "open":
       return handleOpen(ctx);
     case "atras":
+      if (!ctx.route || !ctx.route.name || ctx.route.name === "main") return { close: true };
       return { route: { pop: true } };
     case "reintentar":
       return handleOpen(ctx);
+    case "nada":
+      return null;
+    case "navBar": {
+      const key = String(value || "");
+      if (key === "descargas") return { go: { screen: { route: "descargas" } } };
+      if (key === "ajustes") return { go: { screen: { route: "ajustes" } } };
+      return null;
+    }
+    case "scrMain": {
+      const pos = Math.max(0, Math.min(1, Number(value) || 0));
+      const last = typeof state.lastPos === "number" ? state.lastPos : pos;
+      let hideBar = state.hideBar;
+      if (pos > last + 0.015) hideBar = true;
+      else if (pos < last - 0.015) hideBar = false;
+      return { state: { lastPos: pos, hideBar } };
+    }
     case "q": {
       const q = String(value || "").trim();
       if (!q) return { state: { q: "", results: null } };
+      const cached = cacheGet(cacheKey("srch", q.toLowerCase()), TTL.search);
+      if (cached) return { state: { q, results: cached, busy: false } };
       const srcs = Object.keys(SOURCES);
-      const settled = await Promise.allSettled(srcs.map((s) => adapter2(s).search(s, q)));
+      const settled = await Promise.allSettled(srcs.map((s) => adapter3(s).search(s, q)));
       const seen = [];
       const groups = [];
       for (let i = 0; i < srcs.length; i++) {
@@ -1261,24 +1673,29 @@ async function screenEvent(ctx) {
         if (fresh.length) groups.push({ src: srcs[i], items: fresh });
         if (seen.length >= 90) break;
       }
+      cacheSet(cacheKey("srch", q.toLowerCase()), groups);
       return { state: { q, results: groups, busy: false } };
     }
     case "caps": {
       const d = state && state.detail;
       if (!d || !d.next) return null;
       try {
-        const c = await adapter2(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
+        const c = await adapter3(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
         const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title }));
         return { state: { detail: { ...d, chapters: d.chapters.concat(more).slice(0, 500), next: c.next } } };
       } catch (e) {
         return { toast: en ? "Could not load more chapters." : "No se pudieron cargar más capítulos." };
       }
     }
+    case "chMas": {
+      const shown = state && state.chShow || 60;
+      return { state: { chShow: shown + 60 } };
+    }
     case "cap": {
       const ref = String(arg || "");
       try {
         const chapter3 = await loadChapter(ref, { t: state && state.detail ? state.detail.title : void 0, p: state && state.detail ? state.detail.poster : void 0 });
-        return { route: { push: "leer", params: { r: ref } }, state: { chapter: chapter3, imgPage: null, img: null, imgError: null } };
+        return { route: { push: "leer", params: { r: ref } }, state: { chapter: chapter3, imgPage: null, img: null, imgError: null, busyChapter: false } };
       } catch (e) {
         return { toast: errText(e) };
       }
@@ -1318,6 +1735,89 @@ async function screenEvent(ctx) {
     }
     case "saved": {
       return { toast: en ? "Settings saved" : "Ajustes guardados" };
+    }
+    case "dlBatch": {
+      const b = Number(value) || 10;
+      try {
+        kino.storage.set("dlbatch", String(BATCHES.indexOf(b) >= 0 ? b : 10));
+      } catch {
+      }
+      return { state: { dlBatch: b } };
+    }
+    case "dlCap": {
+      const ref = String(arg || "");
+      const d = state && state.detail;
+      const p = parseRef(ref);
+      const meta = d && p ? { src: p.src, slug: p.a, number: (d.chapters.find((c) => c.r === ref) || {}).n || "", mTitle: d.title, mPoster: d.poster } : null;
+      if (!meta) return { toast: en ? "Open the title first." : "Abre antes el título." };
+      if (isDownloaded(ref)) removeDl(ref);
+      const ok = enqueue(ref, meta);
+      if (!ok) return { toast: en ? "Already queued or downloaded." : "Ya estaba en la cola o descargado." };
+      return {
+        toast: en ? "Chapter queued: watch it in Downloads." : "Capítulo en cola: míralo en Descargas.",
+        state: { dl: dlState() }
+      };
+    }
+    case "dlLote": {
+      const d = state && state.detail;
+      if (!d || !d.chapters || !d.chapters.length) return { toast: en ? "No chapters to download." : "No hay capítulos para descargar." };
+      const batch = state.dlBatch || Number(kino.storage.get("dlbatch")) || 10;
+      const refs = [];
+      for (const c of d.chapters) {
+        if (!isDownloaded(c.r) && !isQueued(c.r)) refs.push(c.r);
+        if (refs.length >= batch) break;
+      }
+      if (!refs.length) return { toast: en ? "Everything is already downloaded or queued." : "Todo ya está descargado o en cola." };
+      const metaOf = (cr) => {
+        const p = parseRef(cr);
+        const c = d.chapters.find((x) => x.r === cr) || {};
+        return { src: p.src, slug: p.a, number: c.n || "", mTitle: d.title, mPoster: d.poster };
+      };
+      const n = enqueueMany(refs, metaOf);
+      const desde = (d.chapters.find((x) => x.r === refs[0]) || {}).n || "?";
+      return {
+        route: { push: "descargas" },
+        state: { dl: dlState(), dlBatch: batch, note: en ? n + " chapters queued (from Ch. " + desde + ")." : n + " capítulos en cola (desde el Cap. " + desde + ")." }
+      };
+    }
+    case "dlQuitarCola": {
+      removeFromQueue(String(arg));
+      return { state: { dl: dlState() } };
+    }
+    case "dlVaciar": {
+      clearQueue();
+      return { state: { dl: dlState() }, toast: en ? "Queue cleared." : "Cola vaciada." };
+    }
+    case "dlReintentar": {
+      const cr = String(arg || "");
+      removeFromQueue(cr);
+      const p = parseRef(cr);
+      const d = state && state.detail;
+      enqueue(cr, { src: p ? p.src : "", slug: p ? p.a : "", number: "", mTitle: d ? d.title : "", mPoster: d ? d.poster : "" });
+      return { state: { dl: dlState() } };
+    }
+    case "dlBorrar": {
+      removeDl(String(arg));
+      return { state: { dl: dlState() }, toast: en ? "Deleted." : "Borrado." };
+    }
+    case "dlAbrir": {
+      const cr = String(arg || "");
+      const chapter3 = readDlMeta(cr);
+      if (!chapter3) return { toast: en ? "That download is gone." : "Esa descarga ya no está." };
+      return {
+        route: { push: "leer", params: { r: "dl:" + cr } },
+        state: { chapter: chapter3, imgPage: 1, img: null, imgError: null }
+      };
+    }
+    case "tickDescarga": {
+      const s = dlState();
+      const pendiente = (s.cola || []).some((e) => e.estado === "pendiente");
+      if (!pendiente) return null;
+      const res = await processQueue(15e3);
+      const patch = { dl: dlState() };
+      if (res.done) return { state: patch };
+      if (res.failed) return { state: patch, toast: en ? "Failed: " + String(res.failed.err || "").slice(0, 80) : "Falló: " + String(res.failed.err || "").slice(0, 80) };
+      return { state: patch };
     }
     case "pickImgs": {
       if (!hasFiles()) return { toast: en ? "Needs Kino 0.9.82+" : "Necesita Kino 0.9.82+" };
@@ -1371,7 +1871,7 @@ async function screenEvent(ctx) {
         files.sort((a, b) => String(a.name).localeCompare(String(b.name), "es", { numeric: true }));
         if (!files.length) return { toast: en ? "No readable images." : "No hay imágenes legibles." };
         const chapter3 = {
-          offline: true,
+          offline: "files",
           ref: "off:" + entry.id,
           mr: null,
           pages: [],
@@ -1384,7 +1884,7 @@ async function screenEvent(ctx) {
           next: null,
           mTitle: String(entry.name).slice(0, 60)
         };
-        const first = await readOfflinePage(chapter3, 1, en);
+        const first = await devicePage(chapter3, 1, en);
         return {
           route: { push: "leer", params: { r: chapter3.ref } },
           state: { chapter: chapter3, ...first }
@@ -1393,19 +1893,71 @@ async function screenEvent(ctx) {
         return { toast: errText(e) };
       }
     }
+    case "borrarOff": {
+      const lib = offlineLibrary();
+      const entry = lib.find((x) => x.id === arg);
+      if (entry && entry.kind === "files") {
+        for (const id of entry.ids || []) {
+          try {
+            await kino.files.forget(id);
+          } catch {
+          }
+        }
+      }
+      const rest = lib.filter((x) => x.id !== arg);
+      kino.storage.set("offline", JSON.stringify(rest));
+      return { state: { lib: rest } };
+    }
     case "pagOff": {
       const c = state && state.chapter;
       if (!c || !c.offline) return null;
       const cur = Number(state.imgPage) || 1;
       const next = Math.max(1, Math.min(c.total || 1, cur + (Number(arg) || 0)));
-      const patch = await readOfflinePage(c, next, en);
+      if (c.offline === "dl") return { state: { imgPage: next, img: null, imgError: null } };
+      const patch = await devicePage(c, next, en);
       return { state: patch };
     }
     default:
       return null;
   }
 }
-async function readOfflinePage(chapter3, page, en) {
+async function handleOpen(ctx) {
+  const { route } = ctx;
+  const args = route && (route.args || route.params) || null;
+  if (args && args.r && args.m) {
+    try {
+      const chapter3 = await loadChapter(args.r, { t: args.t, p: args.p });
+      return { route: { push: "leer", params: { r: args.r } }, state: { chapter: chapter3, imgPage: null, img: null, imgError: null } };
+    } catch (e) {
+      return { route: { push: "buscar" }, state: { error: errText(e) } };
+    }
+  }
+  if (args && args.r) {
+    try {
+      const detail3 = await loadDetail(args.r);
+      const prog = await readProgress(args.r);
+      const dlBatch2 = Number(kino.storage.get("dlbatch")) || 10;
+      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail3, detailRef: args.r, prog, dlBatch: dlBatch2, dl: dlState(), error: null } };
+    } catch (e) {
+      return { route: { push: "buscar" }, state: { error: errText(e) } };
+    }
+  }
+  const [rows, seguir] = await Promise.allSettled([fetchRows(), progressEntries()]);
+  const out = [];
+  if (seguir.status === "fulfilled" && seguir.value && seguir.value.length) out.push(seguir.value[0]);
+  if (rows.status === "fulfilled") out.push(...rows.value);
+  const dlBatch = Number(kino.storage.get("dlbatch")) || 10;
+  return { state: { rows: out, done: true, dlBatch, dl: dlState(), error: null } };
+}
+function offlineLibrary() {
+  try {
+    const raw = kino.storage.get("offline");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+async function devicePage(chapter3, page, en) {
   const id = chapter3.fileIds[page - 1];
   if (!id) return { imgPage: page, img: null, imgError: en ? "No such page." : "No existe esa página." };
   try {
