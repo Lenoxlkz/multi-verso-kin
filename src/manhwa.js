@@ -9,7 +9,7 @@
 // Las imágenes NO piden Referer. La sesión vive en cookies (la ventana visible las recolecta).
 // El sitio es webtoon (vertical): el lector usa desplazamiento con zoom, no páginas volteadas.
 
-import { fetchText, fetchJson, join, toItem, netError, UA, msCookie } from "./env.js";
+import { fetchText, fetchJson, join, toItem, netError, UA, msCookie, timeoutFor } from "./env.js";
 
 function heads() {
   const c = msCookie();
@@ -92,7 +92,7 @@ function asItems(src, cards) {
 
 /** Busca con la API JSON del sitio. */
 export async function search(src, q) {
-  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads() });
+  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || !Array.isArray(body.results)) return { items: [], next: null, degraded: true };
   return {
     items: body.results.slice(0, 30).map((r) => toItem(src, { slug: r.slug, title: r.title, poster: r.cover })).filter(Boolean),
@@ -104,7 +104,7 @@ export async function search(src, q) {
 export async function list(src, { page = 1, estado } = {}) {
   const path = page > 1 ? "/explorar/page/" + page + "/" : "/explorar/";
   const url = join(src, path + (estado ? "?estado=" + encodeURIComponent(estado) : ""));
-  const r = await fetchText(url, { heads: heads() });
+  const r = await fetchText(url, { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "Manhwa");
   const cards = cardsOf(r.text, 30);
   return { items: asItems(src, cards), next: cards.length >= 15 ? String(page + 1) : null };
@@ -112,14 +112,14 @@ export async function list(src, { page = 1, estado } = {}) {
 
 /** La fila «Últimas actualizaciones» de la portada del sitio. */
 export async function latest(src) {
-  const r = await fetchText(join(src, "/"), { heads: heads() });
+  const r = await fetchText(join(src, "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "la portada de Manhwa");
   return { items: asItems(src, cardsOf(r.text, 24)), next: null };
 }
 
 /** Detalle de un manga desde su página SSR. */
 export async function detail(src, slug) {
-  const r = await fetchText(join(src, "/manga/" + slug + "/"), { heads: heads() });
+  const r = await fetchText(join(src, "/manga/" + slug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) { e.code = "not_found"; e.userMessage = "Este manga no está disponible en " + (src === "mh" ? "ManhwaShot" : "ManhwaSS") + "."; }
@@ -168,7 +168,7 @@ function capNum(s) {
 
 /** Imágenes de un capítulo y vecinos (prev = el mayor número menor, next = el menor número mayor). */
 export async function chapter(src, slug, chapterSlug) {
-  const r = await fetchText(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads() });
+  const r = await fetchText(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) { e.code = "not_found"; e.userMessage = "Este capítulo ya no está disponible."; }

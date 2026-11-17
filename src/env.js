@@ -87,6 +87,56 @@ export async function fetchJson(url, opts) {
 
 export const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 
+// ---------- velocidad ----------
+// Los dominios gemelos (zonatmo.org, manhwashot.lat) pueden estar lentos o bloqueados:
+// se les da un plazo corto para que no frenen la búsqueda; los primarios tienen el normal.
+
+export function timeoutFor(src) {
+  return (src === "zo" || src === "mh") ? 7000 : 12000;
+}
+
+// Caché en kino.storage (lectura síncrona: la portada pinta al instante en la segunda visita).
+// Los datos descargados y las credenciales NO pasan por aquí: los ajustes de tipo password los guarda Kino
+// y las descargas viven en sus propias claves («dl:…»), fuera del recorte de la caché.
+export const TTL = { list: 600000, rows: 600000, detail: 1800000, chapter: 300000, search: 300000 };
+
+export function cacheKey(...parts) {
+  return ("c:" + parts.join("|")).slice(0, 250);
+}
+
+export function cacheGet(key, ttlMs) {
+  try {
+    const raw = kino.storage.get(key);
+    if (!raw) return null;
+    const e = JSON.parse(raw);
+    if (!e || typeof e.t !== "number" || !("d" in e)) return null;
+    if (Date.now() - e.t > ttlMs) return null;
+    return e.d;
+  } catch { return null; }
+}
+
+export function cacheSet(key, data) {
+  try {
+    kino.storage.set(key, JSON.stringify({ t: Date.now(), d: data }));
+    pruneCache();
+  } catch { /* almacenamiento lleno: la caché es optativa */ }
+}
+
+function pruneCache() {
+  try {
+    const keys = kino.storage.keys().filter((k) => k.indexOf("c:") === 0);
+    if (keys.length <= 90) return;
+    const items = keys.map((k) => {
+      try {
+        const e = JSON.parse(kino.storage.get(k) || "null");
+        return { k, t: e && e.t || 0 };
+      } catch { return { k, t: 0 }; }
+    });
+    items.sort((a, b) => a.t - b.t);
+    for (const it of items.slice(0, items.length - 90)) kino.storage.remove(it.k);
+  } catch { /* nada grave */ }
+}
+
 /** Convierte un fallo de red en el error tipado de Kino (mensajes en español, cortos). */
 export function netError(e, what) {
   if (e && e.code) throw e;

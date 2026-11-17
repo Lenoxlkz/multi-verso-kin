@@ -9,7 +9,7 @@
 // Las imágenes de página viven en https://cdn.zonatmo.to/manga/{jit}/{archivo} y NO piden Referer.
 // Las portadas viven en {base}/wp-content/uploads{ruta}.
 
-import { fetchJson, fetchText, join, toItem, netError, UA, ztToken } from "./env.js";
+import { fetchJson, fetchText, join, toItem, netError, UA, ztToken, timeoutFor } from "./env.js";
 
 const api = (src, path, params) => {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
@@ -78,14 +78,14 @@ export async function list(src, { page = 1, order = "new", search, genreId, demo
   if (genreId) params.genres = String(genreId);
   if (demography) params.demography = String(demography);
   if (flags) params.flags = String(flags);
-  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO");
   return listingItems(src, body.data);
 }
 
 /** Lo más visto ayer. */
 export async function tops(src, { page = 1, postsPerPage = 24 } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO (populares)");
   return listingItems(src, body.data);
 }
@@ -97,7 +97,7 @@ export async function search(src, q, { page = 1, postsPerPage = 24 } = {}) {
 
 /** Detalle de un manga. */
 export async function detail(src, slug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error || !body.data) {
     const e = new Error("HTTP " + status);
     if (status === 404) { e.code = "not_found"; e.userMessage = "Este manga no está disponible en " + (src === "zo" ? "ZonaTMO.org" : "ZonaTMO") + "."; }
@@ -135,7 +135,7 @@ function demographyName(ids) { return nameOf(DEMOG, ids); }
 
 /** Lista de capítulos (de más nuevo a más viejo). */
 export async function chapters(src, slug, { page = 1, postsPerPage = 50, order = "desc" } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "los capítulos");
   const d = body.data || {};
   const items = (Array.isArray(d.items) ? d.items : []).map((c) => ({
@@ -155,7 +155,7 @@ export async function chapters(src, slug, { page = 1, postsPerPage = 50, order =
  * El jit de la API va incrustado en la ruta del CDN (lleva su propia "/").
  */
 export async function chapter(src, slug, chapterSlug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads() });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error || !body.data || !body.data.chapter) {
     const e = new Error("HTTP " + status);
     if (status === 404) { e.code = "not_found"; e.userMessage = "Este capítulo ya no está disponible."; }
