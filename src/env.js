@@ -92,7 +92,7 @@ export const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (
 // se les da un plazo corto para que no frenen la búsqueda; los primarios tienen el normal.
 
 export function timeoutFor(src) {
-  return (src === "zo" || src === "mh") ? 7000 : 12000;
+  return (src === "zo" || src === "mh") ? 5000 : 12000;
 }
 
 // Caché en kino.storage (lectura síncrona: la portada pinta al instante en la segunda visita).

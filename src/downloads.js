@@ -43,13 +43,13 @@ export function dlQuota() {
   return { bytes: s.bytes, quota: DL_QUOTA, count: Object.keys(s.lista).length };
 }
 
-export function isDownloaded(cr) {
-  const s = dlState();
+export function isDownloaded(cr, state) {
+  const s = state || dlState();
   return Boolean(s.lista[cr]);
 }
 
-export function isQueued(cr) {
-  const s = dlState();
+export function isQueued(cr, state) {
+  const s = state || dlState();
   return s.cola.some((e) => e.cr === cr);
 }
 
@@ -125,14 +125,29 @@ function mimeOf(b64) {
   return "image/webp";
 }
 
+// ---------- motor por tics (una página por vuelta: nunca bloquea los toques) ----------
+//
+// Kino ejecuta los tics y los toques en el mismo turno de la pantalla: mientras un tic corre, ningún
+// toque se atiende. Por eso cada tic baja UNAS POCAS PÁGINAS con un presupuesto corto (~2,5 s) y deja
+// el resto para el siguiente tic (los tics corren en cualquier ruta del plugin, no solo en Descargas).
+// Un tic completo nunca pasa de ~13,5 s (1,5 de colchón + 12 de plazo de una imagen), por debajo del
+// presupuesto de 20 s por llamada de Kino.
+
+const PAGE_BUDGET_MS = 1500; // trabajo por tic antes de volver a ceder
+const PAGE_TIMEOUT_MS = 12000; // plazo de cada imagen (una sola por tic si el presupuesto ya se gastó)
+const MAX_FALLOS = 3; // intentos seguidos por capítulo antes de marcarlo como error
+
+function dlMetaKey(cr) {
+  return "dlMeta:" + dlHash(cr);
+}
+
 /**
- * Descarga el siguiente capítulo pendiente (o el `entry` dado). `budgetMs` es el tiempo máximo que
- * puede gastar la llamada: al agotarse, el capítulo vuelve a la cola para el siguiente tic.
- * Devuelve un resumen para la interfaz.
+ * Avanza la cola un paso: primero los datos del capítulo, luego páginas hasta el presupuesto.
+ * Devuelve { nothing } | { progress, entry } | { done, entry } | { failed, entry }.
  */
-export async function processQueue(budgetMs = 15000, only = null) {
+export async function processTick() {
   const s = dlState();
-  const entry = only || s.cola.find((e) => e.estado === "pendiente");
+  const entry = s.cola.find((e) => e.estado === "bajando") || s.cola.find((e) => e.estado === "pendiente");
   if (!entry) return { nothing: true };
   if (s.bytes >= DL_QUOTA) {
     entry.estado = "error";
@@ -141,57 +156,87 @@ export async function processQueue(budgetMs = 15000, only = null) {
     return { failed: entry };
   }
   const t0 = Date.now();
-  entry.estado = "bajando";
-  saveDlState(s);
+  const p = parseRef(entry.cr);
+  if (!p || p.kind !== "c") {
+    entry.estado = "error";
+    entry.err = "Referencia de capítulo desconocida.";
+    saveDlState(s);
+    return { failed: entry };
+  }
   try {
-    const p = parseRef(entry.cr);
-    if (!p || p.kind !== "c") throw kino.error("invalid_request", "capítulo desconocido");
-    const ch = await adapter(p.src).chapter(p.src, p.a, p.b);
-    if (!ch.pages.length) throw new Error("El capítulo no tiene imágenes");
-    // Una clave de storage por página: el lector lee la página sin pasarla por el state de la pantalla
-    // (el state se limita a 64 KB; el árbol admite data: de hasta 200 000 caracteres).
-    const key = dlHash(entry.cr);
-    let total = 0;
-    const mimes = [];
-    let written = 0;
-    for (let i = 0; i < ch.pages.length; i++) {
-      if (Date.now() - t0 > budgetMs) {
-        // sin tiempo: vuelve a la cola para el siguiente tic; lo escrito se conserva y no se repite
-        entry.estado = "pendiente";
-        entry.hecho = written;
-        saveDlState(s);
-        return { paused: entry };
-      }
-      const url = ch.pages[i];
-      const r = await kino.fetch(url, { timeoutMs: 9000 });
-      const b64 = r.base64();
-      if (entry.hecho && i < entry.hecho) {
-        mimes.push(mimeOf(b64));
-        continue; // ya estaba escrita de un intento anterior
-      }
-      const mime = mimeOf(b64);
-      mimes.push(mime);
-      kino.storage.set("dl:" + key + ":" + i, b64);
-      total += b64.length;
-      written = i + 1;
-      if (total > CHAPTER_MAX) throw new Error("El capítulo pesa más de 2 MB: no cabe en la descarga");
+    // Fase 1: los datos del capítulo (una vez; las páginas empiezan en el siguiente tic).
+    if (entry.estado === "pendiente") {
+      const ch = await adapter(p.src).chapter(p.src, p.a, p.b);
+      if (!ch.pages.length) throw new Error("El capítulo no tiene imágenes");
+      kino.storage.set(dlMetaKey(entry.cr), JSON.stringify({
+        urls: ch.pages,
+        number: ch.number || entry.number,
+        title: ch.title || entry.number,
+        direction: ch.direction || "ltr",
+      }));
+      entry.estado = "bajando";
+      entry.total = ch.pages.length;
+      entry.hecho = 0;
+      entry.mimes = [];
+      entry.fallos = 0;
+      saveDlState(s);
+      return { progress: entry };
     }
-    const meta = {
+    // Fase 2: páginas hasta el presupuesto; cada imagen guarda su propia clave.
+    const rawMeta = kino.storage.get(dlMetaKey(entry.cr));
+    if (!rawMeta) throw new Error("Se perdieron los datos del capítulo: reintenta.");
+    const meta = JSON.parse(rawMeta);
+    while (Date.now() - t0 < PAGE_BUDGET_MS) {
+      const i = entry.hecho || 0;
+      if (i >= meta.urls.length) break;
+      let b64 = null;
+      try {
+        const r = await kino.fetch(meta.urls[i], { timeoutMs: PAGE_TIMEOUT_MS });
+        b64 = r.base64();
+        if (!b64) throw new Error("vacía");
+      } catch (e) {
+        // sin reintento dentro del mismo tic: el siguiente tic lo vuelve a intentar
+        entry.fallos = (entry.fallos || 0) + 1;
+        if (entry.fallos >= MAX_FALLOS) {
+          entry.estado = "error";
+          entry.err = "Página " + (i + 1) + ": " + String((e && e.message) || "fallo de red").slice(0, 120);
+          saveDlState(s);
+          return { failed: entry };
+        }
+        saveDlState(s);
+        return { progress: entry };
+      }
+      entry.mimes[i] = mimeOf(b64);
+      kino.storage.set("dl:" + dlHash(entry.cr) + ":" + i, b64);
+      entry.hecho = i + 1;
+      entry.fallos = 0;
+      saveDlState(s);
+      if (entry.hecho * 1 >= meta.urls.length) break;
+    }
+    if ((entry.hecho || 0) < meta.urls.length) return { progress: entry };
+    // Fase 3: capítulo completo: escribe el índice y pásalo a la lista.
+    const key = dlHash(entry.cr);
+    let bytes = 0;
+    for (let i = 0; i < meta.urls.length; i++) {
+      const pg = kino.storage.get("dl:" + key + ":" + i);
+      bytes += pg ? pg.length : 0;
+    }
+    if (bytes > CHAPTER_MAX) throw new Error("El capítulo pesa más de 2 MB: no cabe en la descarga");
+    kino.storage.set("dl:" + key, JSON.stringify({
       cr: entry.cr,
       mr: mangaRef(p.src, p.a),
       src: p.src,
       mangaSlug: p.a,
-      number: ch.number || entry.number,
-      title: ch.title || entry.number,
+      number: meta.number,
+      title: meta.title,
       mTitle: entry.mTitle || "",
       mPoster: entry.mPoster || "",
-      mimes,
-      pages: ch.pages.length,
-      direction: ch.direction,
+      mimes: entry.mimes,
+      pages: meta.urls.length,
+      direction: meta.direction,
       ts: Date.now(),
-    };
-    const json = JSON.stringify(meta);
-    kino.storage.set("dl:" + key, json);
+    }));
+    kino.storage.remove(dlMetaKey(entry.cr));
     const s2 = dlState();
     s2.cola = s2.cola.filter((e) => e.cr !== entry.cr);
     s2.lista[entry.cr] = {
@@ -199,24 +244,28 @@ export async function processQueue(budgetMs = 15000, only = null) {
       src: p.src,
       slug: p.a,
       number: meta.number,
-      mTitle: meta.mTitle,
-      mPoster: meta.mPoster,
-      bytes: total,
-      pages: ch.pages.length,
-      direction: ch.direction,
+      mTitle: entry.mTitle || "",
+      mPoster: entry.mPoster || "",
+      bytes,
+      pages: meta.urls.length,
+      direction: meta.direction,
       ts: Date.now(),
     };
-    s2.bytes += total;
+    s2.bytes += bytes;
     s2.terminadas = (s2.terminadas || 0) + 1;
     saveDlState(s2);
-    return { done: entry, bytes: total, pages: ch.pages.length, ms: Date.now() - t0 };
+    return { done: entry, bytes };
   } catch (e) {
     const s3 = dlState();
     const ent = s3.cola.find((x) => x.cr === entry.cr);
     if (ent) {
-      ent.estado = "error";
-      ent.err = String((e && e.message) || "error").slice(0, 160);
+      ent.fallos = (ent.fallos || 0) + 1;
+      if (ent.fallos >= MAX_FALLOS) {
+        ent.estado = "error";
+        ent.err = String((e && e.message) || "error").slice(0, 160);
+      }
       saveDlState(s3);
+      if (ent.estado !== "error") return { progress: ent };
     }
     return { failed: entry, err: String((e && e.message) || "error") };
   }

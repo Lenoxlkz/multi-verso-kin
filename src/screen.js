@@ -280,10 +280,11 @@ function scaffold(title, titleEn, ctx, body, opts) {
   if (o.bottomBar) s.bottomNavigationBar = { // slot bottomNavigationBar: una NavigationBar
     type: "navigationBar",
     items: [
+      { key: "home", icon: "home", label: "Inicio", labelEn: "Home" },
       { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" },
       { key: "descargas", icon: "download", label: "Descargas", labelEn: "Downloads" },
     ],
-    value: o.navValue || "ajustes",
+    value: o.navValue || "home",
     onChanged: "navBar",
   };
   return s;
@@ -355,8 +356,8 @@ function viewMain(ctx) {
     if (!rows.length) kids.push(empty("Sin filas por ahora", "No rows yet"));
   }
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
-  const opts = { close: true };
-  if (!state.hideBar) { opts.bottomBar = floatBar(); opts.fab = floatFab(); }
+  const opts = { close: true, navValue: "home" };
+  if (!state.hideBar) { opts.bottomBar = true; opts.fab = floatFab(); }
   return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", onScroll: "scrMain", children: kids }, opts);
 }
 
@@ -381,7 +382,7 @@ function viewBuscar(ctx) {
     }
     if (!n) kids.push(empty('Sin resultados para "' + q.slice(0, 40) + '"', 'No results for "' + q.slice(0, 40) + '"'));
   }
-  return scaffold("Buscar", "Search", ctx, { type: "SingleChildScrollView", children: kids }, {});
+  return scaffold("Buscar", "Search", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home", bottomBar: true });
 }
 
 function deviceCols(ctx) {
@@ -394,9 +395,9 @@ function deviceCols(ctx) {
 
 // ---------- vista: detalle ----------
 
-function dlBadgeOf(cr) {
-  if (dl.isDownloaded(cr)) return "ok";
-  if (dl.isQueued(cr)) return "cola";
+function dlBadgeOf(cr, dlS) {
+  if (dl.isDownloaded(cr, dlS)) return "ok";
+  if (dl.isQueued(cr, dlS)) return "cola";
   return null;
 }
 
@@ -404,6 +405,7 @@ function viewDetalle(ctx) {
   const { state, device, lang } = ctx;
   const d = state.detail;
   const en = lang === "en";
+  const dlS = dl.dlState(); // una lectura por vista
   if (state.busyDetail && !d) {
     return scaffold("Cargando", "Loading", ctx, { type: "Column", padding: 16, gap: 12, children: [
       { type: "Row", gap: 12, children: [{ type: "Skeleton", shape: "card", width: 120, height: 180 }, { type: "Column", gap: 8, flex: 1, children: [{ type: "Skeleton", shape: "line", height: 24 }, { type: "Skeleton", shape: "line", height: 16 }, { type: "Skeleton", shape: "line", height: 16 }] }] },
@@ -442,7 +444,7 @@ function viewDetalle(ctx) {
   const shown = (state.chShow || 60);
   const visibles = d.chapters.slice(0, shown);
   const chList = visibles.map((c, i) => {
-    const badge = dlBadgeOf(c.r);
+    const badge = dlBadgeOf(c.r, dlS);
     return {
       type: "Row", key: "ch" + i, gap: 4, padding: { x: 12, y: 4 },
       children: [
@@ -462,7 +464,7 @@ function viewDetalle(ctx) {
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
     d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente", labelTextEn: "Load more from source", onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null,
   ].filter(Boolean);
-  return scaffold(String(d.title).slice(0, 30), String(d.title).slice(0, 30), ctx, { type: "SingleChildScrollView", children: kids }, { share: device !== "tv" ? { label: en ? "Share" : "Compartir" } : undefined });
+  return scaffold(String(d.title).slice(0, 30), String(d.title).slice(0, 30), ctx, { type: "SingleChildScrollView", children: kids }, { share: device !== "tv" ? { label: en ? "Share" : "Compartir" } : undefined, navValue: "home", bottomBar: true });
 }
 
 // ---------- vista: lector ----------
@@ -537,7 +539,7 @@ function viewLeer(ctx) {
     });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   }
-  return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, {});
+  return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, { navValue: "home", bottomBar: true });
 }
 
 // ---------- vista: descargas ----------
@@ -554,7 +556,7 @@ function viewDescargas(ctx) {
   kids.push({
     type: "Column", padding: 16, gap: 8, children: [
       { type: "Text", text: "Descargas para leer sin conexión", textEn: "Downloads for offline reading", style: "h4" },
-      { type: "Text", text: "Deja esta pantalla abierta mientras descarga: un capítulo por turno, unos segundos cada uno.", textEn: "Keep this screen open while it downloads: one chapter per turn, a few seconds each.", style: "body", color: "muted" },
+      { type: "Text", text: "Las descargas avanzan solas mientras uses el plugin, en la ruta que sea. Unas páginas por turno para no estorbar los toques.", textEn: "Downloads keep going while you use the plugin, on any route. A few pages per turn so taps stay snappy.", style: "body", color: "muted" },
       { type: "LinearProgressIndicator", value: Math.min(1, s.bytes / dl.DL_QUOTA), labelText: mb(s.bytes) + " de " + mb(dl.DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " capítulos", labelTextEn: mb(s.bytes) + " of " + mb(dl.DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " chapters" },
     ],
   });
@@ -565,7 +567,7 @@ function viewDescargas(ctx) {
     kids.push({ type: "Column", children: pendientes.slice(0, 30).map((e, i) => ({
       type: "Row", key: "q" + i, gap: 8, padding: { x: 12, y: 4 },
       children: [
-        { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Cap. " + (e.number || "?") + (e.estado === "bajando" ? " (bajando…)" : ""), textEn: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Ch. " + (e.number || "?") + (e.estado === "bajando" ? " (down…)" : ""), style: "body", flex: 1 },
+        { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Cap. " + (e.number || "?") + (e.estado === "bajando" && e.total ? " (página " + ((e.hecho || 0) + 1) + " de " + e.total + ")" : ""), textEn: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Ch. " + (e.number || "?") + (e.estado === "bajando" && e.total ? " (page " + ((e.hecho || 0) + 1) + " of " + e.total + ")" : ""), style: "body", flex: 1 },
         { type: "IconButton", icon: "close", labelText: "Quitar de la cola", labelTextEn: "Remove from queue", onPressed: { event: "dlQuitarCola", arg: e.cr } },
       ],
     })) });
@@ -615,7 +617,7 @@ function viewDescargas(ctx) {
       });
     });
   }
-  return { type: "Scaffold", appBar: appBar("Descargas", "Downloads", ctx, {}), every: [{ ms: 1300, event: "tickDescarga" }], body: { type: "SingleChildScrollView", children: kids } };
+  return scaffold("Descargas", "Downloads", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "descargas", bottomBar: true });
 }
 
 // ---------- vista: ajustes ----------
@@ -628,9 +630,9 @@ function viewAjustes(ctx) {
     { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: THEMES.map((t) => ({
       type: "Button", variant: "secondary", labelText: t.name.es, labelTextEn: t.name.en, onPressed: { go: { useTheme: { theme: t.id } } }, span: 6, fill: true,
     })) },
-    { type: "Text", text: "Un tema cambia el look de toda la app mientras lo tengas puesto; se quita en Ajustes ▸ Apariencia. El violeta de Multi-verso ya tiñe sus páginas por defecto.", textEn: "A theme changes the whole app look while it is on; remove it in Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 },
+    { type: "Text", text: "Un tema se aplica a TODA la app, también a estas páginas, mientras lo tengas puesto; se quita en Ajustes ▸ Apariencia. El violeta de Multi-verso es el tema «Manhwa Violeta».", textEn: "A theme applies to the WHOLE app, these pages included, while it is on; remove it in Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 },
   ];
-  return scaffold("Ajustes", "Settings", ctx, { type: "SingleChildScrollView", children: kids });
+  return scaffold("Ajustes", "Settings", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "ajustes", bottomBar: true });
 }
 
 // ---------- screen(ctx) ----------
@@ -669,8 +671,13 @@ export async function screenEvent(ctx) {
 
     case "navBar": {
       const key = String(value || "");
-      if (key === "descargas") return { go: { screen: { route: "descargas" } } };
-      if (key === "ajustes") return { go: { screen: { route: "ajustes" } } };
+      const here = (ctx.route && ctx.route.name) || "main";
+      if (key === "home") {
+        if (here === "main") return { state: { hideBar: false, lastPos: 0 } }; // ya estás en Inicio
+        return { route: { pop: true } }; // volver hacia Inicio, paso a paso
+      }
+      if (key === "ajustes") return here === "ajustes" ? null : { route: { push: "ajustes" } };
+      if (key === "descargas") return here === "descargas" ? null : { route: { push: "descargas" } };
       return null;
     }
 
@@ -858,14 +865,17 @@ export async function screenEvent(ctx) {
     }
 
     case "tickDescarga": {
-      const s = dl.dlState();
-      const pendiente = (s.cola || []).some((e) => e.estado === "pendiente");
-      if (!pendiente) return null;
-      const res = await dl.processQueue(15000);
-      const patch = { dl: dl.dlState() };
-      if (res.done) return { state: patch };
-      if (res.failed) return { state: patch, toast: en ? "Failed: " + String((res.failed.err) || "").slice(0, 80) : "Falló: " + String((res.failed.err) || "").slice(0, 80) };
-      return { state: patch };
+      // Unas pocas páginas por tic: los toques nunca esperan más de ~2,5 s. Los tics corren
+      // mientras la pantalla del plugin esté abierta, en la ruta que sea (los declaró el manifiesto).
+      try {
+        const res = await dl.processTick();
+        if (res.nothing) return null;
+        const patch = { dl: dl.dlState() };
+        if (res.failed) return { state: patch, toast: en ? "Failed: " + String((res.entry && res.entry.err) || res.err || "").slice(0, 80) : "Falló: " + String((res.entry && res.entry.err) || res.err || "").slice(0, 80) };
+        return { state: patch };
+      } catch (e) {
+        return null; // un tic nunca debe fallar: 3 fallos y Kino apaga el temporizador
+      }
     }
 
     // ----- archivos del aparato -----
