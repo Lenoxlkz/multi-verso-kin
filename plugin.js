@@ -65,7 +65,7 @@ function clip(text, max) {
 function join(src, path) {
   return SOURCES[src].host + (String(path).startsWith("/") ? path : "/" + path);
 }
-async function fetchText2(url, { heads: heads3 = {}, timeoutMs = 12e3, method = "GET", body } = {}) {
+async function fetchText(url, { heads: heads3 = {}, timeoutMs = 12e3, method = "GET", body } = {}) {
   const hs = { ...BASE_HEADS, ...heads3 };
   if (!hs.Cookie) {
     const cf = cfCookieHead(url);
@@ -77,7 +77,7 @@ async function fetchText2(url, { heads: heads3 = {}, timeoutMs = 12e3, method = 
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }
 async function fetchJson(url, opts) {
-  const { status, ok, text } = await fetchText2(url, opts);
+  const { status, ok, text } = await fetchText(url, opts);
   let body = null;
   try {
     body = text ? JSON.parse(text) : null;
@@ -140,32 +140,101 @@ function cfCookieHead(url) {
     return void 0;
   }
 }
+var CFSEEN_KEY = "cfseen";
+var CFSEEN_TTL = 24 * 3600 * 1e3;
+function cfSeenLoad() {
+  try {
+    const r = kino.storage.get(CFSEEN_KEY);
+    return r ? JSON.parse(r) : {};
+  } catch {
+    return {};
+  }
+}
+function cfMarkChallenge(host, kind) {
+  try {
+    const jar = cfSeenLoad();
+    jar[String(host).replace(/^https?:\/\//, "")] = { t: Date.now(), k: kind === "blocked" ? "blocked" : "challenge" };
+    kino.storage.set(CFSEEN_KEY, JSON.stringify(jar));
+  } catch {
+  }
+}
+function cfClearChallenge(host) {
+  try {
+    const jar = cfSeenLoad();
+    host = String(host).replace(/^https?:\/\//, "");
+    if (jar[host]) {
+      delete jar[host];
+      kino.storage.set(CFSEEN_KEY, JSON.stringify(jar));
+    }
+  } catch {
+  }
+}
+function cfStateFor(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return null;
+    const e = cfSeenLoad()[m[1].replace(/^https?:\/\//, "")];
+    if (!e || !e.k) return null;
+    const ageMs = Date.now() - (e.t || 0);
+    if (ageMs > CFSEEN_TTL) return null;
+    return { kind: e.k, ageMs };
+  } catch {
+    return null;
+  }
+}
+function cfForget(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return;
+    const host = m[1].replace(/^https?:\/\//, "");
+    const jar = cfLoad();
+    if (jar[host]) {
+      delete jar[host];
+      kino.storage.set(CFJAR_KEY, JSON.stringify(jar));
+    }
+    cfClearChallenge(host);
+  } catch {
+  }
+}
+function cfStatus(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return null;
+    const host = m[1].replace(/^https?:\/\//, "");
+    const st = cfStateFor(hostUrl);
+    const e = cfLoad()[host];
+    const cookie = e && e.c && Object.keys(e.c).length ? { ageH: Math.round((Date.now() - (e.t || 0)) / 36e4) / 10, names: Object.keys(e.c) } : null;
+    if (!st && !cookie) return null;
+    return { kind: st && st.kind, ageMs: st && st.ageMs, cookie };
+  } catch {
+    return null;
+  }
+}
 var httpLog = [];
 function noteHttp(url, status, text) {
   try {
     const m = /^(https?:\/\/[^\/]+)/.exec(String(url || ""));
     if (!m) return;
-    httpLog.push({ host: m[1], status: Number(status) || 0, sample: String(text || "").slice(0, 4e3), t: Date.now() });
+    const host = m[1];
+    httpLog.push({ host, status: Number(status) || 0, sample: String(text || "").slice(0, 4e3), t: Date.now() });
     if (httpLog.length > 12) httpLog = httpLog.slice(-12);
+    const kind = cfClassify(Number(status) || 0, text);
+    if (kind) cfMarkChallenge(host, kind);
+    else if (Number(status) === 200) cfClearChallenge(host);
   } catch {
   }
 }
-function cfChallengeSeen(hostUrl) {
-  try {
-    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
-    if (!m) return false;
-    const now = Date.now();
-    return httpLog.some((e) => e.host === m[1] && now - e.t < 2e4 && isCfChallenge(e.status, e.sample));
-  } catch {
-    return false;
-  }
-}
-function isCfChallenge(status, text) {
-  if (status !== 403 && status !== 429 && status !== 503) return false;
+function cfClassify(status, text) {
   const t = String(text || "").slice(0, 4e3);
-  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser|used cloudflare to restrict access|access denied|enable javascript and cookies to continue/i.test(t);
+  if (status === 403 || status === 429 || status === 503) {
+    if (/sorry, you have been blocked|you are unable to access|banned your access based on your browser|used cloudflare to restrict access|attention required|access denied/i.test(t)) return "blocked";
+    if (/just a moment|challenge-platform|cf-browser-verification|cf_chl_|turnstile|checking your browser|enable javascript and cookies/i.test(t)) return "challenge";
+    return "blocked";
+  }
+  if (status === 200 && /challenge-platform|cf_chl_|cf-browser-verification/i.test(t)) return "challenge";
+  return null;
 }
-function timeoutFor2(src) {
+function timeoutFor(src) {
   return src === "zo" || src === "mh" ? 5e3 : 12e3;
 }
 var TTL = { list: 6e5, rows: 6e5, detail: 18e5, chapter: 3e5, search: 3e5 };
@@ -362,12 +431,12 @@ async function list(src, { page = 1, order = "new", search: search4, genreId, de
   if (genreId) params.genres = String(genreId);
   if (demography) params.demography = String(demography);
   if (flags) params.flags = String(flags);
-  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO");
   return listingItems(src, body.data);
 }
 async function tops(src, { page = 1, postsPerPage = 24 } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO (populares)");
   return listingItems(src, body.data);
 }
@@ -375,7 +444,7 @@ async function search(src, q, { page = 1, postsPerPage = 24 } = {}) {
   return list(src, { page, order: "score", search: q, postsPerPage });
 }
 async function detail(src, slug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error || !body.data) {
     const e = new Error("HTTP " + status);
     if (status === 404) {
@@ -415,7 +484,7 @@ function demographyName(ids) {
   return nameOf(DEMOG, ids);
 }
 async function chapters(src, slug, { page = 1, postsPerPage = 50, order = "desc" } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "los capítulos");
   const d = body.data || {};
   const items = (Array.isArray(d.items) ? d.items : []).map((c) => ({
@@ -431,7 +500,7 @@ async function chapters(src, slug, { page = 1, postsPerPage = 50, order = "desc"
   return { items, next: pag.has_next ? String(Number(pag.current_page || 1) + 1) : null, total: pag.total };
 }
 async function chapter(src, slug, chapterSlug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || body.error || !body.data || !body.data.chapter) {
     const e = new Error("HTTP " + status);
     if (status === 404) {
@@ -564,7 +633,7 @@ function asItems(src, cards) {
   return cards.map((c) => toItem(src, { slug: c.slug, title: c.title, poster: c.cover })).filter(Boolean);
 }
 async function search2(src, q) {
-  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads(), timeoutMs: timeoutFor2(src) });
+  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || !Array.isArray(body.results)) return { items: [], next: null, degraded: true };
   return {
     items: body.results.slice(0, 30).map((r) => toItem(src, { slug: r.slug, title: r.title, poster: r.cover })).filter(Boolean),
@@ -574,18 +643,18 @@ async function search2(src, q) {
 async function list2(src, { page = 1, estado } = {}) {
   const path = page > 1 ? "/explorar/page/" + page + "/" : "/explorar/";
   const url = join(src, path + (estado ? "?estado=" + encodeURIComponent(estado) : ""));
-  const r = await fetchText2(url, { heads: heads(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchText(url, { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "Manhwa");
   const cards = cardsOf(r.text, 30);
   return { items: asItems(src, cards), next: cards.length >= 15 ? String(page + 1) : null };
 }
 async function latest(src) {
-  const r = await fetchText2(join(src, "/"), { heads: heads(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchText(join(src, "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "la portada de Manhwa");
   return { items: asItems(src, cardsOf(r.text, 24)), next: null };
 }
 async function detail2(src, slug) {
-  const r = await fetchText2(join(src, "/manga/" + slug + "/"), { heads: heads(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchText(join(src, "/manga/" + slug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -632,7 +701,7 @@ function capNum(s) {
   return Number.isFinite(n) ? n : NaN;
 }
 async function chapter2(src, slug, chapterSlug) {
-  const r = await fetchText2(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchText(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -976,11 +1045,11 @@ function madaraCards(html, src, limit) {
 }
 async function madaraSearch(src, q) {
   try {
-    const r = await fetchText2(madaraHost(src) + "/wp-admin/admin-ajax.php", {
+    const r = await fetchText(madaraHost(src) + "/wp-admin/admin-ajax.php", {
       heads: heads2({ "X-Requested-With": "XMLHttpRequest", Referer: madaraHost(src) + "/", "Content-Type": "application/x-www-form-urlencoded" }),
       method: "POST",
       body: "action=wp-manga-search-manga&title=" + encodeURIComponent(q),
-      timeoutMs: timeoutFor2(src)
+      timeoutMs: timeoutFor(src)
     });
     if (r.ok && r.text) {
       const d = JSON.parse(r.text);
@@ -996,7 +1065,7 @@ async function madaraSearch(src, q) {
     }
   } catch {
   }
-  const r2 = await fetchText2(madaraHost(src) + "/?s=" + encodeURIComponent(q) + "&post_type=wp-manga", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r2 = await fetchText(madaraHost(src) + "/?s=" + encodeURIComponent(q) + "&post_type=wp-manga", { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r2.ok) netError(new Error("HTTP " + r2.status), "la búsqueda en " + madaraHost(src));
   return { items: asItems2(src, madaraCards(r2.text, src, 30)) };
 }
@@ -1008,7 +1077,7 @@ async function madaraHome(src) {
     { id: "rating", t: "Mejor valoradas", te: "Top rated", ob: "rating" },
     { id: "new", t: "Nuevas", te: "New", ob: "new" }
   ];
-  const settled = await Promise.allSettled(specs.map((s) => fetchText2(madaraHost(src) + "/novela/?m_orderby=" + s.ob, { heads: heads2(), timeoutMs: timeoutFor2(src) })));
+  const settled = await Promise.allSettled(specs.map((s) => fetchText(madaraHost(src) + "/novela/?m_orderby=" + s.ob, { heads: heads2(), timeoutMs: timeoutFor(src) })));
   const out = [];
   for (let i = 0; i < specs.length; i++) {
     const p = settled[i];
@@ -1019,7 +1088,7 @@ async function madaraHome(src) {
   return out;
 }
 async function madaraDetail(src, slug) {
-  const r = await fetchText2(madaraHost(src) + "/novela/" + slug + "/", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/", { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1056,10 +1125,10 @@ async function madaraChapters(src, slug, detailHtml) {
 async function madaraChaptersNet(src, slug, detailHtml) {
   const caps = [];
   try {
-    const r = await fetchText2(madaraHost(src) + "/novela/" + slug + "/ajax/chapters/", {
+    const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/ajax/chapters/", {
       heads: heads2({ "X-Requested-With": "XMLHttpRequest", Referer: madaraHost(src) + "/novela/" + slug + "/", "Content-Type": "application/x-www-form-urlencoded" }),
       method: "POST",
-      timeoutMs: timeoutFor2(src)
+      timeoutMs: timeoutFor(src)
     });
     if (r.ok && r.text && /chapter/i.test(r.text.slice(0, 6e4))) {
       const re = /href="https?:\/\/[^"]*\/novela\/[a-z0-9-]+\/((?:[a-z0-9-]+\/)?capitulo-[0-9.]+(?:-[0-9]+)?)\/"/gi;
@@ -1085,7 +1154,7 @@ async function madaraChaptersNet(src, slug, detailHtml) {
 }
 async function madaraChapter(src, slug, capId) {
   const url = madaraHost(src) + "/novela/" + slug + "/" + capId + "/";
-  const r = await fetchText2(url, { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchText(url, { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1122,7 +1191,7 @@ function skPoster(n, thumb) {
   return n && n.image ? SK_API + "/v1/media/novels/" + (thumb ? "thumbs/" : "") + encodeURIComponent(String(n.image)) : void 0;
 }
 async function skSearch(src, q) {
-  const r = await fetchJson(SK_API + "/v1/novels?q=" + encodeURIComponent(q) + "&limit=40", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(SK_API + "/v1/novels?q=" + encodeURIComponent(q) + "&limit=40", { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "la búsqueda en Skynovels");
   const items = [];
   for (const n of r.body.items || []) {
@@ -1138,7 +1207,7 @@ async function skSearch(src, q) {
   return { items: items.filter(Boolean) };
 }
 async function skHome(src) {
-  const r = await fetchJson(SK_API + "/v1/home", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(SK_API + "/v1/home", { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body) return [];
   const b = r.body;
   const secs = [
@@ -1169,7 +1238,7 @@ async function skHome(src) {
   return out;
 }
 async function skDetail(src, slug) {
-  const r = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body || !r.body.id) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1181,7 +1250,7 @@ async function skDetail(src, slug) {
   const n = r.body;
   const chapters2 = [];
   const rawCaps = await capsOf(src, slug, async () => {
-    const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+    const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads2(), timeoutMs: timeoutFor(src) });
     return Array.isArray(cr.body) ? cr.body : cr.body && cr.body.items || [];
   });
   for (const c of rawCaps) {
@@ -1205,7 +1274,7 @@ async function skDetail(src, slug) {
   };
 }
 async function skChapter(src, slug, capId) {
-  const r = await fetchJson(SK_API + "/v1/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(SK_API + "/v1/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1235,7 +1304,7 @@ function mkCover(u) {
   return /^https:/i.test(u) ? u : "https://matchanovels.com" + String(u);
 }
 async function mkSearch(src, q) {
-  const r = await fetchJson(MK_API + "/novels?search=" + encodeURIComponent(q) + "&page=1", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(MK_API + "/novels?search=" + encodeURIComponent(q) + "&page=1", { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "la búsqueda en MatchaNovels");
   const items = [];
   for (const n of r.body.items || []) {
@@ -1257,7 +1326,7 @@ async function mkHome(src) {
     { id: "completed", t: "Completadas", te: "Completed", p: "page=1&status=completed" },
     { id: "ongoing", t: "En curso", te: "Ongoing", p: "page=1&status=ongoing" }
   ];
-  const settled = await Promise.allSettled(specs.map((s) => fetchJson(MK_API + "/novels?" + s.p, { heads: heads2(), timeoutMs: timeoutFor2(src) })));
+  const settled = await Promise.allSettled(specs.map((s) => fetchJson(MK_API + "/novels?" + s.p, { heads: heads2(), timeoutMs: timeoutFor(src) })));
   const out = [];
   for (let i = 0; i < specs.length; i++) {
     const p = settled[i];
@@ -1272,7 +1341,7 @@ async function mkHome(src) {
   return out;
 }
 async function mkDetail(src, slug) {
-  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body || !r.body.id) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1283,7 +1352,7 @@ async function mkDetail(src, slug) {
   }
   const n = r.body;
   const rawCaps = await capsOf(src, slug, async () => {
-    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor(src) });
     return Array.isArray(cr.body) ? cr.body : [];
   });
   const chapters2 = rawCaps.map((c) => ({
@@ -1303,7 +1372,7 @@ async function mkDetail(src, slug) {
   };
 }
 async function mkChapter(src, slug, capId) {
-  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1315,7 +1384,7 @@ async function mkChapter(src, slug, capId) {
   const b = r.body;
   const p = htmlToParagraphs(b.content || "");
   const caps = (await capsOf(src, slug, async () => {
-    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor2(src) });
+    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor(src) });
     return Array.isArray(cr.body) ? cr.body : [];
   })).map((c) => String(c.chapter_number));
   const idx = caps.indexOf(String(capId));
@@ -1331,7 +1400,7 @@ async function mkChapter(src, slug, capId) {
 }
 var AS_API = "https://public-api.wordpress.com/rest/v1.1/sites/astralnovelstranslations.wordpress.com";
 async function asApi(path, src) {
-  const r = await fetchJson(AS_API + path, { heads: heads2(), timeoutMs: timeoutFor2(src) });
+  const r = await fetchJson(AS_API + path, { heads: heads2(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "Astral Novels");
   return r.body;
 }
@@ -1593,26 +1662,30 @@ async function loadHomeShelves(src, en) {
     }
     if (shelves.length) cacheSet(ck, shelves);
     if (!shelves.length) return probeCf(src, en, shelves);
-    return { shelves, cf: false, err: null };
+    return { shelves, cf: false, cfKind: null, err: null };
   } catch (e) {
     return probeCf(src, en, [], SOURCES[src].name + ": " + String(e && e.userMessage || e && e.message || "la fuente no respondió").slice(0, 140));
   }
 }
 async function probeCf(src, en, shelves, fallbackErr) {
   const base = FUENTES_URL[src];
-  if (base && cfChallengeSeen(base)) {
-    return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
-  }
-  if (base) {
+  let kind = null;
+  const st = base ? cfStateFor(base) : null;
+  if (st) kind = st.kind;
+  if (!kind && base) {
     try {
-      const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
-      if (isCfChallenge(ctrl.status, ctrl.text)) {
-        return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
-      }
+      const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: 12e3 });
+      kind = cfClassify(ctrl.status, ctrl.text);
     } catch {
     }
   }
-  return { shelves, cf: false, err: fallbackErr || (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
+  if (kind === "challenge") {
+    return { shelves, cf: true, cfKind: "challenge", err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+  }
+  if (kind === "blocked") {
+    return { shelves, cf: true, cfKind: "blocked", err: en ? SOURCES[src].name + " is blocked by a Cloudflare rule" : SOURCES[src].name + " está bloqueada por una regla de Cloudflare" };
+  }
+  return { shelves, cf: false, cfKind: null, err: fallbackErr || (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
 }
 async function fetchOneRow(spec) {
   const a = adapter2(spec.src);
@@ -1848,16 +1921,17 @@ function viewMain(ctx) {
     }
   } else if (state.herr) {
     if (state.cf && ctx.device !== "tv") {
+      const blocked = state.cfKind === "blocked";
       kids.push({ type: "Column", gap: 12, padding: 16, children: [
         {
           type: "errorState",
           icon: "security",
-          title: "Desafío de Cloudflare",
-          titleEn: "Cloudflare challenge",
-          text: SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y Kino recordará la sesión para esta fuente.",
-          textEn: SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and Kino will remember the session for this source."
+          title: blocked ? "La fuente está bloqueada" : "Desafío de Cloudflare",
+          titleEn: blocked ? "The source is blocked" : "Cloudflare challenge",
+          text: blocked ? SOURCES[src].name + " responde con una regla de Cloudflare (acceso denegado por IP o firma del navegador). Puedes intentar el pre-clearance, pero puede no bastar: prueba también otra red (Wi-Fi o datos móviles) o más tarde." : SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y las siguientes peticiones pasarán con la cookie que deja (pre-clearance).",
+          textEn: blocked ? SOURCES[src].name + " answers with a Cloudflare rule (denied by IP or browser signature). Pre-clearance may not be enough: try another network (Wi-Fi or mobile data) or later." : SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and the next requests pass with the cookie it leaves (pre-clearance)."
         },
-        { type: "Button", variant: "primary", icon: "security", labelText: "Resolver desafío de Cloudflare", labelTextEn: "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
+        { type: "Button", variant: "primary", icon: "security", labelText: blocked ? "Intentar pre-clearance" : "Resolver desafío de Cloudflare", labelTextEn: blocked ? "Try pre-clearance" : "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
         { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "tabSrc", arg: src } }
       ] });
     } else {
@@ -2150,10 +2224,31 @@ function viewLeer(ctx) {
   root.layout = "fill";
   return root;
 }
+function cfCard(en) {
+  const kids = [];
+  for (const k of ["zo", "dv", "sk"]) {
+    const base = FUENTES_URL[k];
+    if (!base || !SOURCES[k]) continue;
+    const st = cfStatus(base);
+    let estado = en ? "no session saved" : "sin sesión guardada";
+    if (st && st.cookie) estado = (en ? "cookie " : "cookie ") + st.cookie.names.join(", ") + (en ? " saved, " : " guardada, hace ") + st.cookie.ageH + " h";
+    if (st && st.kind) estado += (en ? " · the source answers a " : " · la fuente responde ") + (st.kind === "blocked" ? en ? "block rule" : "regla de bloqueo" : en ? "challenge" : "desafío");
+    kids.push({ type: "Row", gap: 4, padding: { x: 16, y: 4 }, children: [
+      { type: "Text", text: SOURCES[k].name + ": " + estado, textEn: SOURCES[k].name + ": " + estado, style: "body", expand: true },
+      { type: "TextButton", labelText: "Resolver", labelTextEn: "Solve", onPressed: { event: "cfAbrir", arg: k } },
+      ...st && st.cookie ? [{ type: "TextButton", labelText: "Borrar", labelTextEn: "Clear", onPressed: { event: "cfBorrar", arg: k } }] : []
+    ] });
+  }
+  return kids;
+}
 function viewAjustes(ctx) {
+  const en = ctx.lang === "en";
   const kids = [
     { type: "Text", text: "Cuentas y ajustes del plugin. También están en Ajustes ▸ Plugins ▸ Multi-verso Kin.", textEn: "Accounts and plugin settings. Also in Settings ▸ Plugins ▸ Multi-verso Kin.", style: "body", padding: 16 },
     { type: "settings", keys: ["cuentas", "zt_user", "zt_pass", "log_zt", "zt_token", "win_zt", "ms_user", "ms_pass", "log_ms", "ms_cookie", "win_ms", "ocultarPago", "salir"], onSaved: "saved" },
+    { type: "Text", text: "Pre-clearance de Cloudflare", textEn: "Cloudflare pre-clearance", style: "h4", padding: { x: 16, y: 8 } },
+    ...cfCard(en),
+    { type: "Text", text: "«Resolver» abre el sitio en una ventana del plugin: completa el desafío una vez y Kino guarda su cookie de sesión (cf_clearance) para esa fuente; las siguientes peticiones la llevan solas mientras la cookie valga. Si el sitio bloquea por regla de IP o firma del navegador, la cookie no basta: prueba otra red (Wi-Fi o datos móviles) o más tarde.", textEn: "«Solve» opens the site in a plugin window: complete the challenge once and Kino keeps its session cookie (cf_clearance) for that source; the next requests carry it automatically while it stays valid. If the site blocks by an IP or browser-signature rule, the cookie is not enough: try another network or later.", style: "body", color: "muted", padding: { x: 16, y: 8 } },
     { type: "Text", text: "Temas de la app (8)", textEn: "App themes (8)", style: "h4", padding: { x: 16, y: 8 } },
     { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: THEMES.map((t) => ({
       type: "Button",
@@ -2216,16 +2311,18 @@ async function screenEvent(ctx) {
       const cached = cacheGet(cacheKey("home", src), TTL.rows);
       if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
       const sh = await loadHomeShelves(src, en);
-      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), error: null, done: true, capsOpen: false } };
+      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), cfKind: sh.cfKind || null, error: null, done: true, capsOpen: false } };
     }
     case "cfAbrir": {
       const argL = String(arg || "");
       const fsrc = argL.indexOf("|") >= 0 ? argL.split("|")[0] : String(arg || state && state.hsrc || "");
       const base = FUENTES_URL[fsrc];
       if (!base || !SOURCES[fsrc]) return null;
-      const disponible = typeof kino.visualBrowser === "object" && kino.visualBrowser && kino.visualBrowser.available === true;
+      const host = base.replace(/^https?:\/\//, "");
+      const vb = kino.visualBrowser;
+      const disponible = Boolean(vb && typeof vb.open === "function" && vb.available !== false);
       if (ctx.device === "tv" || !disponible) {
-        return { toast: en ? "The visual browser is not available on this device" : "El navegador visual no está disponible en este dispositivo" };
+        return { toast: en ? "The visual browser needs Kino 0.9.81 or newer on this device" : "El navegador visual necesita Kino 0.9.81 o más nuevo en este dispositivo" };
       }
       let r = null;
       try {
@@ -2239,24 +2336,50 @@ async function screenEvent(ctx) {
       } catch (e) {
         const code = String(e && e.message || e);
         if (code.indexOf("busy") >= 0) return { toast: en ? "A window is already open" : "Ya hay una ventana abierta" };
-        return { toast: (en ? "Could not open the window: " : "No se pudo abrir: ") + code.slice(0, 60) };
+        return { toast: (en ? "Could not open the window: " : "No se pudo abrir la ventana: ") + code.slice(0, 60) };
       }
-      if (r && r.status === "done" && r.cookies && Object.keys(r.cookies).length) {
+      if (r && r.status === "done" && r.cookies && r.cookies.cf_clearance) {
         try {
-          cfSaveCookies(base.replace(/^https?:\/\//, ""), r.cookies);
+          cfSaveCookies(host, r.cookies);
         } catch {
         }
+        let kind = null;
         try {
-          const sh = await loadHomeShelves(fsrc, en);
-          return {
-            toast: en ? "Challenge solved" : "Desafío resuelto",
-            state: { hsrc: fsrc, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), done: true }
-          };
+          const ctrl = await fetchText(base + "/", { timeoutMs: 12e3 });
+          kind = cfClassify(ctrl.status, ctrl.text);
         } catch {
         }
-        return { toast: en ? "Challenge solved" : "Desafío resuelto" };
+        if (kind === null) {
+          try {
+            cfClearChallenge(host);
+          } catch {
+          }
+          try {
+            const sh = await loadHomeShelves(fsrc, en);
+            return {
+              toast: en ? "Pre-clearance active: the source answers again" : "Pre-clearance activa: la fuente ya responde",
+              state: { hsrc: fsrc, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), cfKind: sh.cfKind || null, done: true }
+            };
+          } catch {
+          }
+          return { toast: en ? "Pre-clearance active" : "Pre-clearance activa" };
+        }
+        if (kind === "blocked") {
+          return { toast: en ? "The site still blocks plugin requests (IP or browser-signature rule): try another network or later" : "El sitio sigue bloqueando las peticiones (regla por IP o firma del navegador): prueba otra red (Wi-Fi o datos móviles) o más tarde", state: Object.assign({}, state, { cfts: Date.now() }) };
+        }
+        return { toast: en ? "The site challenged again: try once more" : "El sitio volvió a retar: inténtalo otra vez", state: Object.assign({}, state, { cfts: Date.now() }) };
+      }
+      if (r && r.status === "done") {
+        return { toast: en ? "The site handed no session cookie (cf_clearance): it probably blocks without a solvable challenge" : "La web no entregó la cookie de sesión (cf_clearance): probablemente bloquea sin desafío soluble", state: Object.assign({}, state, { cfts: Date.now() }) };
       }
       return { toast: en ? "The challenge was not completed" : "El desafío no se completó" };
+    }
+    case "cfBorrar": {
+      const fsrc = String(arg || "");
+      const base = FUENTES_URL[fsrc];
+      if (!base) return null;
+      cfForget(base);
+      return { toast: en ? "Pre-clearance cleared" : "Pre-clearance borrada", state: Object.assign({}, state, { cfts: Date.now() }) };
     }
     case "capsToggle": {
       const abrir = !(state && state.capsOpen);
@@ -2504,7 +2627,8 @@ async function handleOpen(ctx) {
       hsrc: tab,
       hrows: sh.shelves,
       herr: sh.err,
-      cf: Boolean(sh.cf)
+      cf: Boolean(sh.cf),
+      cfKind: sh.cfKind || null
     }
   };
 }

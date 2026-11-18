@@ -39,10 +39,16 @@ test("la jarra de cookies CF entra en fetchText y se guarda por host", () => {
   assert.ok(env.includes('const CFJAR_KEY = "cfjar"'), "falta la clave de la jarra");
 });
 
-test("isCfChallenge reconoce los desafíos (403/429/503 con sus marcas)", () => {
-  assert.ok(env.includes("challenge-platform") && env.includes("just a moment"), "faltan las marcas");
-  const m = env.match(/status !== 403 && status !== 429 && status !== 503/);
-  assert.ok(m, "los códigos del desafío no son los correctos");
+test("cfClassify separa desafío soluble de bloqueo de firewall (403/429/503)", () => {
+  assert.ok(env.includes("export function cfClassify"), "falta la clasificación");
+  assert.ok(env.includes("challenge-platform") && env.includes("just a moment"), "faltan las marcas del desafío");
+  // bloqueo (1010/1020): la regla corre antes del desafío; cf_clearance NO lo salta
+  assert.ok(env.includes("used cloudflare to restrict access"), "falta la marca 1010 de zonatmo.org");
+  assert.ok(env.includes("sorry, you have been blocked"), "falta la marca 1020 de devilnovels.com");
+  // los códigos del muro
+  assert.ok(env.includes("status === 403 || status === 429 || status === 503"), "los códigos del muro no son los correctos");
+  // desafío servido con 200: solo marcas muy fuertes
+  assert.ok(env.includes('status === 200 && /challenge-platform'), "el desafío con 200 no se reconoce");
 });
 
 test("cfAbrir abre la ventana visual con el UA interno y recarga la fuente", () => {
@@ -53,17 +59,23 @@ test("cfAbrir abre la ventana visual con el UA interno y recarga la fuente", () 
   assert.ok(cf.includes("cfSaveCookies"), "no guarda la jarra");
   assert.ok(cf.includes("argL.split(\"|\")[0]"), "no extrae la fuente de un ref compuesto");
   assert.ok(cf.includes("ctx.device === \"tv\""), "no protege la TV");
-  assert.ok(cf.includes("available === true"), "no comprueba la disponibilidad");
+  // disponibilidad relajada: falta de available NO se toma como ausente (Kino 0.9.81+)
+  assert.ok(cf.includes("vb.available !== false"), "no comprueba la disponibilidad con tolerancia");
+  // pre-clearance: tras resolver, se verifica con una petición real antes de prometer
+  assert.ok(cf.includes("VERIFICACIÓN"), "no verifica la cookie con una petición real");
+  assert.ok(cf.includes("Pre-clearance activa"), "no informa el estado real tras resolver");
 });
 
 test("el Home muestra el panel de desafío y el detalle lo ofrece tras un error CF", () => {
   assert.ok(src.includes('"Desafío de Cloudflare"'), "falta el título del panel");
+  assert.ok(src.includes('"La fuente está bloqueada"'), "falta el título honesto para bloqueo 1010/1020");
+  assert.ok(src.includes('"Intentar pre-clearance"'), "el bloqueo no ofrece el intento de pre-clearance");
   assert.ok(src.includes('onPressed: { event: "cfAbrir", arg: src }'), "el botón del Home no lleva la fuente");
   assert.ok(src.includes("function detailErrorBox"), "el detalle no tiene su caja de error CF");
   assert.ok(src.includes('onPressed: { event: "cfAbrir", arg: ref }'), "el botón del detalle no lleva el ref");
-  const sonda = src.slice(src.indexOf("async function probeCf"), src.indexOf("/** Sonda") + 1e9 || src.length);
   const probe = src.slice(src.indexOf("async function probeCf"));
-  assert.ok(probe.includes("isCfChallenge(ctrl.status, ctrl.text)"), "la sonda no usa isCfChallenge");
+  assert.ok(probe.includes("cfClassify(ctrl.status, ctrl.text)"), "la sonda no clasifica el control");
+  assert.ok(probe.includes("cfStateFor(base)"), "la sonda ignora la marca persistente");
   // corre en AMBOS caminos de fallo: sin filas y el catch (los adaptadores lanzan con 403)
   assert.ok(src.includes("return probeCf(src, en, shelves);") && src.includes("return probeCf(src, en, [],"), "la sonda no cubre el catch");
 });

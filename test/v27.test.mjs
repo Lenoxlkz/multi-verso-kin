@@ -36,7 +36,8 @@ test("la detección del desafío nace del registro HTTP (sin petición extra)", 
   assert.ok(env.includes("function noteHttp") && env.includes("function cfChallengeSeen"), "falta el registro");
   assert.ok(env.includes("noteHttp(url, r.status, text)"), "fetchText no registra");
   assert.ok(env.includes("export function cfChallengeSeen"), "el registro no se exporta");
-  assert.ok(src.includes("cfChallengeSeen(base)"), "la sonda no consulta el registro primero");
+  assert.ok(src.includes("cfStateFor(base)"), "la sonda no consulta la marca persistente primero");
+  assert.ok(env.includes("cfMarkChallenge(host, kind)"), "noteHttp no marca el estado persistente");
 });
 
 test("isCfChallenge cubre el desafío JS de zonatmo.org", () => {

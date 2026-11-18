@@ -13,7 +13,7 @@
 //  - Colores: el tema del plugin (violeta) tiñe las páginas del plugin por defecto; los 8 temas de la app
 //    se ponen con un botón en Ajustes.
 
-import { cfChallengeSeen, imgHeads, cfSaveCookies, isCfChallenge, UA, SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
+import { cfChallengeSeen, cfClassify, cfStateFor, cfStatus, cfForget, cfClearChallenge, cfSaveCookies, imgHeads, isCfChallenge, fetchText, timeoutFor, UA, SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
 import * as zt from "./zonatmo.js";
 import * as ms from "./manhwa.js";
 import * as nv from "./novels.js";
@@ -168,30 +168,34 @@ async function loadHomeShelves(src, en) {
     }
     if (shelves.length) cacheSet(ck, shelves);
     if (!shelves.length) return probeCf(src, en, shelves);
-    return { shelves, cf: false, err: null };
+    return { shelves, cf: false, cfKind: null, err: null };
   } catch (e) {
     // los adaptadores lanzan con HTTP 403/503: la sonda decide si fue un desafío de Cloudflare
     return probeCf(src, en, [], SOURCES[src].name + ": " + String((e && e.userMessage) || (e && e.message) || "la fuente no respondió").slice(0, 140));
   }
 }
 
-/** Sonda de control: ¿la fuente está detrás de un desafío interactivo de Cloudflare? */
+/** Sonda de control: ¿la fuente está tras un muro de Cloudflare y de qué tipo es? */
 async function probeCf(src, en, shelves, fallbackErr) {
   const base = FUENTES_URL[src];
-  // 1) los resultados HTTP de esta llamada ya muestran el desafío: nada que pedir
-  if (base && cfChallengeSeen(base)) {
-    return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
-  }
-  // 2) si no, un control directo decide (una petición, solo en fallo)
-  if (base) {
+  let kind = null;
+  // 1) lo que este host ya respondió (esta llamada o la marca persistente) decide primero
+  const st = base ? cfStateFor(base) : null;
+  if (st) kind = st.kind;
+  // 2) si no, un control directo decide (una petición, solo en fallo, con plazo completo)
+  if (!kind && base) {
     try {
-      const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
-      if (isCfChallenge(ctrl.status, ctrl.text)) {
-        return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
-      }
+      const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: 12000 });
+      kind = cfClassify(ctrl.status, ctrl.text);
     } catch { /* sin red: el error genérico basta */ }
   }
-  return { shelves, cf: false, err: fallbackErr || (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
+  if (kind === "challenge") {
+    return { shelves, cf: true, cfKind: "challenge", err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+  }
+  if (kind === "blocked") {
+    return { shelves, cf: true, cfKind: "blocked", err: en ? SOURCES[src].name + " is blocked by a Cloudflare rule" : SOURCES[src].name + " está bloqueada por una regla de Cloudflare" };
+  }
+  return { shelves, cf: false, cfKind: null, err: fallbackErr || (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
 }
 
 async function fetchOneRow(spec) {
@@ -451,11 +455,16 @@ function viewMain(ctx) {
     }
   } else if (state.herr) {
     if (state.cf && ctx.device !== "tv") {
+      const blocked = state.cfKind === "blocked";
       kids.push({ type: "Column", gap: 12, padding: 16, children: [
-        { type: "errorState", icon: "security", title: "Desafío de Cloudflare", titleEn: "Cloudflare challenge",
-          text: SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y Kino recordará la sesión para esta fuente.",
-          textEn: SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and Kino will remember the session for this source." },
-        { type: "Button", variant: "primary", icon: "security", labelText: "Resolver desafío de Cloudflare", labelTextEn: "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
+        { type: "errorState", icon: "security", title: blocked ? "La fuente está bloqueada" : "Desafío de Cloudflare", titleEn: blocked ? "The source is blocked" : "Cloudflare challenge",
+          text: blocked
+            ? SOURCES[src].name + " responde con una regla de Cloudflare (acceso denegado por IP o firma del navegador). Puedes intentar el pre-clearance, pero puede no bastar: prueba también otra red (Wi-Fi o datos móviles) o más tarde."
+            : SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y las siguientes peticiones pasarán con la cookie que deja (pre-clearance).",
+          textEn: blocked
+            ? SOURCES[src].name + " answers with a Cloudflare rule (denied by IP or browser signature). Pre-clearance may not be enough: try another network (Wi-Fi or mobile data) or later."
+            : SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and the next requests pass with the cookie it leaves (pre-clearance)." },
+        { type: "Button", variant: "primary", icon: "security", labelText: blocked ? "Intentar pre-clearance" : "Resolver desafío de Cloudflare", labelTextEn: blocked ? "Try pre-clearance" : "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
         { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "tabSrc", arg: src } },
       ] });
     } else {
@@ -737,10 +746,33 @@ function viewLeer(ctx) {
 
 // ---------- vista: ajustes ----------
 
+/** Tarjeta de pre-clearance: una fila por fuente con muro conocido (estado real de la jarra). */
+function cfCard(en) {
+  const kids = [];
+  for (const k of ["zo", "dv", "sk"]) {
+    const base = FUENTES_URL[k];
+    if (!base || !SOURCES[k]) continue;
+    const st = cfStatus(base);
+    let estado = en ? "no session saved" : "sin sesión guardada";
+    if (st && st.cookie) estado = (en ? "cookie " : "cookie ") + st.cookie.names.join(", ") + (en ? " saved, " : " guardada, hace ") + st.cookie.ageH + " h";
+    if (st && st.kind) estado += (en ? " · the source answers a " : " · la fuente responde ") + (st.kind === "blocked" ? (en ? "block rule" : "regla de bloqueo") : (en ? "challenge" : "desafío"));
+    kids.push({ type: "Row", gap: 4, padding: { x: 16, y: 4 }, children: [
+      { type: "Text", text: SOURCES[k].name + ": " + estado, textEn: SOURCES[k].name + ": " + estado, style: "body", expand: true },
+      { type: "TextButton", labelText: "Resolver", labelTextEn: "Solve", onPressed: { event: "cfAbrir", arg: k } },
+      ...(st && st.cookie ? [{ type: "TextButton", labelText: "Borrar", labelTextEn: "Clear", onPressed: { event: "cfBorrar", arg: k } }] : []),
+    ] });
+  }
+  return kids;
+}
+
 function viewAjustes(ctx) {
+  const en = ctx.lang === "en";
   const kids = [
     { type: "Text", text: "Cuentas y ajustes del plugin. También están en Ajustes ▸ Plugins ▸ Multi-verso Kin.", textEn: "Accounts and plugin settings. Also in Settings ▸ Plugins ▸ Multi-verso Kin.", style: "body", padding: 16 },
     { type: "settings", keys: ["cuentas", "zt_user", "zt_pass", "log_zt", "zt_token", "win_zt", "ms_user", "ms_pass", "log_ms", "ms_cookie", "win_ms", "ocultarPago", "salir"], onSaved: "saved" },
+    { type: "Text", text: "Pre-clearance de Cloudflare", textEn: "Cloudflare pre-clearance", style: "h4", padding: { x: 16, y: 8 } },
+    ...cfCard(en),
+    { type: "Text", text: "«Resolver» abre el sitio en una ventana del plugin: completa el desafío una vez y Kino guarda su cookie de sesión (cf_clearance) para esa fuente; las siguientes peticiones la llevan solas mientras la cookie valga. Si el sitio bloquea por regla de IP o firma del navegador, la cookie no basta: prueba otra red (Wi-Fi o datos móviles) o más tarde.", textEn: "«Solve» opens the site in a plugin window: complete the challenge once and Kino keeps its session cookie (cf_clearance) for that source; the next requests carry it automatically while it stays valid. If the site blocks by an IP or browser-signature rule, the cookie is not enough: try another network or later.", style: "body", color: "muted", padding: { x: 16, y: 8 } },
     { type: "Text", text: "Temas de la app (8)", textEn: "App themes (8)", style: "h4", padding: { x: 16, y: 8 } },
     { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: THEMES.map((t) => ({
       type: "Button", variant: "secondary", labelText: t.name.es, labelTextEn: t.name.en, onPressed: { go: { useTheme: { theme: t.id } } }, span: 6, fill: true,
@@ -803,19 +835,23 @@ export async function screenEvent(ctx) {
       const cached = cacheGet(cacheKey("home", src), TTL.rows);
       if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
       const sh = await loadHomeShelves(src, en);
-      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), error: null, done: true, capsOpen: false } };
+      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), cfKind: sh.cfKind || null, error: null, done: true, capsOpen: false } };
     }
 
     case "cfAbrir": {
-      // ventana visual Kino-native: la persona completa el desafío de Cloudflare una vez.
-      // el detalle llega con un ref compuesto («zt|m|slug»): se extrae la fuente
+      // PRE-CLEARANCE: la persona resuelve el desafío UNA VEZ en la ventana del sitio (Turnstile)
+      // y Kino entrega cf_clearance; fetchText la manda después en cada petición a ese host, así
+      // que las siguientes llamadas pasan sin volver a retar mientras la cookie siga válida.
+      // El detalle llega con un ref compuesto («zo|m|slug»): se extrae la fuente.
       const argL = String(arg || "");
       const fsrc = argL.indexOf("|") >= 0 ? argL.split("|")[0] : String(arg || (state && state.hsrc) || "");
       const base = FUENTES_URL[fsrc];
       if (!base || !SOURCES[fsrc]) return null;
-      const disponible = typeof kino.visualBrowser === "object" && kino.visualBrowser && kino.visualBrowser.available === true;
+      const host = base.replace(/^https?:\/\//, "");
+      const vb = kino.visualBrowser;
+      const disponible = Boolean(vb && typeof vb.open === "function" && vb.available !== false);
       if (ctx.device === "tv" || !disponible) {
-        return { toast: en ? "The visual browser is not available on this device" : "El navegador visual no está disponible en este dispositivo" };
+        return { toast: en ? "The visual browser needs Kino 0.9.81 or newer on this device" : "El navegador visual necesita Kino 0.9.81 o más nuevo en este dispositivo" };
       }
       let r = null;
       try {
@@ -829,21 +865,46 @@ export async function screenEvent(ctx) {
       } catch (e) {
         const code = String((e && e.message) || e);
         if (code.indexOf("busy") >= 0) return { toast: en ? "A window is already open" : "Ya hay una ventana abierta" };
-        return { toast: (en ? "Could not open the window: " : "No se pudo abrir: ") + code.slice(0, 60) };
+        return { toast: (en ? "Could not open the window: " : "No se pudo abrir la ventana: ") + code.slice(0, 60) };
       }
-      if (r && r.status === "done" && r.cookies && Object.keys(r.cookies).length) {
-        try { cfSaveCookies(base.replace(/^https?:\/\//, ""), r.cookies); } catch { /* sigue */ }
-        // resuelto: recarga la fuente al instante (la jarra entra por cabecera Cookie)
+      if (r && r.status === "done" && r.cookies && r.cookies.cf_clearance) {
+        try { cfSaveCookies(host, r.cookies); } catch { /* sigue */ }
+        // VERIFICACIÓN con una petición real (la cookie entra sola por la jarra): el resultado
+        // decide el mensaje y nunca se promete algo que no funcionó.
+        let kind = null;
         try {
-          const sh = await loadHomeShelves(fsrc, en);
-          return {
-            toast: en ? "Challenge solved" : "Desafío resuelto",
-            state: { hsrc: fsrc, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), done: true },
-          };
-        } catch { /* la recarga puede fallar en red: queda resuelto igual */ }
-        return { toast: en ? "Challenge solved" : "Desafío resuelto" };
+          const ctrl = await fetchText(base + "/", { timeoutMs: 12000 });
+          kind = cfClassify(ctrl.status, ctrl.text);
+        } catch { /* sin red: la cookie se queda y la recarga lo contará */ }
+        if (kind === null) {
+          try { cfClearChallenge(host); } catch { /* sigue */ }
+          try {
+            const sh = await loadHomeShelves(fsrc, en);
+            return {
+              toast: en ? "Pre-clearance active: the source answers again" : "Pre-clearance activa: la fuente ya responde",
+              state: { hsrc: fsrc, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), cfKind: sh.cfKind || null, done: true },
+            };
+          } catch { /* la recarga puede fallar en red: la cookie queda guardada igual */ }
+          return { toast: en ? "Pre-clearance active" : "Pre-clearance activa" };
+        }
+        if (kind === "blocked") {
+          return { toast: en ? "The site still blocks plugin requests (IP or browser-signature rule): try another network or later" : "El sitio sigue bloqueando las peticiones (regla por IP o firma del navegador): prueba otra red (Wi-Fi o datos móviles) o más tarde", state: Object.assign({}, state, { cfts: Date.now() }) };
+        }
+        return { toast: en ? "The site challenged again: try once more" : "El sitio volvió a retar: inténtalo otra vez", state: Object.assign({}, state, { cfts: Date.now() }) };
+      }
+      if (r && r.status === "done") {
+        return { toast: en ? "The site handed no session cookie (cf_clearance): it probably blocks without a solvable challenge" : "La web no entregó la cookie de sesión (cf_clearance): probablemente bloquea sin desafío soluble", state: Object.assign({}, state, { cfts: Date.now() }) };
       }
       return { toast: en ? "The challenge was not completed" : "El desafío no se completó" };
+    }
+
+    case "cfBorrar": {
+      // borra la pre-clearance guardada de una fuente (botón de la tarjeta de Ajustes)
+      const fsrc = String(arg || "");
+      const base = FUENTES_URL[fsrc];
+      if (!base) return null;
+      cfForget(base);
+      return { toast: en ? "Pre-clearance cleared" : "Pre-clearance borrada", state: Object.assign({}, state, { cfts: Date.now() }) };
     }
 
     case "capsToggle": {
@@ -1100,6 +1161,7 @@ async function handleOpen(ctx) {
       hrows: sh.shelves,
       herr: sh.err,
       cf: Boolean(sh.cf),
+      cfKind: sh.cfKind || null,
     },
   };
 }

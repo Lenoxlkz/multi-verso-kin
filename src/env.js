@@ -187,6 +187,74 @@ export function cfCookieHead(url) {
   } catch { return undefined; }
 }
 
+// ---------- estado Cloudflare PERSISTENTE por host ----------
+// La marca vive en kino.storage («cfseen»): a diferencia del registro en memoria (20 s),
+// sobrevive al cierre del plugin, así el panel de Cloudflare no desaparece a los pocos segundos
+// mientras el sitio siga reteniendo o bloqueando (TTL 24 h).
+const CFSEEN_KEY = "cfseen";
+const CFSEEN_TTL = 24 * 3600 * 1000;
+
+function cfSeenLoad() {
+  try { const r = kino.storage.get(CFSEEN_KEY); return r ? JSON.parse(r) : {}; } catch { return {}; }
+}
+
+export function cfMarkChallenge(host, kind) {
+  try {
+    const jar = cfSeenLoad();
+    jar[String(host).replace(/^https?:\/\//, "")] = { t: Date.now(), k: kind === "blocked" ? "blocked" : "challenge" };
+    kino.storage.set(CFSEEN_KEY, JSON.stringify(jar));
+  } catch { /* optativa */ }
+}
+
+export function cfClearChallenge(host) {
+  try {
+    const jar = cfSeenLoad();
+    host = String(host).replace(/^https?:\/\//, "");
+    if (jar[host]) { delete jar[host]; kino.storage.set(CFSEEN_KEY, JSON.stringify(jar)); }
+  } catch { /* optativa */ }
+}
+
+/** Estado Cloudflare persistente del host: { kind, ageMs } o null. */
+export function cfStateFor(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return null;
+    const e = cfSeenLoad()[m[1].replace(/^https?:\/\//, "")];
+    if (!e || !e.k) return null;
+    const ageMs = Date.now() - (e.t || 0);
+    if (ageMs > CFSEEN_TTL) return null;
+    return { kind: e.k, ageMs };
+  } catch { return null; }
+}
+
+/** Borra la pre-clearance (cookies) y la marca de un host (botón de Ajustes). */
+export function cfForget(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return;
+    const host = m[1].replace(/^https?:\/\//, "");
+    const jar = cfLoad();
+    if (jar[host]) { delete jar[host]; kino.storage.set(CFJAR_KEY, JSON.stringify(jar)); }
+    cfClearChallenge(host);
+  } catch { /* optativa */ }
+}
+
+/** Estado legible para Ajustes: { kind, ageMs, cookie: { ageH, names } } o null si no hay nada. */
+export function cfStatus(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return null;
+    const host = m[1].replace(/^https?:\/\//, "");
+    const st = cfStateFor(hostUrl);
+    const e = cfLoad()[host];
+    const cookie = e && e.c && Object.keys(e.c).length
+      ? { ageH: Math.round((Date.now() - (e.t || 0)) / 360000) / 10, names: Object.keys(e.c) }
+      : null;
+    if (!st && !cookie) return null;
+    return { kind: st && st.kind, ageMs: st && st.ageMs, cookie };
+  } catch { return null; }
+}
+
 // Registro corto de los últimos resultados HTTP por host: permite detectar un desafío de
 // Cloudflare a partir de las respuestas que ya llegaron (sin peticiones de control extra).
 let httpLog = [];
@@ -195,13 +263,19 @@ function noteHttp(url, status, text) {
   try {
     const m = /^(https?:\/\/[^\/]+)/.exec(String(url || ""));
     if (!m) return;
-    httpLog.push({ host: m[1], status: Number(status) || 0, sample: String(text || "").slice(0, 4000), t: Date.now() });
+    const host = m[1];
+    httpLog.push({ host, status: Number(status) || 0, sample: String(text || "").slice(0, 4000), t: Date.now() });
     if (httpLog.length > 12) httpLog = httpLog.slice(-12);
+    // marca o borra el estado persistente según lo que RESPONDIÓ (cero peticiones extra)
+    const kind = cfClassify(Number(status) || 0, text);
+    if (kind) cfMarkChallenge(host, kind);
+    else if (Number(status) === 200) cfClearChallenge(host);
   } catch { /* el diagnóstico no debe romper nada */ }
 }
 
 /** ¿Hubo un desafío de Cloudflare en este host en la última llamada (20 s)? */
 export function cfChallengeSeen(hostUrl) {
+  if (cfStateFor(hostUrl)) return true;
   try {
     const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
     if (!m) return false;
@@ -210,11 +284,30 @@ export function cfChallengeSeen(hostUrl) {
   } catch { return false; }
 }
 
-/** ¿La respuesta es un desafío interactivo de Cloudflare? (403/429/503 con sus marcas). */
-export function isCfChallenge(status, text) {
-  if (status !== 403 && status !== 429 && status !== 503) return false;
+/**
+ * Qué responde Cloudflare y QUÉ SE PUEDE HACER con ello: hay dos muros que se parecen.
+ * - "challenge": desafío soluble (Just a moment, challenge-platform…). La ventana lo resuelve
+ *   una vez y deja cf_clearance: las siguientes peticiones pasan mientras la cookie valga
+ *   (pre-clearance; Turnstile emite la cookie tras la verificación satisfactoria).
+ * - "blocked": bloqueo de firewall (1010 firma baneada «Access denied… used Cloudflare»,
+ *   1020 «Sorry, you have been blocked»): la regla corre ANTES de cualquier desafío, así que
+ *   NI la ventana NI cf_clearance lo saltan; el mensaje dice la verdad y sugiere otra red.
+ */
+export function cfClassify(status, text) {
   const t = String(text || "").slice(0, 4000);
-  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser|used cloudflare to restrict access|access denied|enable javascript and cookies to continue/i.test(t);
+  if (status === 403 || status === 429 || status === 503) {
+    if (/sorry, you have been blocked|you are unable to access|banned your access based on your browser|used cloudflare to restrict access|attention required|access denied/i.test(t)) return "blocked";
+    if (/just a moment|challenge-platform|cf-browser-verification|cf_chl_|turnstile|checking your browser|enable javascript and cookies/i.test(t)) return "challenge";
+    return "blocked"; // 403 sin marca conocida: mensaje honesto mejor que prometer una ventana
+  }
+  // algunos desafíos se sirven con 200 (la página retadora y su JS): solo marcas muy fuertes
+  if (status === 200 && /challenge-platform|cf_chl_|cf-browser-verification/i.test(t)) return "challenge";
+  return null;
+}
+
+/** ¿La respuesta es un desafío SOLUBLE de Cloudflare? (la ventana + cf_clearance lo resuelven) */
+export function isCfChallenge(status, text) {
+  return cfClassify(status, text) === "challenge";
 }
 
 export function timeoutFor(src) {

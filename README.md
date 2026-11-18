@@ -30,6 +30,14 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.9
+
+- **Pre-clearance de Cloudflare (Turnstile → cf_clearance)**: «Resolver» abre el sitio en la ventana embebida, la persona completa el desafío UNA VEZ y Kino entrega la cookie de sesión (cf_clearance); el plugin la guarda por host y `fetchText` la manda en cada petición siguiente, así que la fuente responde sin volver a retar mientras la cookie valga. Tras resolver, el plugin **verifica con una petición real** antes de anunciar nada y dice la verdad: «Pre-clearance activa», «el sitio volvió a retar» o «el sitio sigue bloqueando (regla por IP o firma)».
+- **Entrada manual siempre disponible**: tarjeta «Pre-clearance de Cloudflare» en Ajustes con el estado real por fuente (cookie guardada, edad, tipo de muro) y botones Resolver/Borrar; el panel del Home ya no depende de una marca de 20 s en memoria: el estado es **persistente** (24 h) y sobrevive al cierre del plugin.
+- **Desafío soluble ≠ bloqueo**: la clasificación separa el desafío interactivo («Just a moment», `challenge-platform`, Turnstile — resolvable, la cookie sirve) del **bloqueo de firewall** (1010 «Access denied… used Cloudflare», 1020 «Sorry, you have been blocked» — la regla corre ANTES del desafío y cf_clearance no lo salta). Hoy: zonatmo.org responde 1010 y devilnovels.com 1020 a las peticiones del plugin; el panel lo explica y sugiere otra red (Wi-Fi o datos móviles) o más tarde, sin prometer una ventana que no puede arreglarlo. El intento de pre-clearance sigue disponible por si el trato cambia por red o país.
+- **Corregido el bug que escondía la ventana**: la sonda de Cloudflare llamaba a `fetchText` sin importarlo (ReferenceError silencioso), así que el panel «Resolver desafío» casi nunca aparecía; con el import arreglado la sonda funciona y el desafío servido con 200 (página retadora y su JS) también se reconoce.
+- Disponibilidad del navegador visual relajada (`available !== false`): una versión de Kino que no publique el campo ya no bloquea la ventana (necesita Kino 0.9.81+; el mensaje lo dice).
+
 ## Novedades v2.8
 
 - **SkyNovels: imágenes recuperadas** (causa raíz del blanco en Home y detalle): la API movió las imágenes y la ruta vieja `api.skynovels.net/img/{archivo}` devuelve 404. La web las sirve ahora en `/v1/media/novels/thumbs/{archivo}` (tarjetas, ~10 KB) y `/v1/media/novels/{archivo}` (full, para el detalle). El adaptador usa cada una donde toca y codifica el nombre del archivo. Verificado con respuestas reales: la portada de la referencia `/novelas/925/otro-dia-que-voy-a-morir` responde 200.
