@@ -32,6 +32,7 @@ async function capsOf(src, slug, loader) {
   return caps || [];
 }
 import { PAGO_TEXT_RE, PAGO_CLASS_RE } from "./env.js";
+import * as dvA from "./devilnovels.js";
 
 // ---------- utilidades compartidas ----------
 
@@ -274,7 +275,7 @@ async function madaraChapter(src, slug, capId) {
     if (j > 200) seg = seg.slice(0, j);
   }
   const p = htmlToParagraphs(seg, 900);
-  // Vecinos: la lista completa (XHR) enlaza todos; con la lista en caché basta.
+  // vecinos desde la lista en caché: caps quedó ascendente (más viejo → más nuevo tras el reverse)
   const caps = (await madaraChapters(src, slug)).map((c) => c.slug);
   const cur = capId;
   const idx = caps.indexOf(cur);
@@ -284,8 +285,8 @@ async function madaraChapter(src, slug, capId) {
     number: String(capId).replace(/^.*capitulo-/, ""),
     title: "Capítulo " + String(capId).replace(/^.*capitulo-/, ""),
     direction: "ltr",
-    prev: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
-    next: idx > 0 ? caps[idx - 1] : null,
+    prev: idx > 0 ? caps[idx - 1] : null,
+    next: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
   };
 }
 
@@ -511,8 +512,8 @@ async function mkChapter(src, slug, capId) {
     number: String(b.chapter_number),
     title: unescapeHtml(b.title || ("Capítulo " + capId)),
     direction: "ltr",
-    prev: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
-    next: idx > 0 ? caps[idx - 1] : null,
+    prev: idx > 0 ? caps[idx - 1] : null, // la API va ascendente (1, 2, 3…): prev = el anterior
+    next: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
   };
 }
 
@@ -611,14 +612,14 @@ async function asChapter(src, slug, capId) {
     number: (/[Cc]ap[ií]tulo\s*([0-9.]+)/.exec(b.title || "") || [])[1] || String(capId),
     title: unescapeHtml(b.title || ("Capítulo " + capId)),
     direction: "ltr",
-    prev: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
-    next: idx > 0 ? caps[idx - 1] : null,
+    prev: idx > 0 ? caps[idx - 1] : null, // caps quedó ascendente (más viejo → más nuevo)
+    next: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
   };
 }
 
 // ---------- despacho por fuente ----------
 
-const KIND_OF = { sk: "sk", mk: "mk", as: "as", an: "madara", dv: "madara", ln: "madara" };
+const KIND_OF = { sk: "sk", mk: "mk", as: "as", an: "madara", dv: "devilnovels", ln: "madara" };
 
 export function novelKind(src) {
   return KIND_OF[src] || null;
@@ -629,6 +630,7 @@ export async function novelSearch(src, q) {
   if (k === "sk") return skSearch(src, q);
   if (k === "mk") return mkSearch(src, q);
   if (k === "as") return asSearch(src, q);
+  if (k === "devilnovels") return dvA.search(src, q);
   return madaraSearch(src, q);
 }
 
@@ -637,6 +639,7 @@ export async function novelHome(src) {
   if (k === "sk") return skHome(src);
   if (k === "mk") return mkHome(src);
   if (k === "as") return asHome(src);
+  if (k === "devilnovels") return dvA.home(src);
   return madaraHome(src);
 }
 
@@ -645,6 +648,7 @@ export async function novelDetail(src, slug) {
   if (k === "sk") return skDetail(src, slug);
   if (k === "mk") return mkDetail(src, slug);
   if (k === "as") return asDetail(src, slug);
+  if (k === "devilnovels") return dvDetail(src, slug);
   return madaraDetail(src, slug);
 }
 
@@ -653,5 +657,13 @@ export async function novelChapter(src, slug, capId) {
   if (k === "sk") return skChapter(src, slug, capId);
   if (k === "mk") return mkChapter(src, slug, capId);
   if (k === "as") return asChapter(src, slug, capId);
+  if (k === "devilnovels") return dvA.chapter(src, slug, capId);
   return madaraChapter(src, slug, capId);
+}
+
+/** DevilNovels: la ficha (con su lista de capítulos, que el detalle de Kino espera en d.chapters). */
+async function dvDetail(src, slug) {
+  const d = await dvA.detail(src, slug);
+  d.chapters = await dvA.capsList(src, slug);
+  return d;
 }

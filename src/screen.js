@@ -618,6 +618,7 @@ function siteUrlOf(src, slug) {
   if (kind === "matchanovels") return "https://matchanovels.com/novela/" + e;
   if (kind === "astral") return "https://astralnovelstranslations.wordpress.com/category/" + e + "/";
   if (kind === "madara") return SOURCES[src].host + "/novela/" + e + "/";
+  if (kind === "devilnovels") return "https://devilnovels.com/" + e; // las novelas viven en la raíz del dominio
   return SOURCES[src].host + "/manga/" + e + "/";
 }
 

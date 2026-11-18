@@ -2,11 +2,13 @@
 // Multi-fuente: la búsqueda alcanza las cuatro fuentes (las gemelas incluidas) y quita repetidos por título;
 // el Home muestra las dos fuentes primarias (zonatmo.net y manhwass.lat) y la pantalla deja elegir las cuatro.
 
-import { SOURCES, HOME_SOURCES, mangaRef } from "./env.js";
+import { SOURCES, HOME_SOURCES, NOVEL_SOURCES, mangaRef } from "./env.js";
 import * as zt from "./zonatmo.js";
 import * as ms from "./manhwa.js";
+import * as nv from "./novels.js";
 
 const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : ms);
+const esNovela = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
 
 /** Qué fuente y qué lista lleva un ref de browse. Formato: "zt:new" | "zt:pop" | "zt:score" | "zt:genre:2" | "ms:latest" | "ms:on-going" | "ms:all". */
 function parseBrowseRef(ref) {
@@ -22,7 +24,8 @@ export async function search(query) {
   const q = String((query && (query.q || query)) || "").trim();
   if (!q) return { items: [], next: null };
   const srcs = Object.keys(SOURCES);
-  const settled = await Promise.allSettled(srcs.map((s) => adapter(s).search(s, q)));
+  // las novelas van por su propio despacho (sk/mk/as/an/dv); si no, caerían todas en manhwa
+  const settled = await Promise.allSettled(srcs.map((s) => (esNovela(s) ? nv.novelSearch(s, q) : adapter(s).search(s, q))));
   const seen = [];
   const items = [];
   for (let i = 0; i < settled.length; i++) {

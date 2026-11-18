@@ -12,7 +12,7 @@ Un plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer **manga
 | MatchaNovels | `matchanovels.com` | API pública: catálogo por orden y estado, detalle, capítulos de texto |
 | Astral | `astralnovelstranslations.wordpress.com` | Site de WordPress.com: catálogo por página, detalle, capítulos |
 | Anslid | `anslid.com` | Madara estándar: archivo por orden, búsqueda XHR, detalle, capítulos |
-| DevilNovels | `devilnovels.com` | Madara estándar (ídem) |
+| DevilNovels | `devilnovels.com` | WordPress propio: novelas en la raíz del dominio, capítulos con id de post, listado y finalizadas |
 
 Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlkz/multi-verso-kin`.
 
@@ -29,6 +29,18 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Temas de toda la app**: cuatro temas (uno por fuente de manga), con un botón para ponerlos desde la pestaña de ajustes del plugin.
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
+
+## Novedades v2.12
+
+- **DevilNovels vuelve a funcionar con el mismo método que ZonaTMO.org**: raspar el HTML por las URLs REALES del sitio. La fuente estaba muerta porque su adaptador la trataba como **Madara** (copiado de Anslid) y pedía `/novela/…`, `wp-manga-search-manga` y `/ajax/chapters/` — rutas que en `devilnovels.com` NO existen. El sitio es un WordPress propio con otra estructura, verificada contra las URLs que el propio sitio publica:
+  - la novela vive en la **raíz del dominio** (`devilnovels.com/esclavo-de-las-sombras`) y el capítulo cuelga de su novela con la id de post (`devilnovels.com/esclavo-de-las-sombras/esclavo-de-las-sombras-capitulo-1889/124182`; también `shadow-slave-capitulo-1-2/116637` o `nine-star-hegemon-act/nine-star-hegemon-body-art-capitulo-6007/162105`);
+  - búsqueda por la estándar de WordPress (`/?s=…`), con plan B por el listado completo filtrado por texto;
+  - Home con las secciones nativas del sitio: **ranking del propio home**, **/listado-de-novelas** y **/novelas-finalizadas**;
+  - la ficha saca título/portada/sinopsis de los metadatos OpenGraph y los géneros de la línea «Géneros: …»; los capítulos son los enlaces hijos de la novela, **ordenados por id de post** (el orden cronológico real) con el número extraído del slug (`-capitulo-1889` → 1889, `-capitulo-1-2` → 1.2);
+  - el lector toma el cuerpo del capítulo del contenedor de contenido (`reading-content`, `entry-content`, `chapter-content`… con respaldo) y descarta el chrome del sitio (pie de novelaschinas.org, comentarios, navegación, avisos de membresía); los vecinos Anterior/Siguiente salen de la lista en caché (2 h).
+- **El slug interno del capítulo guarda «&lt;slug&gt;.&lt;id&gt;»**: los slugs de WordPress no llevan punto, así que el último punto separa siempre la id de post; la ficha de la novela en el navegador abre la raíz del dominio.
+- **Búsqueda global de Kino arreglada**: el despacho de `catalog.search` caía en ManhwaSS para las cinco fuentes de novelas (buscaba manhwa seis veces y ninguna novela); ahora cada novela va por su propio adaptador y la búsqueda de Kino alcanza Skynovels, Matcha, Astral, Anslid y DevilNovels.
+- **Anterior/Siguiente corregidos en Anslid, Matcha y Astral**: las tres fuentes devolvían los vecinos invertidos («Siguiente» iba al capítulo ANTERIOR); ahora prev = el anterior y next = el siguiente, igual que ZonaTMO.org. Verificado el orden real: el AJAX de Madara y la API de Matcha devuelven los capítulos de más nuevo a más viejo / ascendente, respectivamente.
 
 ## Novedades v2.11
 
@@ -160,6 +172,7 @@ Firma de nuevo después de cualquier cambio en `plugin.js` o en `version`: `vali
 - **Skynovels** (`novels.js`): API JSON (`api.skynovels.net`): `/v1/home` por secciones (`featured`, `updated`, `trending`, `weekly_views`, `monthly_views`, `most_viewed`, `rising`, `top_rated`, `recent`, `finished`), `/v1/novels/{id}`, `/v1/novels/{id}/chapters`, `/v1/chapters/{id}` con `content.paragraphs`. Las imágenes viven en `/v1/media/novels/thumbs/{archivo}` (tarjetas) y `/v1/media/novels/{archivo}` (detalle).
 - **MatchaNovels** (`novels.js`): API pública (`matchanovels.com/api/v1/public/novels`) por orden y estado; portadas `cover_image_url` absolutizadas.
 - **Astral** (`novels.js`): WordPress.com (público + Jetpack para imágenes): catálogo por página, detalle, capítulos por `content`. Sus imágenes **sí** exigen `Referer` del propio host (mapa `IMG_REFERER`).
-- **Anslid y DevilNovels** (`novels.js`): Madara estándar: archivo `/novela/?m_orderby=`, búsqueda XHR `wp-manga-search-manga`, detalle con `data-src` de portada (lazy-load: nunca el placeholder `dflazy.jpg`), capítulos `/ajax/chapters/`.
+- **Anslid** (`novels.js`): Madara estándar: archivo `/novela/?m_orderby=`, búsqueda XHR `wp-manga-search-manga`, detalle con `data-src` de portada (lazy-load: nunca el placeholder `dflazy.jpg`), capítulos `/ajax/chapters/`.
+- **DevilNovels** (`devilnovels.js`, desde v2.12): WordPress PROPIO, no Madara: novela en la raíz (`/<slug>/`), capítulo hijo con id de post (`/<slug>/<capitulo>/<id>/`), búsqueda `/?s=`, listados `/listado-de-novelas` y `/novelas-finalizadas`, capítulos ordenados por id de post y texto del contenedor de contenido con plan B.
 
 Si un sitio cambia su interfaz, el primer lugar que hay que revisar son esas rutas y selectores.

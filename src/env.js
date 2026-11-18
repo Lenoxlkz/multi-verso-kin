@@ -12,7 +12,7 @@ export const SOURCES = {
   mk: { name: "MatchaNovels", host: "https://matchanovels.com", kind: "matchanovels" },
   as: { name: "Astral Novels", host: "https://astralnovelstranslations.wordpress.com", kind: "astral" },
   an: { name: "Anslid", host: "https://anslid.com", kind: "madara" },
-  dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "madara" },
+  dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "devilnovels" },
 };
 
 // Fuentes de novelas (texto) frente a las de manga (imágenes): el lector cambia de modo.
