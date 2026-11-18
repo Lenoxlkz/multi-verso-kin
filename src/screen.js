@@ -210,10 +210,13 @@ async function loadHomeShelves(src, en) {
 async function probeCf(src, en, shelves, fallbackErr) {
   const base = FUENTES_URL[src];
   let kind = null;
-  // 1) lo que este host ya respondió (esta llamada o la marca persistente) decide primero
+  // 1) la marca persistente decide solo si es FRESCA (< 15 min): una marca vieja (p. ej. la que
+  //    dejó la versión anterior de un adaptador con rutas malas) no puede tumbar la fuente
+  //    todo un día sin comprobar; notaHttp ya la renueva o la borra según lo que responda
   const st = base ? cfStateFor(base) : null;
-  if (st) kind = st.kind;
-  // 2) si no, un control directo decide (una petición, solo en fallo, con plazo completo)
+  if (st && st.ageMs < 15 * 60 * 1000) kind = st.kind;
+  // 2) si no, un control directo decide (una petición, solo en fallo, con plazo completo);
+  //    la respuesta pasa por noteHttp: 200 borra la marca y 403 la renueva, solo
   if (!kind && base) {
     try {
       const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: 12000 });

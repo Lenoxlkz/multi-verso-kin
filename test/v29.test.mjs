@@ -24,7 +24,7 @@ test("cfClassify separa desafío soluble de bloqueo de firewall y marca persiste
   assert.ok(env.includes('return "blocked"') && env.includes('return "challenge"'), "faltan las dos categorías");
   assert.ok(env.includes("export function cfMarkChallenge") && env.includes("export function cfStateFor"), "falta la marca persistente");
   assert.ok(env.includes("export function cfForget") && env.includes("export function cfStatus"), "falta el estado/borrado para Ajustes");
-  assert.ok(env.includes('const CFSEEN_KEY = "cfseen"'), "la marca persistente no tiene clave de storage");
+  assert.ok(env.includes('const CFSEEN_KEY = "cfseen2"'), "la marca persistente no tiene clave de storage (v2.12.1 la renovó para limpiar residuos viejos)");
   // noteHttp marca según lo que respondió y borra cuando el host responde 200 limpio
   assert.ok(env.includes("cfMarkChallenge(host, kind)"), "noteHttp no marca");
   assert.ok(env.includes("cfClearChallenge(host)"), "noteHttp no borra el estado al responder bien");
@@ -49,6 +49,6 @@ test("Ajustes: tarjeta de pre-clearance siempre a mano, con estado y borrado", (
 });
 
 test("la versión avanza a 2.10.0 y el build lleva el pre-clearance", () => {
-  assert.equal(manifest.version, "2.12.0");
+  assert.equal(manifest.version, "2.12.1");
   assert.ok(built.includes("Pre-clearance activa") && built.includes("cfClassify"), "el build no lleva el pre-clearance");
 });

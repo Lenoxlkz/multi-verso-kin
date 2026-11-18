@@ -140,7 +140,7 @@ function cfCookieHead(url) {
     return void 0;
   }
 }
-var CFSEEN_KEY = "cfseen";
+var CFSEEN_KEY = "cfseen2";
 var CFSEEN_TTL = 24 * 3600 * 1e3;
 function cfSeenLoad() {
   try {
@@ -783,7 +783,9 @@ var RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|imagenes|membership-
 async function getHtml(path, { what = "DevilNovels", timeout } = {}) {
   const r = await fetchText("https://devilnovels.com" + path, {
     heads: { Accept: "text/html", Referer: "https://devilnovels.com/" },
-    timeoutMs: timeout || timeoutFor("dv")
+    // 45 s como zonatmo.org: el home y las fichas son páginas de WordPress pesadas (portadas,
+    // ranking, listas largas) y el plazo por defecto de 12 s las daba por caídas
+    timeoutMs: timeout || 45e3
   });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
@@ -2263,7 +2265,7 @@ async function probeCf(src, en, shelves, fallbackErr) {
   const base = FUENTES_URL[src];
   let kind = null;
   const st = base ? cfStateFor(base) : null;
-  if (st) kind = st.kind;
+  if (st && st.ageMs < 15 * 60 * 1e3) kind = st.kind;
   if (!kind && base) {
     try {
       const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: 12e3 });

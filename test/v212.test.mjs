@@ -59,10 +59,19 @@ test("«Abrir en el navegador» apunta a la raíz del dominio", () => {
   assert.ok(screen.includes('kind === "devilnovels"'), "siteUrlOf no cubre devilnovels");
 });
 
-test("la versión avanza a 2.12.0 y el build lleva el adaptador nuevo", () => {
-  assert.equal(manifest.version, "2.12.0");
+test("la versión avanza a 2.12.1 y el build lleva el adaptador nuevo", () => {
+  assert.equal(manifest.version, "2.12.1");
   assert.ok(built.includes('"/" + slug + "/" + capSlug + "/" + id + "/"'), "el build no lleva el adaptador dv");
   assert.ok(built.includes("esNovela(s) ? novelSearch(s, q)"), "el build no lleva la búsqueda de novelas");
+});
+
+test("v2.12.1: sin residuos de la versión pasada y con plazos de zonatmo.org", () => {
+  // el adaptador viejo (madara) dejó el host marcado «blocked» 24 h en kino.storage: probeCf lo
+  // creía sin pedir nada y la pestaña de dv moría sin correr el adaptador nuevo
+  assert.ok(env.includes('const CFSEEN_KEY = "cfseen2";'), "la marca CF vieja sigue en cfseen (residuo)");
+  assert.ok(screen.includes("st.ageMs < 15 * 60 * 1000"), "probeCf sigue creyendo marcas viejas sin comprobar");
+  assert.ok(src.includes("timeoutMs: timeout || 45000"), "dv usa el plazo corto de 12 s (WP pesado)");
+  assert.ok(!src.includes("timeoutFor"), "dv ya no depende de timeoutFor");
 });
 
 // ---------- el adaptador funciona de verdad (fixtures con las URLs reales) ----------

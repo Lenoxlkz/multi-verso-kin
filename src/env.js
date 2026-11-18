@@ -191,7 +191,11 @@ export function cfCookieHead(url) {
 // La marca vive en kino.storage («cfseen»): a diferencia del registro en memoria (20 s),
 // sobrevive al cierre del plugin, así el panel de Cloudflare no desaparece a los pocos segundos
 // mientras el sitio siga reteniendo o bloqueando (TTL 24 h).
-const CFSEEN_KEY = "cfseen";
+// clave nueva (v2.12.1): borra de un tirón las marcas cfseen de versiones viejas — el adaptador
+// viejo de DevilNovels pedía rutas inexistentes, recibía 403 y dejó el host marcado 24 h en
+// kino.storage (que sobrevive a la actualización); al cambiar la clave, Kino arranca con el
+// estado Cloudflare en blanco y el adaptador nuevo sí corre
+const CFSEEN_KEY = "cfseen2";
 const CFSEEN_TTL = 24 * 3600 * 1000;
 
 function cfSeenLoad() {

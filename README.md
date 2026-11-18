@@ -30,6 +30,13 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.12.1
+
+- **El Home de DevilNovels ya no se queda en «no respondió» por residuos de la versión pasada**: el adaptador viejo (madara) pidió rutas inexistentes durante días, recibió 403 y dejó `devilnovels.com` **marcado como bloqueado por Cloudflare 24 h** en `kino.storage` (que sobrevive a la actualización del plugin). La sonda del Home creía esa marca SIN lanzar peticiones, así que el adaptador nuevo nunca llegaba a correr. Arreglos:
+  - la clave de las marcas cambia (`cfseen` → `cfseen2`): al actualizar, el estado Cloudflare arranca en blanco para todas las fuentes;
+  - además, una marca solo se cree si es **fresca (< 15 min)**: si es vieja, se hace una petición de control y la propia respuesta renueva o borra la marca (`noteHttp` ya lo hace);
+  - los plazos de DevilNovels suben de 12 s a **45 s** (los de zonatmo.org): el home y las fichas son páginas de WordPress pesadas (portadas, ranking, listas largas) y el plazo corto las daba por caídas.
+
 ## Novedades v2.12
 
 - **DevilNovels vuelve a funcionar con el mismo método que ZonaTMO.org**: raspar el HTML por las URLs REALES del sitio. La fuente estaba muerta porque su adaptador la trataba como **Madara** (copiado de Anslid) y pedía `/novela/…`, `wp-manga-search-manga` y `/ajax/chapters/` — rutas que en `devilnovels.com` NO existen. El sitio es un WordPress propio con otra estructura, verificada contra las URLs que el propio sitio publica:

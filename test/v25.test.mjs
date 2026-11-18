@@ -97,6 +97,6 @@ test("la purga de caché expira antes de recortar por número", () => {
 });
 
 test("la versión avanza a 2.7.0", () => {
-  assert.equal(manifest.version, "2.12.0");
+  assert.equal(manifest.version, "2.12.1");
   assert.ok(built.includes("capsTick") && built.includes("borrarHistorial"), "el build no lleva las novedades");
 });

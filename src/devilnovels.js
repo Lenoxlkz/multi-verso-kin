@@ -13,7 +13,7 @@
 // El slug interno del capítulo es «<slug del cap>.<id>»: los slugs de WP no llevan punto, así que
 // el último punto separa siempre la id. Los vecinos salen de la lista en caché (una raspa, el resto no).
 
-import { fetchText, toItem, netError, timeoutFor, PAGO_TEXT_RE } from "./env.js";
+import { fetchText, toItem, netError, PAGO_TEXT_RE } from "./env.js";
 
 const MAX_CAPS = 800; // tope de capítulos por obra (el detalle de Kino enseña 250)
 const RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|imagenes|membership-join|membership-account|memberships?|wp-login|login|register|registro|perfil|mi-cuenta|historial|dmca|politica-de-privacidad|politica-privacidad|contacto|feed|author|tag|category|page|wp-content|wp-admin|wp-json)(\/|$)/i;
@@ -23,7 +23,9 @@ const RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|imagenes|membershi
 async function getHtml(path, { what = "DevilNovels", timeout } = {}) {
   const r = await fetchText("https://devilnovels.com" + path, {
     heads: { Accept: "text/html", Referer: "https://devilnovels.com/" },
-    timeoutMs: timeout || timeoutFor("dv"),
+    // 45 s como zonatmo.org: el home y las fichas son páginas de WordPress pesadas (portadas,
+    // ranking, listas largas) y el plazo por defecto de 12 s las daba por caídas
+    timeoutMs: timeout || 45000,
   });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
