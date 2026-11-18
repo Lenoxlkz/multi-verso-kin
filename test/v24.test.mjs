@@ -15,7 +15,7 @@ const manifest = JSON.parse(readFileSync(join(root, "kino-plugin.json"), "utf8")
 
 test("el manifiesto declara las diez fuentes y sus hosts", () => {
   assert.equal(Object.keys(SOURCES).length, 10, "deben existir 10 fuentes");
-  assert.equal(manifest.version, "2.4.0");
+  assert.equal(manifest.version, "2.5.0");
   for (const h of ["skynovels.net", "matchanovels.com", "anslid.com", "devilnovels.com", "legnnovels.com", "public-api.wordpress.com", "astralnovelstranslations.wordpress.com"]) {
     assert.ok(manifest.hosts.includes(h) || manifest.hosts.includes("*." + h), "falta el host " + h);
   }
@@ -46,12 +46,14 @@ test("el detalle tiene Me Gusta y Agregar a Biblioteca con quitar", () => {
   assert.ok(src.includes('case "fav":') && src.includes('case "biblio":') && src.includes('case "bibOpen":'), "faltan los eventos");
 });
 
-test("el Home se separa por fuente con pestañas", () => {
-  assert.ok(src.includes('onChanged: "tabSrc"'), "faltan las pestañas");
+test("el Home se separa por fuente con la cápsula y su panel", () => {
+  assert.ok(src.includes("capsToggle") && src.includes("capsClose") && src.includes("capsTick"), "falta el ciclo de la cápsula");
+  assert.ok(src.includes("positioned:"), "el panel no es un overlay posicionado");
   assert.ok(src.includes("function tabSpecs"), "faltan las secciones nativas de manga");
   assert.ok(src.includes("async function loadHomeShelves"), "falta el cargador por fuente");
-  const main = src.slice(src.indexOf("function viewMain"), src.indexOf("// ---------- biblioteca"));
-  assert.ok(main.includes("HOME_TABS.map"), "las pestañas no usan HOME_TABS");
+  const main = src.slice(src.indexOf("function panelSources"), src.indexOf("// ---------- biblioteca"));
+  assert.ok(main.includes("HOME_TABS."), "el panel no usa HOME_TABS");
+  assert.ok(src.includes("ms: 1000, event: \"capsTick\""), "falta el temporizador de raíz");
 });
 
 test("cada fuente muestra sus secciones nativas", () => {

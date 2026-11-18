@@ -90,7 +90,7 @@ export function join(src, path) {
  * `heads` son cabeceras extra (Accept, Cookie, Authorization…); Kino quita las que no corresponden.
  */
 export async function fetchText(url, { heads = {}, timeoutMs = 12000, method = "GET", body } = {}) {
-  const r = await kino.fetch(url, { headers: { "User-Agent": UA, ...heads }, timeoutMs, method, body });
+  const r = await kino.fetch(url, { headers: { ...BASE_HEADS, ...heads }, timeoutMs, method, body });
   const text = r.text ? r.text() : "";
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }
@@ -102,7 +102,16 @@ export async function fetchJson(url, opts) {
   return { status, ok, body };
 }
 
-export const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+// User-Agent interno: UNA constante para todas las peticiones. Si Cloudflare o una fuente
+// cambian su detección, se rota cambiando solo esta línea (y el build se re-firma).
+export const UA = "Mozilla/5.0 (Linux; Android 17; SM-A102U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.8037.58 Mobile Safari/537.36";
+// Cabeceras de base de toda petición a las fuentes: cada adaptador puede sobrescribir una
+// concreta (Cookie, Referer…), pero el UA, el Accept y el idioma van siempre igual.
+export const BASE_HEADS = {
+  "User-Agent": UA,
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "es-ES,es;q=0.9,en;q=0.7",
+};
 
 // ---------- velocidad ----------
 // Los dominios gemelos (zonatmo.org, manhwashot.lat) pueden estar lentos o bloqueados:
@@ -142,16 +151,27 @@ export function cacheSet(key, data) {
 function pruneCache() {
   try {
     const keys = kino.storage.keys().filter((k) => k.indexOf("c:") === 0);
-    if (keys.length <= 90) return;
-    const items = keys.map((k) => {
+    const now = Date.now();
+    const vivas = [];
+    for (const k of keys) {
+      let t = 0;
       try {
         const e = JSON.parse(kino.storage.get(k) || "null");
-        return { k, t: e && e.t || 0 };
-      } catch { return { k, t: 0 }; }
-    });
-    items.sort((a, b) => a.t - b.t);
-    for (const it of items.slice(0, items.length - 90)) kino.storage.remove(it.k);
-  } catch { /* nada grave */ }
+        t = e && e.t || 0;
+      } catch { t = 0; }
+      // vencida (>24 h) o podrida: fuera de una vez; la caché no acumula basura
+      if (!t || now - t > 86400000) {
+        try { kino.storage.remove(k); } catch { /* sigue */ }
+      } else {
+        vivas.push({ k, t });
+      }
+    }
+    if (vivas.length <= 90) return;
+    vivas.sort((x, y) => x.t - y.t);
+    for (const v of vivas.slice(0, vivas.length - 90)) {
+      try { kino.storage.remove(v.k); } catch { /* sigue */ }
+    }
+  } catch { /* la purga es optativa */ }
 }
 
 /** Convierte un fallo de red en el error tipado de Kino (mensajes en español, cortos). */

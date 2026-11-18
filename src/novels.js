@@ -18,7 +18,20 @@
 // El lector de novelas es de TEXTO: el campo `text` (array de párrafos) lo pinta screen.js como párrafos,
 // no como imágenes. Los ref siguen siendo "<src>|m|<slug>" y "<src>|c|<slug>|<capítulo>".
 
-import { fetchText, fetchJson, join, toItem, clip, netError, UA, timeoutFor } from "./env.js";
+import { fetchText, fetchJson, join, toItem, clip, netError, UA, timeoutFor, cacheKey, cacheGet, cacheSet } from "./env.js";
+
+// Las listas de capítulos cambian poco: 2 h de caché ahorra el XHR/POST de cada lectura.
+const CAPS_TTL = 7200000;
+
+/** Lista de capítulos de una obra con caché (2 h). `loader` trae la lista cruda del sitio. */
+async function capsOf(src, slug, loader) {
+  const ck = cacheKey("caps", src + "|" + slug);
+  const cached = cacheGet(ck, CAPS_TTL);
+  if (Array.isArray(cached) && cached.length) return cached;
+  const caps = await loader();
+  if (Array.isArray(caps) && caps.length) cacheSet(ck, caps);
+  return caps || [];
+}
 import { PAGO_TEXT_RE, PAGO_CLASS_RE } from "./env.js";
 
 // ---------- utilidades compartidas ----------
@@ -203,6 +216,11 @@ async function madaraDetail(src, slug) {
 
 /** Lista de capítulos madara: POST {novela}/ajax/chapters/ (el mismo XHR que hace la página). */
 async function madaraChapters(src, slug, detailHtml) {
+  return capsOf(src, slug, () => madaraChaptersNet(src, slug, detailHtml));
+}
+
+/** La lista cruda por red (POST XHR del sitio, respaldo en el HTML del detalle). */
+async function madaraChaptersNet(src, slug, detailHtml) {
   const caps = [];
   try {
     const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/ajax/chapters/", {
@@ -333,9 +351,11 @@ async function skDetail(src, slug) {
     netError(e, "el detalle");
   }
   const n = r.body;
-  const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads(), timeoutMs: timeoutFor(src) });
   const chapters = [];
-  const rawCaps = Array.isArray(cr.body) ? cr.body : (cr.body && cr.body.items) || [];
+  const rawCaps = await capsOf(src, slug, async () => {
+    const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads(), timeoutMs: timeoutFor(src) });
+    return Array.isArray(cr.body) ? cr.body : (cr.body && cr.body.items) || [];
+  });
   for (const c of rawCaps) {
     const num = c.number != null ? String(c.number) : String(c.id);
     chapters.push({
@@ -438,8 +458,10 @@ async function mkDetail(src, slug) {
     netError(e, "el detalle");
   }
   const n = r.body;
-  const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads(), timeoutMs: timeoutFor(src) });
-  const rawCaps = Array.isArray(cr.body) ? cr.body : [];
+  const rawCaps = await capsOf(src, slug, async () => {
+    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads(), timeoutMs: timeoutFor(src) });
+    return Array.isArray(cr.body) ? cr.body : [];
+  });
   const chapters = rawCaps.map((c) => ({
     slug: String(c.chapter_number),
     number: String(c.chapter_number),
@@ -466,7 +488,11 @@ async function mkChapter(src, slug, capId) {
   }
   const b = r.body;
   const p = htmlToParagraphs(b.content || "");
-  const caps = (await mkDetail(src, slug)).chapters.map((c) => c.slug);
+  // vecinos desde la lista en caché (sin re-pedir el detalle: 2 peticiones menos por capítulo)
+  const caps = (await capsOf(src, slug, async () => {
+    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads(), timeoutMs: timeoutFor(src) });
+    return Array.isArray(cr.body) ? cr.body : [];
+  })).map((c) => String(c.chapter_number));
   const idx = caps.indexOf(String(capId));
   return {
     text: dropFiller(p.text),
@@ -538,21 +564,26 @@ async function asHome(src) {
   return items.length ? [{ id: src + "-latest", title: "Últimos capítulos publicados", titleEn: "Latest chapter posts", items }] : [];
 }
 
-async function asDetail(src, slug) {
+async function asCaps(src, slug) {
+  const b = await asApi("/posts?category=" + encodeURIComponent(slug) + "&number=100", src);
   const caps = [];
-  const b = await asApi("/posts?category=" + encodeURIComponent(slug) + "&number=100&order_by=date", src);
   for (const p of b.posts || []) {
     const m = /cap[ií]tulo\s*([0-9.]+)/i.exec(p.title || "");
     const num = m ? m[1] : String(p.ID);
     caps.push({ slug: String(p.ID), number: num, title: p.title || ("Capítulo " + num), pago: false });
   }
   caps.reverse(); // de más viejo a más nuevo
-  const first = (b.posts || [])[0];
+  return caps;
+}
+
+async function asDetail(src, slug) {
+  const caps = await capsOf(src, slug, () => asCaps(src, slug));
+  const first = (await asApi("/posts?category=" + encodeURIComponent(slug) + "&number=1", src)).posts || [];
   return {
     slug,
     title: slug.replace(/-/g, " "),
-    overview: first ? clip(String(first.title), 160) : undefined,
-    poster: asCover(first),
+    overview: first.length ? clip(String(first[0].title), 160) : undefined,
+    poster: asCover(first[0]),
     chapters: caps,
   };
 }
@@ -561,7 +592,7 @@ async function asChapter(src, slug, capId) {
   const b = await asApi("/posts/" + encodeURIComponent(capId), src);
   if (!b || !b.ID) netError(new Error("not_found"), "el capítulo");
   const p = htmlToParagraphs(b.content || "");
-  const caps = (await asDetail(src, slug)).chapters.map((c) => c.slug);
+  const caps = (await capsOf(src, slug, () => asCaps(src, slug))).map((c) => c.slug);
   const idx = caps.indexOf(String(capId));
   return {
     text: dropFiller(p.text),

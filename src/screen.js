@@ -143,7 +143,7 @@ function tabSpecs(src) {
 }
 
 /** Estantes del Home para UNA fuente (manga: sus filas nativas; novela: las secciones de su sitio). */
-async function loadHomeShelves(src) {
+async function loadHomeShelves(src, en) {
   try {
     const ck = cacheKey("home", src);
     const cached = cacheGet(ck, TTL.rows);
@@ -159,9 +159,11 @@ async function loadHomeShelves(src) {
       for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
     }
     if (shelves.length) cacheSet(ck, shelves);
-    return shelves;
-  } catch {
-    return []; // la fuente no responde: el Home de esa pestaña queda vacío, sin romper nada
+    // sin estantes = la fuente no respondió (todas sus secciones fallaron): se distingue de «sin datos»
+    return { shelves, err: shelves.length ? null : (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
+  } catch (e) {
+    const msg = String((e && e.userMessage) || (e && e.message) || "la fuente no respondió");
+    return { shelves: [], err: SOURCES[src].name + ": " + msg.slice(0, 140) };
   }
 }
 
@@ -265,13 +267,14 @@ async function loadChapter(ref, args, { skipCache = false } = {}) {
       direction: c.direction,
       prev: c.prev ? chapterRef(p.src, p.a, c.prev) : null,
       next: c.next ? chapterRef(p.src, p.a, c.next) : null,
-      total: c.text.length,
+      total: Math.max(1, Math.ceil(c.text.slice(0, 600).length / 12)),
+      ppages: Math.max(1, Math.ceil(c.text.slice(0, 600).length / 12)),
       mode: "texto",
     };
     cacheSet(cacheKey("ch", ref), data);
     const fin = withChapterMeta(data, args);
     try {
-      saveProgress(fin.mr, ref, { number: fin.number, total: 1, mTitle: fin.mTitle, mPoster: fin.mPoster }, 1, 1);
+      saveProgress(fin.mr, ref, { number: fin.number, total: fin.ppages || 1, mTitle: fin.mTitle, mPoster: fin.mPoster }, 1, 0.5 / (fin.ppages || 1));
     } catch { /* el progreso es optativo */ }
     return fin;
   }
@@ -332,10 +335,10 @@ function empty(text, en) {
   return { type: "emptyState", icon: "magic", title: text, titleEn: en || text };
 }
 
-function errorBox(msg, retryEvent) {
+function errorBox(msg, retryEvent, retryArg) {
   return { type: "Column", gap: 12, padding: 16, children: [
     { type: "errorState", icon: "error", title: "Algo falló", titleEn: "Something failed", text: String(msg).slice(0, 300) },
-    { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: retryEvent || "reintentar" } },
+    { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: retryArg ? { event: retryEvent || "reintentar", arg: retryArg } : { event: retryEvent || "reintentar" } },
   ] };
 }
 
@@ -346,16 +349,33 @@ function floatFab() {
 
 // ---------- vista: portada ----------
 
+/** Las fuentes del panel de la cápsula, en dos por fila, con su tipo a la vista. */
+function panelSources(src, en) {
+  const rows = [];
+  for (let i = 0; i < HOME_TABS.length; i += 2) {
+    rows.push({ type: "Row", gap: 8, children: HOME_TABS.slice(i, i + 2).map((k) => ({
+      type: "Button", variant: "secondary", icon: k === src ? "check" : undefined, selected: k === src,
+      labelText: SOURCES[k].name + (isNovel(k) ? (en ? " · novel" : " · novela") : ""),
+      labelTextEn: SOURCES[k].name + (isNovel(k) ? " · novel" : ""),
+      onPressed: { event: "tabSrc", arg: k }, flex: 1, fill: true,
+    })) });
+  }
+  return rows;
+}
+
 function viewMain(ctx) {
-  const { state } = ctx;
+  const { state, lang } = ctx;
+  const en = lang === "en";
+  const src = state.hsrc || "zt";
+  // ---- contenido desplazable: lecturas recientes + estantes nativos de la fuente elegida ----
   const kids = [];
-  // «Seguir leyendo» arriba, luego las pestañas por fuente y las secciones nativas de la fuente elegida.
   const seguir = (state.rows || []).find((r) => r.id === "seguir-screen");
   if (seguir && seguir.items && seguir.items.length) {
+    kids.push({ type: "SizedBox", height: 12 });
     kids.push({
       type: "titleRail",
-      title: seguir.title || "",
-      titleEn: seguir.titleEn,
+      title: seguir.title || "Sigue leyendo",
+      titleEn: seguir.titleEn || "Keep reading",
       items: seguir.items.map((x) => ({
         id: ("seg-" + String(x.r)).slice(0, 110).replace(/[^A-Za-z0-9._~-]/g, "_"),
         ref: String(x.m || x.r),
@@ -368,9 +388,12 @@ function viewMain(ctx) {
       })).filter(Boolean),
       size: "small",
     });
+    // opción técnica: borrar el historial de lectura (respaldo en storage y elementos de kino.progress)
+    kids.push({ type: "Row", mainAxisAlignment: "end", children: [
+      { type: "TextButton", icon: "delete", labelText: "Borrar historial de lectura", labelTextEn: "Clear reading history", onPressed: { event: "borrarHistorial" }, padding: { x: 16, y: 0 } },
+    ] });
+    kids.push({ type: "SizedBox", height: 4 });
   }
-  const src = state.hsrc || "zt";
-  kids.push({ type: "Chips", key: "homeTab", value: src, options: HOME_TABS.map((k) => ({ value: k, label: SOURCES[k].name })), onChanged: "tabSrc", padding: { x: 16, y: 8 } });
   let shelves = state.hrows;
   let loading = false;
   if (!shelves) {
@@ -386,15 +409,45 @@ function viewMain(ctx) {
     for (const row of shelves) {
       kids.push({ type: "titleRail", title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
     }
+  } else if (state.herr) {
+    kids.push(errorBox(state.herr, "tabSrc", src));
   } else if (state.error) {
-    kids.push(errorBox(state.error, "tabSrc"));
+    kids.push(errorBox(state.error, "tabSrc", src));
   } else {
     kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
+  // ---- cápsula fijada arriba + panel desplegable (overlay con scrim) ----
+  const capsula = { type: "Row", padding: { x: 16, y: 8 }, children: [
+    { type: "Button", variant: "secondary", icon: state.capsOpen ? "expand_less" : "expand_more",
+      labelText: "Fuente: " + SOURCES[src].name, labelTextEn: "Source: " + SOURCES[src].name,
+      onPressed: { event: "capsToggle" }, selected: Boolean(state.capsOpen), fill: true },
+  ] };
+  const capStack = { type: "Stack", children: [
+    { type: "SingleChildScrollView", onScroll: "scrMain", children: [{ type: "Column", crossAxisAlignment: "stretch", children: kids }] },
+  ] };
+  if (state.capsOpen) {
+    capStack.children.push({
+      type: "Column", positioned: { top: 0, left: 0, right: 0, bottom: 0 },
+      background: "surface", opacity: 0.62, onTap: { event: "capsClose" },
+    });
+    capStack.children.push({
+      type: "Column", positioned: { top: 0, left: 10, right: 10 }, background: "surfaceVariant", borderRadius: "large",
+      padding: 12, gap: 8, elevation: 4,
+      children: [
+        { type: "Text", text: "Elegir fuente", textEn: "Pick a source", style: "h4" },
+        ...panelSources(src, en),
+        { type: "Text", text: "El panel se cierra solo a los 5 segundos o al tocar fuera.", textEn: "The panel closes on its own after 5 seconds or on a tap outside.", style: "body", color: "muted" },
+      ],
+    });
+  }
+  const body = { type: "Column", crossAxisAlignment: "stretch", children: [capsula, { type: "SizedBox", height: 16 }, capStack] };
   const opts = { close: true, navValue: "home" };
-  if (!state.hideBar) { opts.bottomBar = true; opts.fab = floatFab(); }
-  return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", onScroll: "scrMain", children: kids }, opts);
+  if (!state.hideBar) { opts.bottomBar = true; if (!state.capsOpen) opts.fab = floatFab(); }
+  const root = scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, body, opts);
+  // temporizador de raíz: cada segundo revisa si al panel le toca cerrarse (5 s sin interacción)
+  root.every = [{ ms: 1000, event: "capsTick" }];
+  return root;
 }
 
 // ---------- biblioteca: Me Gustas y etiquetas ----------
@@ -520,7 +573,7 @@ function viewDetalle(ctx) {
   const header = {
     type: "Row", crossAxisAlignment: "start", gap: 16, padding: 16,
     children: [
-      { type: "Image", url: d.poster, aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "box", color: "surfaceVariant", width: 120, height: 160 } },
+      { type: "Image", url: d.poster, aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "Column", width: 120, height: 160, background: "surfaceVariant", borderRadius: "medium" } },
       { type: "Column", flex: 1, gap: 8, children: [
         { type: "Text", text: d.title, style: "h3" },
         { type: "Text", text: SOURCES[d.src] ? SOURCES[d.src].name : "", style: "body", color: "primary" },
@@ -595,14 +648,15 @@ function viewLeer(ctx) {
   ];
   const kids = [];
   if (c.text && c.text.length) {
-    // Modo novela: párrafos de texto con tipografía legible; las ilustraciones se intercalan arriba.
+    // Modo novela: ListView (el nodo perezoso de la lista; solo se construye lo visible),
+    // ilustraciones y título al inicio, progreso por fracción de scroll vía «scr».
     const bloques = [];
     if (c.imgs && c.imgs.length) {
-      for (const u of c.imgs) bloques.push({ type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 6 } });
+      for (const u of c.imgs) bloques.push({ type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 4 } });
     }
     bloques.push({ type: "Text", text: c.title || ("Capítulo " + c.number), style: "h4", padding: { x: 16, y: 8 } });
-    for (const par of c.text.slice(0, 400)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
-    kids.push({ type: "SingleChildScrollView", key: "novela", children: [{ type: "Column", crossAxisAlignment: "stretch", children: bloques }] });
+    for (const par of c.text.slice(0, 600)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
+    kids.push({ type: "ListView", key: "novela", items: bloques, flex: 1 });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= 8) {
     kids.push({
@@ -626,7 +680,9 @@ function viewLeer(ctx) {
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   }
   // Inmersión: en el lector no hay barra de navegación; el regreso es el botón de atrás de la AppBar.
-  return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, {});
+  const root = scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", crossAxisAlignment: "stretch", children: kids }, {});
+  root.layout = "fill"; // el ListView del texto necesita pantalla completa para desplazarse él solo
+  return root;
 }
 
 // ---------- vista: ajustes ----------
@@ -695,9 +751,46 @@ export async function screenEvent(ctx) {
       const src = String(arg || value || "zt");
       if (!SOURCES[src]) return null;
       const cached = cacheGet(cacheKey("home", src), TTL.rows);
-      if (cached && cached.length) return { state: { hsrc: src, hrows: cached } };
-      const shelves = await loadHomeShelves(src);
-      return { state: { hsrc: src, hrows: shelves, error: null, done: true } };
+      if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, capsOpen: false } };
+      const sh = await loadHomeShelves(src, en);
+      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, error: null, done: true, capsOpen: false } };
+    }
+
+    case "capsToggle": {
+      const abrir = !(state && state.capsOpen);
+      return { state: { capsOpen: abrir, capsAt: abrir ? Date.now() : 0 } };
+    }
+
+    case "capsClose": {
+      return state && state.capsOpen ? { state: { capsOpen: false, capsAt: 0 } } : null;
+    }
+
+    case "capsTick": {
+      // temporizador de 1 s: si el panel lleva ≥5 s abierto sin interacción, se minimiza solo
+      if (state && state.capsOpen && Date.now() - (state.capsAt || 0) >= 5000) {
+        return { state: { capsOpen: false, capsAt: 0 } };
+      }
+      return null;
+    }
+
+    case "borrarHistorial": {
+      // técnico: borra el respaldo local y los elementos de progreso que este plugin escribió
+      try { kino.storage.set(PROG_KEY, "{}"); } catch { /* sigue */ }
+      let n = 0;
+      try {
+        if (typeof kino.progress === "object" && kino.progress && typeof kino.progress.list === "function") {
+          const lista = await kino.progress.list({ limit: 100 });
+          for (const e of Array.isArray(lista) ? lista : []) {
+            if (!e || !e.resume) continue;
+            let r = null;
+            try { r = JSON.parse(e.resume); } catch { r = null; }
+            if (r && (r.cr || r.mr)) {
+              try { await kino.progress.clear(e.id); n++; } catch { /* sigue */ }
+            }
+          }
+        }
+      } catch { /* sin permiso: el respaldo ya se borró */ }
+      return { state: { rows: [], done: true }, toast: en ? "Reading history cleared (" + n + ")" : "Historial de lectura borrado (" + n + ")" };
     }
 
     case "bibTagF": {
@@ -808,8 +901,9 @@ export async function screenEvent(ctx) {
       const c = state && state.chapter;
       if (!c || !c.mr) return null;
       const idx = Number(value) || 0;
-      const frac = c.total ? (idx + 0.5) / c.total : 0;
-      saveProgress(c.mr, c.ref, { number: c.number, total: c.total, mTitle: c.mTitle, mPoster: c.mPoster }, idx + 1, frac);
+      const total = c.ppages || c.total || 1;
+      const frac = total ? (idx + 0.5) / total : 0;
+      saveProgress(c.mr, c.ref, { number: c.number, total, mTitle: c.mTitle, mPoster: c.mPoster }, idx + 1, frac);
       return { state: { pagIdx: idx } };
     }
 
@@ -903,15 +997,18 @@ async function handleOpen(ctx) {
   }
   purgeDl();
   const tab = (ctx.state && ctx.state.hsrc) || "zt";
-  const [seguir, shelves] = await Promise.allSettled([progressEntries(), loadHomeShelves(tab)]);
+  const enO = (ctx.lang === "en");
+  const [seguir, shelves] = await Promise.allSettled([progressEntries(), loadHomeShelves(tab, enO)]);
   const out = seguir.status === "fulfilled" && seguir.value && seguir.value.length ? seguir.value : [];
+  const sh = shelves.status === "fulfilled" ? shelves.value : { shelves: [], err: null };
   return {
     state: {
       rows: out,
       done: true,
       error: null,
       hsrc: tab,
-      hrows: shelves.status === "fulfilled" ? shelves.value : [],
+      hrows: sh.shelves,
+      herr: sh.err,
     },
   };
 }
