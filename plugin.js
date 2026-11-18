@@ -66,13 +66,18 @@ function clip(text, max) {
 function join(src, path) {
   return SOURCES[src].host + (String(path).startsWith("/") ? path : "/" + path);
 }
-async function fetchText(url, { heads: heads3 = {}, timeoutMs = 12e3, method = "GET", body } = {}) {
-  const r = await kino.fetch(url, { headers: { ...BASE_HEADS, ...heads3 }, timeoutMs, method, body });
+async function fetchText2(url, { heads: heads3 = {}, timeoutMs = 12e3, method = "GET", body } = {}) {
+  const hs = { ...BASE_HEADS, ...heads3 };
+  if (!hs.Cookie) {
+    const cf = cfCookieHead(url);
+    if (cf) hs.Cookie = cf;
+  }
+  const r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
   const text = r.text ? r.text() : "";
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }
 async function fetchJson(url, opts) {
-  const { status, ok, text } = await fetchText(url, opts);
+  const { status, ok, text } = await fetchText2(url, opts);
   let body = null;
   try {
     body = text ? JSON.parse(text) : null;
@@ -87,7 +92,57 @@ var BASE_HEADS = {
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "es-ES,es;q=0.9,en;q=0.7"
 };
-function timeoutFor(src) {
+function imgHeads(url, withReferer = true) {
+  try {
+    const u = String(url || "");
+    const m = /^(https?:\/\/[^\/]+)/.exec(u);
+    if (!m) return void 0;
+    const h = { "User-Agent": UA };
+    if (withReferer) h["Referer"] = m[1] + "/";
+    return h;
+  } catch {
+    return void 0;
+  }
+}
+var CFJAR_KEY = "cfjar";
+function cfLoad() {
+  try {
+    const r = kino.storage.get(CFJAR_KEY);
+    return r ? JSON.parse(r) : {};
+  } catch {
+    return {};
+  }
+}
+function cfSaveCookies(host, cookies) {
+  try {
+    const jar = cfLoad();
+    const limpio = {};
+    for (const [k, v] of Object.entries(cookies || {})) if (k && v) limpio[k] = String(v);
+    if (!Object.keys(limpio).length) return;
+    jar[host] = { t: Date.now(), c: limpio };
+    kino.storage.set(CFJAR_KEY, JSON.stringify(jar));
+  } catch {
+  }
+}
+function cfCookieHead(url) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(url || ""));
+    if (!m) return void 0;
+    const host = m[1].replace(/^https?:\/\//, "");
+    const e = cfLoad()[host];
+    if (!e || !e.c) return void 0;
+    const parts = Object.entries(e.c).filter(([k, v]) => k && v).map(([k, v]) => k + "=" + v);
+    return parts.length ? parts.join("; ") : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function isCfChallenge(status, text) {
+  if (status !== 403 && status !== 429 && status !== 503) return false;
+  const t = String(text || "").slice(0, 4e3);
+  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser/i.test(t);
+}
+function timeoutFor2(src) {
   return src === "zo" || src === "mh" ? 5e3 : 12e3;
 }
 var TTL = { list: 6e5, rows: 6e5, detail: 18e5, chapter: 3e5, search: 3e5 };
@@ -284,12 +339,12 @@ async function list(src, { page = 1, order = "new", search: search4, genreId, de
   if (genreId) params.genres = String(genreId);
   if (demography) params.demography = String(demography);
   if (flags) params.flags = String(flags);
-  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads(), timeoutMs: timeoutFor(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/listing/manga", params), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO");
   return listingItems(src, body.data);
 }
 async function tops(src, { page = 1, postsPerPage = 24 } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/tops/views/yesterday", { page: String(page), postsPerPage: String(postsPerPage) }), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "ZonaTMO (populares)");
   return listingItems(src, body.data);
 }
@@ -297,7 +352,7 @@ async function search(src, q, { page = 1, postsPerPage = 24 } = {}) {
   return list(src, { page, order: "score", search: q, postsPerPage });
 }
 async function detail(src, slug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug)), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
   if (!ok || !body || body.error || !body.data) {
     const e = new Error("HTTP " + status);
     if (status === 404) {
@@ -337,7 +392,7 @@ function demographyName(ids) {
   return nameOf(DEMOG, ids);
 }
 async function chapters(src, slug, { page = 1, postsPerPage = 50, order = "desc" } = {}) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads(), timeoutMs: timeoutFor(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/chapters", { page: String(page), postsPerPage: String(postsPerPage), order }), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
   if (!ok || !body || body.error) netError(new Error("HTTP " + status), "los capítulos");
   const d = body.data || {};
   const items = (Array.isArray(d.items) ? d.items : []).map((c) => ({
@@ -353,7 +408,7 @@ async function chapters(src, slug, { page = 1, postsPerPage = 50, order = "desc"
   return { items, next: pag.has_next ? String(Number(pag.current_page || 1) + 1) : null, total: pag.total };
 }
 async function chapter(src, slug, chapterSlug) {
-  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads(), timeoutMs: timeoutFor(src) });
+  const { ok, body, status } = await fetchJson(api(src, "/single/manga/" + encodeURIComponent(slug) + "/" + encodeURIComponent(chapterSlug)), { heads: authHeads(), timeoutMs: timeoutFor2(src) });
   if (!ok || !body || body.error || !body.data || !body.data.chapter) {
     const e = new Error("HTTP " + status);
     if (status === 404) {
@@ -486,7 +541,7 @@ function asItems(src, cards) {
   return cards.map((c) => toItem(src, { slug: c.slug, title: c.title, poster: c.cover })).filter(Boolean);
 }
 async function search2(src, q) {
-  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads(), timeoutMs: timeoutFor(src) });
+  const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads(), timeoutMs: timeoutFor2(src) });
   if (!ok || !body || !Array.isArray(body.results)) return { items: [], next: null, degraded: true };
   return {
     items: body.results.slice(0, 30).map((r) => toItem(src, { slug: r.slug, title: r.title, poster: r.cover })).filter(Boolean),
@@ -496,18 +551,18 @@ async function search2(src, q) {
 async function list2(src, { page = 1, estado } = {}) {
   const path = page > 1 ? "/explorar/page/" + page + "/" : "/explorar/";
   const url = join(src, path + (estado ? "?estado=" + encodeURIComponent(estado) : ""));
-  const r = await fetchText(url, { heads: heads(), timeoutMs: timeoutFor(src) });
+  const r = await fetchText2(url, { heads: heads(), timeoutMs: timeoutFor2(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "Manhwa");
   const cards = cardsOf(r.text, 30);
   return { items: asItems(src, cards), next: cards.length >= 15 ? String(page + 1) : null };
 }
 async function latest(src) {
-  const r = await fetchText(join(src, "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
+  const r = await fetchText2(join(src, "/"), { heads: heads(), timeoutMs: timeoutFor2(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "la portada de Manhwa");
   return { items: asItems(src, cardsOf(r.text, 24)), next: null };
 }
 async function detail2(src, slug) {
-  const r = await fetchText(join(src, "/manga/" + slug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
+  const r = await fetchText2(join(src, "/manga/" + slug + "/"), { heads: heads(), timeoutMs: timeoutFor2(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -554,7 +609,7 @@ function capNum(s) {
   return Number.isFinite(n) ? n : NaN;
 }
 async function chapter2(src, slug, chapterSlug) {
-  const r = await fetchText(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
+  const r = await fetchText2(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads(), timeoutMs: timeoutFor2(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -892,11 +947,11 @@ function madaraCards(html, src, limit) {
 }
 async function madaraSearch(src, q) {
   try {
-    const r = await fetchText(madaraHost(src) + "/wp-admin/admin-ajax.php", {
+    const r = await fetchText2(madaraHost(src) + "/wp-admin/admin-ajax.php", {
       heads: heads2({ "X-Requested-With": "XMLHttpRequest", Referer: madaraHost(src) + "/", "Content-Type": "application/x-www-form-urlencoded" }),
       method: "POST",
       body: "action=wp-manga-search-manga&title=" + encodeURIComponent(q),
-      timeoutMs: timeoutFor(src)
+      timeoutMs: timeoutFor2(src)
     });
     if (r.ok && r.text) {
       const d = JSON.parse(r.text);
@@ -912,7 +967,7 @@ async function madaraSearch(src, q) {
     }
   } catch {
   }
-  const r2 = await fetchText(madaraHost(src) + "/?s=" + encodeURIComponent(q) + "&post_type=wp-manga", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r2 = await fetchText2(madaraHost(src) + "/?s=" + encodeURIComponent(q) + "&post_type=wp-manga", { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r2.ok) netError(new Error("HTTP " + r2.status), "la búsqueda en " + madaraHost(src));
   return { items: asItems2(src, madaraCards(r2.text, src, 30)) };
 }
@@ -924,7 +979,7 @@ async function madaraHome(src) {
     { id: "rating", t: "Mejor valoradas", te: "Top rated", ob: "rating" },
     { id: "new", t: "Nuevas", te: "New", ob: "new" }
   ];
-  const settled = await Promise.allSettled(specs.map((s) => fetchText(madaraHost(src) + "/novela/?m_orderby=" + s.ob, { heads: heads2(), timeoutMs: timeoutFor(src) })));
+  const settled = await Promise.allSettled(specs.map((s) => fetchText2(madaraHost(src) + "/novela/?m_orderby=" + s.ob, { heads: heads2(), timeoutMs: timeoutFor2(src) })));
   const out = [];
   for (let i = 0; i < specs.length; i++) {
     const p = settled[i];
@@ -935,7 +990,7 @@ async function madaraHome(src) {
   return out;
 }
 async function madaraDetail(src, slug) {
-  const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchText2(madaraHost(src) + "/novela/" + slug + "/", { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -972,10 +1027,10 @@ async function madaraChapters(src, slug, detailHtml) {
 async function madaraChaptersNet(src, slug, detailHtml) {
   const caps = [];
   try {
-    const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/ajax/chapters/", {
+    const r = await fetchText2(madaraHost(src) + "/novela/" + slug + "/ajax/chapters/", {
       heads: heads2({ "X-Requested-With": "XMLHttpRequest", Referer: madaraHost(src) + "/novela/" + slug + "/", "Content-Type": "application/x-www-form-urlencoded" }),
       method: "POST",
-      timeoutMs: timeoutFor(src)
+      timeoutMs: timeoutFor2(src)
     });
     if (r.ok && r.text && /chapter/i.test(r.text.slice(0, 6e4))) {
       const re = /href="https?:\/\/[^"]*\/novela\/[a-z0-9-]+\/((?:[a-z0-9-]+\/)?capitulo-[0-9.]+(?:-[0-9]+)?)\/"/gi;
@@ -1001,7 +1056,7 @@ async function madaraChaptersNet(src, slug, detailHtml) {
 }
 async function madaraChapter(src, slug, capId) {
   const url = madaraHost(src) + "/novela/" + slug + "/" + capId + "/";
-  const r = await fetchText(url, { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchText2(url, { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1038,7 +1093,7 @@ function skPoster(n) {
   return n.image ? SK_API + "/img/" + n.image : void 0;
 }
 async function skSearch(src, q) {
-  const r = await fetchJson(SK_API + "/v1/novels?q=" + encodeURIComponent(q) + "&limit=40", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(SK_API + "/v1/novels?q=" + encodeURIComponent(q) + "&limit=40", { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "la búsqueda en Skynovels");
   const items = [];
   for (const n of r.body.items || []) {
@@ -1054,7 +1109,7 @@ async function skSearch(src, q) {
   return { items: items.filter(Boolean) };
 }
 async function skHome(src) {
-  const r = await fetchJson(SK_API + "/v1/home", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(SK_API + "/v1/home", { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body) return [];
   const b = r.body;
   const secs = [
@@ -1083,7 +1138,7 @@ async function skHome(src) {
   return out;
 }
 async function skDetail(src, slug) {
-  const r = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body || !r.body.id) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1095,7 +1150,7 @@ async function skDetail(src, slug) {
   const n = r.body;
   const chapters2 = [];
   const rawCaps = await capsOf(src, slug, async () => {
-    const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads2(), timeoutMs: timeoutFor(src) });
+    const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads2(), timeoutMs: timeoutFor2(src) });
     return Array.isArray(cr.body) ? cr.body : cr.body && cr.body.items || [];
   });
   for (const c of rawCaps) {
@@ -1119,7 +1174,7 @@ async function skDetail(src, slug) {
   };
 }
 async function skChapter(src, slug, capId) {
-  const r = await fetchJson(SK_API + "/v1/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(SK_API + "/v1/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1149,7 +1204,7 @@ function mkCover(u) {
   return /^https:/i.test(u) ? u : "https://matchanovels.com" + String(u);
 }
 async function mkSearch(src, q) {
-  const r = await fetchJson(MK_API + "/novels?search=" + encodeURIComponent(q) + "&page=1", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(MK_API + "/novels?search=" + encodeURIComponent(q) + "&page=1", { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "la búsqueda en MatchaNovels");
   const items = [];
   for (const n of r.body.items || []) {
@@ -1171,7 +1226,7 @@ async function mkHome(src) {
     { id: "completed", t: "Completadas", te: "Completed", p: "page=1&status=completed" },
     { id: "ongoing", t: "En curso", te: "Ongoing", p: "page=1&status=ongoing" }
   ];
-  const settled = await Promise.allSettled(specs.map((s) => fetchJson(MK_API + "/novels?" + s.p, { heads: heads2(), timeoutMs: timeoutFor(src) })));
+  const settled = await Promise.allSettled(specs.map((s) => fetchJson(MK_API + "/novels?" + s.p, { heads: heads2(), timeoutMs: timeoutFor2(src) })));
   const out = [];
   for (let i = 0; i < specs.length; i++) {
     const p = settled[i];
@@ -1186,7 +1241,7 @@ async function mkHome(src) {
   return out;
 }
 async function mkDetail(src, slug) {
-  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body || !r.body.id) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1197,7 +1252,7 @@ async function mkDetail(src, slug) {
   }
   const n = r.body;
   const rawCaps = await capsOf(src, slug, async () => {
-    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor(src) });
+    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor2(src) });
     return Array.isArray(cr.body) ? cr.body : [];
   });
   const chapters2 = rawCaps.map((c) => ({
@@ -1217,7 +1272,7 @@ async function mkDetail(src, slug) {
   };
 }
 async function mkChapter(src, slug, capId) {
-  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body) {
     const e = new Error("HTTP " + r.status);
     if (r.status === 404) {
@@ -1229,7 +1284,7 @@ async function mkChapter(src, slug, capId) {
   const b = r.body;
   const p = htmlToParagraphs(b.content || "");
   const caps = (await capsOf(src, slug, async () => {
-    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor(src) });
+    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor2(src) });
     return Array.isArray(cr.body) ? cr.body : [];
   })).map((c) => String(c.chapter_number));
   const idx = caps.indexOf(String(capId));
@@ -1245,7 +1300,7 @@ async function mkChapter(src, slug, capId) {
 }
 var AS_API = "https://public-api.wordpress.com/rest/v1.1/sites/astralnovelstranslations.wordpress.com";
 async function asApi(path, src) {
-  const r = await fetchJson(AS_API + path, { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const r = await fetchJson(AS_API + path, { heads: heads2(), timeoutMs: timeoutFor2(src) });
   if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "Astral Novels");
   return r.body;
 }
@@ -1409,6 +1464,18 @@ function errText(e) {
   return "No se pudo cargar: prueba otra vez.";
 }
 var PROG_KEY = "leyendo";
+var FUENTES_URL = {
+  zt: "https://zonatmo.net",
+  zo: "https://zonatmo.org",
+  ms: "https://manhwass.lat",
+  mh: "https://manhwashot.lat",
+  sk: "https://api.skynovels.net",
+  mk: "https://matchanovels.com",
+  as: "https://astralnovelstranslations.wordpress.com",
+  an: "https://anslid.com",
+  dv: "https://devilnovels.com",
+  ln: "https://legnnovels.com"
+};
 function storageProgress() {
   try {
     const raw = kino.storage.get(PROG_KEY);
@@ -1495,10 +1562,23 @@ async function loadHomeShelves(src, en) {
       for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
     }
     if (shelves.length) cacheSet(ck, shelves);
-    return { shelves, err: shelves.length ? null : en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió" };
+    if (!shelves.length) {
+      const base = FUENTES_URL[src];
+      if (base) {
+        try {
+          const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
+          if (isCfChallenge(ctrl.status, ctrl.text)) {
+            return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+          }
+        } catch {
+        }
+      }
+      return { shelves, cf: false, err: en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió" };
+    }
+    return { shelves, cf: false, err: null };
   } catch (e) {
     const msg = String(e && e.userMessage || e && e.message || "la fuente no respondió");
-    return { shelves: [], err: SOURCES[src].name + ": " + msg.slice(0, 140) };
+    return { shelves: [], cf: false, err: SOURCES[src].name + ": " + msg.slice(0, 140) };
   }
 }
 async function fetchOneRow(spec) {
@@ -1697,6 +1777,7 @@ function viewMain(ctx) {
     kids.push({ type: "SizedBox", height: 12 });
     kids.push({
       type: "titleRail",
+      headers: imgHeads(seguir.items.find((x) => x.p && x.p.indexOf("http") === 0)?.p, false) || void 0,
       title: seguir.title || "Sigue leyendo",
       titleEn: seguir.titleEn || "Keep reading",
       items: seguir.items.map((x) => ({
@@ -1729,10 +1810,26 @@ function viewMain(ctx) {
     ] });
   } else if (shelves.length) {
     for (const row of shelves) {
-      kids.push({ type: "titleRail", title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
+      const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
     }
   } else if (state.herr) {
-    kids.push(errorBox(state.herr, "tabSrc", src));
+    if (state.cf && ctx.device !== "tv") {
+      kids.push({ type: "Column", gap: 12, padding: 16, children: [
+        {
+          type: "errorState",
+          icon: "security",
+          title: "Desafío de Cloudflare",
+          titleEn: "Cloudflare challenge",
+          text: SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y Kino recordará la sesión para esta fuente.",
+          textEn: SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and Kino will remember the session for this source."
+        },
+        { type: "Button", variant: "primary", icon: "security", labelText: "Resolver desafío de Cloudflare", labelTextEn: "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
+        { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "tabSrc", arg: src } }
+      ] });
+    } else {
+      kids.push(errorBox(state.herr, "tabSrc", src));
+    }
   } else if (state.error) {
     kids.push(errorBox(state.error, "tabSrc", src));
   } else {
@@ -1898,7 +1995,7 @@ function viewDetalle(ctx) {
     gap: 16,
     padding: 16,
     children: [
-      { type: "Image", url: d.poster, aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "Column", width: 120, height: 160, background: "surfaceVariant", borderRadius: "medium" } },
+      { type: "Image", url: d.poster, headers: imgHeads(d.poster), aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "Column", width: 120, height: 160, background: "surfaceVariant", borderRadius: "medium" } },
       { type: "Column", flex: 1, gap: 8, children: [
         { type: "Text", text: d.title, style: "h3" },
         { type: "Text", text: SOURCES[d.src] ? SOURCES[d.src].name : "", style: "body", color: "primary" },
@@ -1982,7 +2079,7 @@ function viewLeer(ctx) {
   if (c.text && c.text.length) {
     const bloques = [];
     if (c.imgs && c.imgs.length) {
-      for (const u of c.imgs) bloques.push({ type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 4 } });
+      for (const u of c.imgs) bloques.push({ type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 4 } });
     }
     bloques.push({ type: "Text", text: c.title || "Capítulo " + c.number, style: "h4", padding: { x: 16, y: 8 } });
     for (const par of c.text.slice(0, 600)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
@@ -2001,7 +2098,7 @@ function viewLeer(ctx) {
         zoom: true,
         onScroll: "scr",
         children: [
-          { type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1) }
+          { type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1) }
         ]
       }))
     });
@@ -2012,7 +2109,7 @@ function viewLeer(ctx) {
       key: "tira",
       zoom: true,
       onScroll: "scr",
-      children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 4 } })) }]
+      children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, headers: imgHeads(u), aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 4 } })) }]
     });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   }
@@ -2084,9 +2181,49 @@ async function screenEvent(ctx) {
       const src = String(arg || value || "zt");
       if (!SOURCES[src]) return null;
       const cached = cacheGet(cacheKey("home", src), TTL.rows);
-      if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, capsOpen: false } };
+      if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
       const sh = await loadHomeShelves(src, en);
-      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, error: null, done: true, capsOpen: false } };
+      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), error: null, done: true, capsOpen: false } };
+    }
+    case "cfAbrir": {
+      const argL = String(arg || "");
+      const fsrc = argL.indexOf("|") >= 0 ? argL.split("|")[0] : String(arg || state && state.hsrc || "");
+      const base = FUENTES_URL[fsrc];
+      if (!base || !SOURCES[fsrc]) return null;
+      const disponible = typeof kino.visualBrowser === "object" && kino.visualBrowser && kino.visualBrowser.available === true;
+      if (ctx.device === "tv" || !disponible) {
+        return { toast: en ? "The visual browser is not available on this device" : "El navegador visual no está disponible en este dispositivo" };
+      }
+      let r = null;
+      try {
+        r = await kino.visualBrowser.open({
+          url: base + "/",
+          title: "Cloudflare · " + SOURCES[fsrc].name,
+          userAgent: UA,
+          doneWhen: { cookies: ["cf_clearance"] },
+          collect: { cookies: ["cf_clearance", "__cf_bm"], html: false, finalUrl: false }
+        });
+      } catch (e) {
+        const code = String(e && e.message || e);
+        if (code.indexOf("busy") >= 0) return { toast: en ? "A window is already open" : "Ya hay una ventana abierta" };
+        return { toast: (en ? "Could not open the window: " : "No se pudo abrir: ") + code.slice(0, 60) };
+      }
+      if (r && r.status === "done" && r.cookies && Object.keys(r.cookies).length) {
+        try {
+          cfSaveCookies(base.replace(/^https?:\/\//, ""), r.cookies);
+        } catch {
+        }
+        try {
+          const sh = await loadHomeShelves(fsrc, en);
+          return {
+            toast: en ? "Challenge solved" : "Desafío resuelto",
+            state: { hsrc: fsrc, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), done: true }
+          };
+        } catch {
+        }
+        return { toast: en ? "Challenge solved" : "Desafío resuelto" };
+      }
+      return { toast: en ? "The challenge was not completed" : "El desafío no se completó" };
     }
     case "capsToggle": {
       const abrir = !(state && state.capsOpen);
@@ -2333,7 +2470,8 @@ async function handleOpen(ctx) {
       error: null,
       hsrc: tab,
       hrows: sh.shelves,
-      herr: sh.err
+      herr: sh.err,
+      cf: Boolean(sh.cf)
     }
   };
 }

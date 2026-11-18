@@ -13,7 +13,7 @@
 //  - Colores: el tema del plugin (violeta) tiñe las páginas del plugin por defecto; los 8 temas de la app
 //    se ponen con un botón en Ajustes.
 
-import { SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
+import { imgHeads, cfSaveCookies, isCfChallenge, UA, SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
 import * as zt from "./zonatmo.js";
 import * as ms from "./manhwa.js";
 import * as nv from "./novels.js";
@@ -66,6 +66,14 @@ function errText(e) {
 // ---------- progreso de lectura ----------
 
 const PROG_KEY = "leyendo";
+// Base de cada fuente (host del manifest): sonda de desafío CF y ventana visual para resolverlo.
+const FUENTES_URL = {
+  zt: "https://zonatmo.net", zo: "https://zonatmo.org",
+  ms: "https://manhwass.lat", mh: "https://manhwashot.lat",
+  sk: "https://api.skynovels.net", mk: "https://matchanovels.com",
+  as: "https://astralnovelstranslations.wordpress.com",
+  an: "https://anslid.com", dv: "https://devilnovels.com", ln: "https://legnnovels.com",
+};
 
 function storageProgress() {
   try {
@@ -159,11 +167,23 @@ async function loadHomeShelves(src, en) {
       for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
     }
     if (shelves.length) cacheSet(ck, shelves);
-    // sin estantes = la fuente no respondió (todas sus secciones fallaron): se distingue de «sin datos»
-    return { shelves, err: shelves.length ? null : (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
+    if (!shelves.length) {
+      // ¿fue un desafío de Cloudflare? una petición de control decide (solo en la excepción)
+      const base = FUENTES_URL[src];
+      if (base) {
+        try {
+          const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
+          if (isCfChallenge(ctrl.status, ctrl.text)) {
+            return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+          }
+        } catch { /* sin red: el error genérico basta */ }
+      }
+      return { shelves, cf: false, err: en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió" };
+    }
+    return { shelves, cf: false, err: null };
   } catch (e) {
     const msg = String((e && e.userMessage) || (e && e.message) || "la fuente no respondió");
-    return { shelves: [], err: SOURCES[src].name + ": " + msg.slice(0, 140) };
+    return { shelves: [], cf: false, err: SOURCES[src].name + ": " + msg.slice(0, 140) };
   }
 }
 
@@ -335,6 +355,17 @@ function empty(text, en) {
   return { type: "emptyState", icon: "magic", title: text, titleEn: en || text };
 }
 
+/** Error del detalle; si menciona Cloudflare, ofrece resolverlo con la ventana visual. */
+function detailErrorBox(msg, ref) {
+  const cf = /cloudflare|desafío|challenge/i.test(String(msg));
+  const kids = [
+    { type: "errorState", icon: "error", title: "Algo falló", titleEn: "Something failed", text: String(msg).slice(0, 300) },
+    { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar", arg: ref } },
+  ];
+  if (cf) kids.splice(1, 0, { type: "Button", variant: "primary", icon: "security", labelText: "Resolver desafío de Cloudflare", labelTextEn: "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: ref } });
+  return { type: "Column", gap: 12, padding: 16, children: kids };
+}
+
 function errorBox(msg, retryEvent, retryArg) {
   return { type: "Column", gap: 12, padding: 16, children: [
     { type: "errorState", icon: "error", title: "Algo falló", titleEn: "Something failed", text: String(msg).slice(0, 300) },
@@ -374,6 +405,7 @@ function viewMain(ctx) {
     kids.push({ type: "SizedBox", height: 12 });
     kids.push({
       type: "titleRail",
+      headers: imgHeads(seguir.items.find((x) => x.p && x.p.indexOf("http") === 0)?.p, false) || undefined,
       title: seguir.title || "Sigue leyendo",
       titleEn: seguir.titleEn || "Keep reading",
       items: seguir.items.map((x) => ({
@@ -407,10 +439,21 @@ function viewMain(ctx) {
     ] });
   } else if (shelves.length) {
     for (const row of shelves) {
-      kids.push({ type: "titleRail", title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
+      const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
     }
   } else if (state.herr) {
-    kids.push(errorBox(state.herr, "tabSrc", src));
+    if (state.cf && ctx.device !== "tv") {
+      kids.push({ type: "Column", gap: 12, padding: 16, children: [
+        { type: "errorState", icon: "security", title: "Desafío de Cloudflare", titleEn: "Cloudflare challenge",
+          text: SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y Kino recordará la sesión para esta fuente.",
+          textEn: SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and Kino will remember the session for this source." },
+        { type: "Button", variant: "primary", icon: "security", labelText: "Resolver desafío de Cloudflare", labelTextEn: "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
+        { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "tabSrc", arg: src } },
+      ] });
+    } else {
+      kids.push(errorBox(state.herr, "tabSrc", src));
+    }
   } else if (state.error) {
     kids.push(errorBox(state.error, "tabSrc", src));
   } else {
@@ -573,7 +616,7 @@ function viewDetalle(ctx) {
   const header = {
     type: "Row", crossAxisAlignment: "start", gap: 16, padding: 16,
     children: [
-      { type: "Image", url: d.poster, aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "Column", width: 120, height: 160, background: "surfaceVariant", borderRadius: "medium" } },
+      { type: "Image", url: d.poster, headers: imgHeads(d.poster), aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "Column", width: 120, height: 160, background: "surfaceVariant", borderRadius: "medium" } },
       { type: "Column", flex: 1, gap: 8, children: [
         { type: "Text", text: d.title, style: "h3" },
         { type: "Text", text: SOURCES[d.src] ? SOURCES[d.src].name : "", style: "body", color: "primary" },
@@ -652,7 +695,7 @@ function viewLeer(ctx) {
     // ilustraciones y título al inicio, progreso por fracción de scroll vía «scr».
     const bloques = [];
     if (c.imgs && c.imgs.length) {
-      for (const u of c.imgs) bloques.push({ type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 4 } });
+      for (const u of c.imgs) bloques.push({ type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 4 } });
     }
     bloques.push({ type: "Text", text: c.title || ("Capítulo " + c.number), style: "h4", padding: { x: 16, y: 8 } });
     for (const par of c.text.slice(0, 600)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
@@ -667,7 +710,7 @@ function viewLeer(ctx) {
       onPageChanged: "pag",
       children: c.pages.map((u, i) => ({
         type: "SingleChildScrollView", key: "pg" + i, zoom: true, onScroll: "scr", children: [
-          { type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1) },
+          { type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1) },
         ],
       })),
     });
@@ -675,7 +718,7 @@ function viewLeer(ctx) {
   } else {
     kids.push({
       type: "SingleChildScrollView", key: "tira", zoom: true, onScroll: "scr",
-      children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 4 } })) }],
+      children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, headers: imgHeads(u), aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 4 } })) }],
     });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   }
@@ -751,9 +794,49 @@ export async function screenEvent(ctx) {
       const src = String(arg || value || "zt");
       if (!SOURCES[src]) return null;
       const cached = cacheGet(cacheKey("home", src), TTL.rows);
-      if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, capsOpen: false } };
+      if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
       const sh = await loadHomeShelves(src, en);
-      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, error: null, done: true, capsOpen: false } };
+      return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), error: null, done: true, capsOpen: false } };
+    }
+
+    case "cfAbrir": {
+      // ventana visual Kino-native: la persona completa el desafío de Cloudflare una vez.
+      // el detalle llega con un ref compuesto («zt|m|slug»): se extrae la fuente
+      const argL = String(arg || "");
+      const fsrc = argL.indexOf("|") >= 0 ? argL.split("|")[0] : String(arg || (state && state.hsrc) || "");
+      const base = FUENTES_URL[fsrc];
+      if (!base || !SOURCES[fsrc]) return null;
+      const disponible = typeof kino.visualBrowser === "object" && kino.visualBrowser && kino.visualBrowser.available === true;
+      if (ctx.device === "tv" || !disponible) {
+        return { toast: en ? "The visual browser is not available on this device" : "El navegador visual no está disponible en este dispositivo" };
+      }
+      let r = null;
+      try {
+        r = await kino.visualBrowser.open({
+          url: base + "/",
+          title: "Cloudflare · " + SOURCES[fsrc].name,
+          userAgent: UA,
+          doneWhen: { cookies: ["cf_clearance"] },
+          collect: { cookies: ["cf_clearance", "__cf_bm"], html: false, finalUrl: false },
+        });
+      } catch (e) {
+        const code = String((e && e.message) || e);
+        if (code.indexOf("busy") >= 0) return { toast: en ? "A window is already open" : "Ya hay una ventana abierta" };
+        return { toast: (en ? "Could not open the window: " : "No se pudo abrir: ") + code.slice(0, 60) };
+      }
+      if (r && r.status === "done" && r.cookies && Object.keys(r.cookies).length) {
+        try { cfSaveCookies(base.replace(/^https?:\/\//, ""), r.cookies); } catch { /* sigue */ }
+        // resuelto: recarga la fuente al instante (la jarra entra por cabecera Cookie)
+        try {
+          const sh = await loadHomeShelves(fsrc, en);
+          return {
+            toast: en ? "Challenge solved" : "Desafío resuelto",
+            state: { hsrc: fsrc, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), done: true },
+          };
+        } catch { /* la recarga puede fallar en red: queda resuelto igual */ }
+        return { toast: en ? "Challenge solved" : "Desafío resuelto" };
+      }
+      return { toast: en ? "The challenge was not completed" : "El desafío no se completó" };
     }
 
     case "capsToggle": {
@@ -1009,6 +1092,7 @@ async function handleOpen(ctx) {
       hsrc: tab,
       hrows: sh.shelves,
       herr: sh.err,
+      cf: Boolean(sh.cf),
     },
   };
 }

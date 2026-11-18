@@ -1,8 +1,8 @@
 {
   "id": "multi-verso-kin",
   "name": "Multi-verso Kin",
-  "version": "2.5.0",
-  "apiVersion": 18,
+  "version": "2.6.0",
+  "apiVersion": 20,
   "entry": "plugin.js",
   "description": "Manga, manhwa y novelas ligeras: ZonaTMO, ManhwaSS, Skynovels, MatchaNovels, Astral, Anslid, DevilNovels y LegnNovels.",
   "author": "Lenoxlkz",
@@ -290,6 +290,6 @@
   },
   "signature": {
     "authorKey": "b0bc4e128df02f948d02cd452328983c10a7834a4b824cd6dfb9276b52330544",
-    "value": "bd4d60feabb5e1719d52f400a890fb6e01a18ef73a713ed89a585c0005d1dc19468ff7a79542b3fff6e7e770590c16a0ceccf8280f26d57e409e70720bd3030e"
+    "value": "e215f1087d0105cc3e41281cc7095965d02981273145044593512b18cf468465887af817c52a00eeb9d2400909516741fdd7bb7639d4a85c963854ff2009a20a"
   }
 }

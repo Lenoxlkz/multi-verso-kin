@@ -15,7 +15,7 @@ const manifest = JSON.parse(readFileSync(join(root, "kino-plugin.json"), "utf8")
 
 test("el manifiesto declara las diez fuentes y sus hosts", () => {
   assert.equal(Object.keys(SOURCES).length, 10, "deben existir 10 fuentes");
-  assert.equal(manifest.version, "2.5.0");
+  assert.equal(manifest.version, "2.6.0");
   for (const h of ["skynovels.net", "matchanovels.com", "anslid.com", "devilnovels.com", "legnnovels.com", "public-api.wordpress.com", "astralnovelstranslations.wordpress.com"]) {
     assert.ok(manifest.hosts.includes(h) || manifest.hosts.includes("*." + h), "falta el host " + h);
   }

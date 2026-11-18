@@ -18,7 +18,7 @@ test("el UA interno es el fijado y viaja en toda petición", () => {
   assert.ok(env.includes(UA), "el UA interno no coincide");
   assert.ok(env.includes("BASE_HEADS"), "faltan las cabeceras de base");
   assert.ok(env.includes("Accept-Language"), "falta Accept-Language");
-  assert.ok(env.includes("headers: { ...BASE_HEADS, ...heads }"), "fetchText no parte de BASE_HEADS");
+  assert.ok(env.includes("{ ...BASE_HEADS, ...heads }"), "fetchText no parte de BASE_HEADS");
   // un solo punto de rotación: el resto de adaptadores lo importan
   for (const f of ["src/zonatmo.js", "src/manhwa.js", "src/novels.js"]) {
     const t = readFileSync(join(root, f), "utf8");
@@ -97,6 +97,6 @@ test("la purga de caché expira antes de recortar por número", () => {
 });
 
 test("la versión avanza a 2.5.0", () => {
-  assert.equal(manifest.version, "2.5.0");
+  assert.equal(manifest.version, "2.6.0");
   assert.ok(built.includes("capsTick") && built.includes("borrarHistorial"), "el build no lleva las novedades");
 });

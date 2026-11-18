@@ -90,7 +90,12 @@ export function join(src, path) {
  * `heads` son cabeceras extra (Accept, Cookie, Authorization…); Kino quita las que no corresponden.
  */
 export async function fetchText(url, { heads = {}, timeoutMs = 12000, method = "GET", body } = {}) {
-  const r = await kino.fetch(url, { headers: { ...BASE_HEADS, ...heads }, timeoutMs, method, body });
+  const hs = { ...BASE_HEADS, ...heads };
+  if (!hs.Cookie) {
+    const cf = cfCookieHead(url);
+    if (cf) hs.Cookie = cf;
+  }
+  const r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
   const text = r.text ? r.text() : "";
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }
@@ -116,6 +121,68 @@ export const BASE_HEADS = {
 // ---------- velocidad ----------
 // Los dominios gemelos (zonatmo.org, manhwashot.lat) pueden estar lentos o bloqueados:
 // se les da un plazo corto para que no frenen la búsqueda; los primarios tienen el normal.
+
+// ---------- imágenes: UA interno y Referer en TODOS los nodos ----------
+// El contrato permite headers por nodo de imagen (KinoScreenImageHeaders: Referer y User-Agent).
+// Sin esto, el descargador de Kino pide las imágenes con su propio agente y varios hosts
+// (hotlink-check o Cloudflare) responden 403: la imagen queda en negro. Las fuentes amistosas
+// (ZonaTMO, ManhwaSS) aceptan ambos modos: verificado con peticiones reales.
+export function imgHeads(url, withReferer = true) {
+  try {
+    const u = String(url || "");
+    const m = /^(https?:\/\/[^\/]+)/.exec(u);
+    if (!m) return undefined;
+    const h = { "User-Agent": UA };
+    if (withReferer) h["Referer"] = m[1] + "/";
+    return h;
+  } catch { return undefined; }
+}
+
+// ---------- jarra de cookies Cloudflare por host ----------
+// La ventana visual (kino.visualBrowser) deja cf_clearance cuando la persona completa el
+// desafío; sin `storeAs` los valores vuelven en el resultado y los guardo por host aquí.
+// fetchText los añade como cabecera Cookie para ese host (mismo UA que la ventana: la
+// cookie queda ligada al mismo fingerprint que usan las peticiones del plugin).
+const CFJAR_KEY = "cfjar";
+
+function cfLoad() {
+  try {
+    const r = kino.storage.get(CFJAR_KEY);
+    return r ? JSON.parse(r) : {};
+  } catch { return {}; }
+}
+
+/** Guarda las cookies de un desafío resuelto para el host (cf_clearance, __cf_bm…). */
+export function cfSaveCookies(host, cookies) {
+  try {
+    const jar = cfLoad();
+    const limpio = {};
+    for (const [k, v] of Object.entries(cookies || {})) if (k && v) limpio[k] = String(v);
+    if (!Object.keys(limpio).length) return;
+    jar[host] = { t: Date.now(), c: limpio };
+    kino.storage.set(CFJAR_KEY, JSON.stringify(jar));
+  } catch { /* lleno: la jarra es optativa */ }
+}
+
+/** Cabecera Cookie guardada para el host de la URL, o undefined. */
+export function cfCookieHead(url) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(url || ""));
+    if (!m) return undefined;
+    const host = m[1].replace(/^https?:\/\//, "");
+    const e = cfLoad()[host];
+    if (!e || !e.c) return undefined;
+    const parts = Object.entries(e.c).filter(([k, v]) => k && v).map(([k, v]) => k + "=" + v);
+    return parts.length ? parts.join("; ") : undefined;
+  } catch { return undefined; }
+}
+
+/** ¿La respuesta es un desafío interactivo de Cloudflare? (403/429/503 con sus marcas). */
+export function isCfChallenge(status, text) {
+  if (status !== 403 && status !== 429 && status !== 503) return false;
+  const t = String(text || "").slice(0, 4000);
+  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser/i.test(t);
+}
 
 export function timeoutFor(src) {
   return (src === "zo" || src === "mh") ? 5000 : 12000;
