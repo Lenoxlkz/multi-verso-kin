@@ -1575,6 +1575,15 @@ var FUENTES_URL = {
   an: "https://anslid.com",
   dv: "https://devilnovels.com"
 };
+var navSeq = 0;
+var scrSave = { k: "", at: 0, page: 0, frac: 0 };
+function pagesDisponible() {
+  try {
+    return typeof kino === "object" && kino !== null && typeof kino.screen === "object" && kino.screen !== null && Array.isArray(kino.screen.widgets) && kino.screen.widgets.indexOf("pages") >= 0;
+  } catch {
+    return false;
+  }
+}
 function storageProgress() {
   try {
     const raw = kino.storage.get(PROG_KEY);
@@ -1601,17 +1610,28 @@ function progId(mr) {
 }
 function saveProgress(mr, cr, info, page, frac) {
   if (!mr || !cr) return;
-  const data = { cr, n: info.number || "", page: page || 1, total: info.total || 0, ts: Date.now() };
+  page = Math.max(1, Number(page) || 1);
+  frac = Math.max(0, Math.min(1, Number(frac) || 0));
+  const prev = storageProgress()[mr];
+  if (prev && prev.cr === cr) {
+    const p0 = prev.page || 1, f0 = prev.frac || 0;
+    if (p0 > page || p0 === page && f0 > frac) return;
+    page = Math.max(page, p0);
+    frac = Math.max(frac, f0);
+  }
+  const data = { cr, n: info.number || "", page, total: info.total || 0, frac, ts: Date.now() };
   saveStorageProgress(mr, data);
   if (!hasProgress()) return;
   try {
     kino.progress.set({
       id: progId(mr),
-      fraction: Math.max(0, Math.min(1, frac)),
+      fraction: frac,
       title: info.mTitle || void 0,
       poster: info.mPoster || void 0,
       label: "Cap. " + (info.number || "?"),
-      resume: JSON.stringify({ mr, cr, n: data.n, page: data.page })
+      done: frac >= 0.995 || void 0,
+      doneAt: frac >= 0.995 ? Date.now() : void 0,
+      resume: JSON.stringify({ mr, cr, n: data.n, page })
     });
   } catch {
   }
@@ -1622,7 +1642,7 @@ async function readProgress(mr) {
       const entry = await kino.progress.get(mr);
       if (entry && entry.resume) {
         const r = JSON.parse(entry.resume);
-        if (r && r.cr) return { cr: r.cr, n: r.n || "" };
+        if (r && r.cr) return { cr: r.cr, n: r.n || "", page: r.page || 1 };
       }
       if (entry && entry.done) return null;
     } catch {
@@ -1630,7 +1650,7 @@ async function readProgress(mr) {
   }
   const all = storageProgress();
   const d = all[mr];
-  return d && d.cr ? { cr: d.cr, n: d.n || "" } : null;
+  return d && d.cr ? { cr: d.cr, n: d.n || "", page: d.page || 1 } : null;
 }
 function tabSpecs(src) {
   if (src === "zt" || src === "zo") return [
@@ -2190,18 +2210,19 @@ function viewLeer(ctx) {
     }
     bloques.push({ type: "Text", text: c.title || "Capítulo " + c.number, style: "h4", padding: { x: 16, y: 8 } });
     for (const par of c.text.slice(0, 600)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
-    kids.push({ type: "ListView", key: "novela", items: bloques, flex: 1 });
+    kids.push({ type: "ListView", key: "novela-" + (c.tk || 0), items: bloques, flex: 1 });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
-  } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= 8) {
+  } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= (pagesDisponible() ? 250 : 8)) {
     kids.push({
       type: "pages",
-      key: "manga-pages",
+      key: "manga-pages-" + (c.tk || 0),
       reverse: true,
       progress: "bar",
       onPageChanged: "pag",
+      initialPage: c.resumePage > 1 ? Math.max(0, Math.min(c.resumePage, c.pages.length) - 1) : 0,
       children: c.pages.map((u, i) => ({
         type: "SingleChildScrollView",
-        key: "pg" + i,
+        key: "pg" + (c.tk || 0) + "-" + i,
         zoom: true,
         onScroll: "scr",
         children: [
@@ -2211,9 +2232,12 @@ function viewLeer(ctx) {
     });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   } else {
+    if (c.resumePage > 1 && c.total) {
+      kids.push({ type: "Text", text: "Estabas por la página " + c.resumePage + " de " + c.total, textEn: "You were around page " + c.resumePage + " of " + c.total, style: "caption", color: "muted", padding: { x: 16, y: 4 } });
+    }
     kids.push({
       type: "SingleChildScrollView",
-      key: "tira",
+      key: "tira-" + (c.tk || 0),
       zoom: true,
       onScroll: "scr",
       children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, headers: imgHeads(u), aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 4 } })) }]
@@ -2509,6 +2533,12 @@ async function screenEvent(ctx) {
       const ref = String(arg || "");
       try {
         const chapter3 = await loadChapter(ref, { t: state && state.detail ? state.detail.title : void 0, p: state && state.detail ? state.detail.poster : void 0 });
+        chapter3.tk = ++navSeq;
+        const prev = storageProgress()[chapter3.mr];
+        if (prev && prev.cr === ref && (prev.page || 1) > 1) {
+          chapter3.resumePage = Math.min(prev.page, chapter3.total || prev.page);
+        }
+        scrSave = { k: "", at: 0, page: 0, frac: 0 };
         return { route: { push: "leer", params: { r: ref } }, state: { chapter: chapter3, imgPage: null, img: null, imgError: null, busyChapter: false } };
       } catch (e) {
         return { toast: errText(e) };
@@ -2519,6 +2549,7 @@ async function screenEvent(ctx) {
       const c = state && state.chapter;
       try {
         const chapter3 = await loadChapter(ref, { t: c ? c.mTitle : void 0, p: c ? c.mPoster : void 0 });
+        chapter3.tk = ++navSeq;
         return { state: { chapter: chapter3, imgPage: null, img: null, imgError: null, pagIdx: 0 } };
       } catch (e) {
         return { toast: en ? "Could not open that chapter." : "No se pudo abrir ese capítulo." };
@@ -2531,6 +2562,7 @@ async function screenEvent(ctx) {
       const total = c.ppages || c.total || 1;
       const frac = total ? (idx + 0.5) / total : 0;
       saveProgress(c.mr, c.ref, { number: c.number, total, mTitle: c.mTitle, mPoster: c.mPoster }, idx + 1, frac);
+      scrSave = { k: c.ref + "#" + (c.tk || 0), at: Date.now(), page: idx + 1, frac };
       return { state: { pagIdx: idx } };
     }
     case "scr": {
@@ -2540,7 +2572,13 @@ async function screenEvent(ctx) {
       const base = state.pagIdx || 0;
       const frac = c.direction === "rtl" && c.pages.length > 1 ? (base + pos) / c.total : pos;
       const page = Math.max(1, Math.round(frac * (c.total || 1)));
-      saveProgress(c.mr, c.ref, { number: c.number, total: c.total, mTitle: c.mTitle, mPoster: c.mPoster }, page, Math.min(1, frac));
+      const k = c.ref + "#" + (c.tk || 0);
+      const now = Date.now();
+      const s0 = scrSave.k === k ? scrSave : { k, at: 0, page: 0, frac: 0 };
+      if (page !== s0.page || Math.abs(frac - s0.frac) > 0.02 || now - s0.at > 4e3) {
+        saveProgress(c.mr, c.ref, { number: c.number, total: c.total, mTitle: c.mTitle, mPoster: c.mPoster }, page, Math.min(1, frac));
+        scrSave = { k, at: now, page, frac: Math.min(1, frac) };
+      }
       return null;
     }
     case "share": {

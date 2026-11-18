@@ -25,7 +25,7 @@ test("el Home de SkyNovels usa las claves nuevas de la API y la destacada como d
   assert.ok(nvl.includes("skPoster(n, true)"), "las tarjetas del Home no piden miniatura");
 });
 
-test("la versión avanza a 2.9.0", () => {
-  assert.equal(manifest.version, "2.9.0");
+test("la versión avanza a 2.10.0", () => {
+  assert.equal(manifest.version, "2.10.0");
   assert.ok(built.includes("/v1/media/novels/"), "el build no lleva la ruta nueva");
 });

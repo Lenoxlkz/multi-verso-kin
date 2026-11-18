@@ -26,7 +26,10 @@ test("los archivos locales se eliminaron por completo (v2.3)", () => {
   }
   const m = JSON.parse(readFileSync(join(root, "kino-plugin.json"), "utf8"));
   assert.equal(JSON.stringify(m.enhancements || {}).includes("files"), false, "el manifiesto aún declara files");
-  assert.ok(m.version >= "2.3.0", "la versión avanza desde 2.3");
+  const vn = (v) => String(v).split(".").map(Number);
+  const va = vn(m.version), vb = vn("2.3.0");
+  const cmpSemver = va[0] - vb[0] || va[1] - vb[1] || va[2] - vb[2];
+  assert.ok(cmpSemver >= 0, "la versión avanza desde 2.3");
 });
 
 test("el manifiesto no tiene tics y trae el ajuste de pago", () => {

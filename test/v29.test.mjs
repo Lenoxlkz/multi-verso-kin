@@ -48,7 +48,7 @@ test("Ajustes: tarjeta de pre-clearance siempre a mano, con estado y borrado", (
   assert.ok(scr.includes('for (const k of ["zo", "dv", "sk"])'), "la tarjeta no cubre las fuentes con muro");
 });
 
-test("la versión avanza a 2.9.0 y el build lleva el pre-clearance", () => {
-  assert.equal(manifest.version, "2.9.0");
+test("la versión avanza a 2.10.0 y el build lleva el pre-clearance", () => {
+  assert.equal(manifest.version, "2.10.0");
   assert.ok(built.includes("Pre-clearance activa") && built.includes("cfClassify"), "el build no lleva el pre-clearance");
 });

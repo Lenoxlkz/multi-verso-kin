@@ -30,6 +30,14 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.10
+
+- **Fin del «empieza a la mitad»**: al cambiar de capítulo, el lector reutilizaba el scroll del capítulo anterior (claves de widget constantes) y el nuevo capítulo arrancaba a media página. Ahora cada apertura lleva una clave única (token por apertura + capítulo): **cada capítulo empieza en su página 1**, en los tres modos (tira vertical, páginas RTL y novela). Es la misma corrección que el plugin de referencia ZonaTM0 documentó en su changelog v1.2.1 («clave única por apertura — el paginador arranca en la página 1, sin restaurar la última vista»), adoptada y verificada aquí.
+- **Retomar la lectura**: al abrir «Seguir: Cap. N» en el capítulo guardado, el lector recupera la página donde te quedaste — el paginador RTL arranca en esa página (`initialPage`) y la tira muestra «Estabas por la página X de Y» (el contrato de Kino no ofrece posición inicial para el scroll vertical ni para la lista de novela, que arranca al inicio).
+- **Progreso confiable**: regla del «punto más leído» por capítulo — reabrir el capítulo o el primer evento de scroll a cero **no borran** lo ya leído; avanzar siempre se guarda. `kino.progress` marca el capítulo como terminado (`done`) al llegar al final. El guardado por scroll se escribe con criterio (cambio de página, 2% de avance o 4 s) en vez de a cada píxel, y llega a storage de inmediato: sobrevive a cerrar el lector o la app.
+- **Modo páginas ampliado**: los capítulos RTL pueden usar el paginador nativo hasta 250 páginas cuando Kino declara el widget `pages` (antes el corte duro era 8 y muchos capítulos caían a tira sin necesidad); en Kino viejos, la tira siempre.
+- Orden numérico de páginas ya nativo en la fuente (por `page_number` de la API, mejor que el orden de archivo del plugin de referencia).
+
 ## Novedades v2.9
 
 - **Pre-clearance de Cloudflare (Turnstile → cf_clearance)**: «Resolver» abre el sitio en la ventana embebida, la persona completa el desafío UNA VEZ y Kino entrega la cookie de sesión (cf_clearance); el plugin la guarda por host y `fetchText` la manda en cada petición siguiente, así que la fuente responde sin volver a retar mientras la cookie valga. Tras resolver, el plugin **verifica con una petición real** antes de anunciar nada y dice la verdad: «Pre-clearance activa», «el sitio volvió a retar» o «el sitio sigue bloqueando (regla por IP o firma)».
