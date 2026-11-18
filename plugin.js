@@ -8,7 +8,7 @@ var __export = (target, all) => {
 // src/env.js
 var SOURCES = {
   zt: { name: "ZonaTMO", host: "https://zonatmo.net", kind: "zonatmo" },
-  zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmo" },
+  zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmoorg" },
   ms: { name: "ManhwaSS", host: "https://manhwass.lat", kind: "manhwa" },
   mh: { name: "ManhwaShot", host: "https://manhwashot.lat", kind: "manhwa" },
   sk: { name: "Skynovels", host: "https://www.skynovels.net", kind: "skynovels" },
@@ -423,11 +423,11 @@ var ZT_GENRES = {
   "12915": "Academia",
   "12891": "Venganza"
 };
-async function list(src, { page = 1, order = "new", search: search4, genreId, demography, flags, postsPerPage = 24 } = {}) {
+async function list(src, { page = 1, order = "new", search: search5, genreId, demography, flags, postsPerPage = 24 } = {}) {
   const orderBy = { new: "last_chapter_date", score: "score", az: "title", old: "manga_id" }[order] || "last_chapter_date";
   const dir = order === "az" ? "asc" : order === "old" ? "asc" : "desc";
   const params = { page: String(page), postsPerPage: String(postsPerPage), orderBy, order: dir };
-  if (search4) params.search = String(search4).slice(0, 100);
+  if (search5) params.search = String(search5).slice(0, 100);
   if (genreId) params.genres = String(genreId);
   if (demography) params.demography = String(demography);
   if (flags) params.flags = String(flags);
@@ -668,32 +668,32 @@ async function detail2(src, slug) {
   const title = (h1 && h1.length && h1[0].text ? cleanTitle(h1[0].text) : "") || slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const desc = /<meta name="description" content="([^"]{0,600})"/.exec(html);
   const og = /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/.exec(html) || /<meta[^>]+content="([^"]+)"[^>]+property="og:image"/.exec(html);
-  const chapters2 = [];
+  const chapters3 = [];
   const rows = trySelect(html, ".chapters-grid a.ch-row");
   if (rows) {
     for (const a of rows) {
       const m = /^\/manga\/[a-z0-9-]+\/([^/"]+)\/?$/.exec(a.attrs && a.attrs.href || "");
       if (!m) continue;
       const label = (a.text || "").replace(/\s+/g, " ").trim();
-      chapters2.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: label || "Capítulo " + m[1].replace(/^capitulo-/, ""), pago: PAGO_TEXT_RE.test(label) || PAGO_CLASS_RE.test(String(a.attrs && a.attrs.class || "")) });
-      if (chapters2.length >= 500) break;
+      chapters3.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: label || "Capítulo " + m[1].replace(/^capitulo-/, ""), pago: PAGO_TEXT_RE.test(label) || PAGO_CLASS_RE.test(String(a.attrs && a.attrs.class || "")) });
+      if (chapters3.length >= 500) break;
     }
   } else {
     const i0 = html.indexOf("chapters-grid");
     const seg = i0 >= 0 ? html.slice(i0, i0 + 4e5) : html;
     const re = /href="\/manga\/[a-z0-9-]+\/(capitulo-[0-9.]+)\/"/g;
     let m;
-    while ((m = re.exec(seg)) && chapters2.length < 500) {
-      chapters2.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: "Capítulo " + m[1].replace(/^capitulo-/, "") });
+    while ((m = re.exec(seg)) && chapters3.length < 500) {
+      chapters3.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: "Capítulo " + m[1].replace(/^capitulo-/, "") });
     }
   }
-  chapters2.reverse();
+  chapters3.reverse();
   return {
     slug,
     title,
     overview: desc ? String(desc[1]).trim() : void 0,
     poster: og ? og[1].replace(/&amp;/g, "&") : void 0,
-    chapters: chapters2
+    chapters: chapters3
   };
 }
 function capNum(s) {
@@ -814,8 +814,8 @@ async function search3(query) {
 async function progressRow(lang) {
   if (typeof kino.progress !== "object" || !kino.progress || typeof kino.progress.list !== "function") return null;
   try {
-    const list3 = await kino.progress.list({ limit: 20 });
-    const entries = (Array.isArray(list3) ? list3 : []).filter((e) => e && !e.done && e.resume);
+    const list4 = await kino.progress.list({ limit: 20 });
+    const entries = (Array.isArray(list4) ? list4 : []).filter((e) => e && !e.done && e.resume);
     if (!entries.length) return null;
     const items = [];
     for (const e of entries.slice(0, 20)) {
@@ -949,6 +949,286 @@ async function categories() {
   return tiles.slice(0, 24);
 }
 
+// src/zonatmoorg.js
+var zonatmoorg_exports = {};
+__export(zonatmoorg_exports, {
+  chapter: () => chapter3,
+  chapters: () => chapters2,
+  detail: () => detail3,
+  latest: () => latest2,
+  list: () => list3,
+  login: () => login3,
+  search: () => search4,
+  tops: () => tops2
+});
+var HOST = SOURCES.zo.host;
+var MAX_CAPS = 490;
+async function getHtml(path, timeoutMs) {
+  const r = await fetchText(join("zo", path), {
+    heads: { Accept: "text/html", Referer: HOST + "/" },
+    timeoutMs: timeoutMs || 45e3
+  });
+  if (!r.ok) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Esta obra no está disponible en ZonaTMO.org.";
+    }
+    netError(e, "ZonaTMO.org");
+  }
+  return r.text;
+}
+async function libHtml(page, order, q) {
+  const url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") + "&filter_by=title&order_item=" + (order || "likes_count") + "&order_dir=desc&_pg=1&page=" + page);
+  const r = await fetchText(url, {
+    heads: {
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      Referer: HOST + "/biblioteca",
+      "X-Requested-With": "XMLHttpRequest"
+    },
+    timeoutMs: 25e3
+  });
+  if (!r.ok) netError(new Error("HTTP " + r.status), "ZonaTMO.org (biblioteca)");
+  let frag = "";
+  const j = r.text.indexOf("{");
+  if (j >= 0) {
+    try {
+      frag = JSON.parse(r.text.slice(j)).html || "";
+    } catch {
+    }
+  }
+  return frag || r.text;
+}
+function clean(s) {
+  return String(s).replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ").replace(/&#\d+;/g, "").replace(/\s+/g, " ").trim();
+}
+function absUrl(u) {
+  u = String(u || "").trim();
+  if (!u || /^data:/.test(u)) return "";
+  if (u.indexOf("//") === 0) return "https:" + u;
+  if (u.indexOf("/") === 0) return HOST + u;
+  return u;
+}
+function natCmp(a, b) {
+  const A = String(a).match(/\d+|\D+/g) || [], B = String(b).match(/\d+|\D+/g) || [];
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i] || "", y = B[i] || "";
+    if (/^\d+$/.test(x) && /^\d+$/.test(y)) {
+      const d = parseInt(x, 10) - parseInt(y, 10);
+      if (d) return d;
+    } else {
+      const c = x.localeCompare(y);
+      if (c) return c;
+    }
+  }
+  return 0;
+}
+function deSlug(slug) {
+  return String(slug).split(".").join("/");
+}
+function seriesCards(html, max) {
+  const out = [], seen = {};
+  const re = /href="(?:https:\/\/zonatmo\.org)?\/library\/([a-z_-]+)\/(\d+)\/([a-z0-9-]+)\/?"/g;
+  let m;
+  while ((m = re.exec(html)) !== null && out.length < (max || 40)) {
+    const type = m[1], id = m[2], name = m[3];
+    if (seen[id] || type === "page") continue;
+    seen[id] = true;
+    if (type === "novel" || type === "novela") continue;
+    const win = html.slice(m.index, m.index + 3500);
+    let title = "";
+    const th = win.match(/<h4[^>]*\btitle="([^"]{1,200})"/) || win.match(/<h4[^>]*>\s*([^<]{1,200})</);
+    if (th) title = clean(th[1]);
+    if (!title) title = name.replace(/-/g, " ");
+    let poster = "";
+    const im = win.match(/<img[^>]+(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/);
+    if (im) poster = absUrl(im[1]);
+    if (!poster) {
+      const bg = win.match(/data-bg="([^"]+)"/);
+      if (bg) poster = absUrl(bg[1]);
+    }
+    if (!poster) {
+      const st = win.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\s*\)/);
+      if (st) poster = absUrl(st[1]);
+    }
+    out.push({ slug: type + "." + id + "." + name, poster, title });
+  }
+  return out;
+}
+function cardsToItems(src, cards) {
+  return cards.map((c) => toItem(src, { slug: c.slug, title: c.title, poster: c.poster })).filter(Boolean);
+}
+function chapterList(html) {
+  const map = /* @__PURE__ */ new Map();
+  const rowRe = /<li[^>]*upload-link[^>]*>/g;
+  let m;
+  while ((m = rowRe.exec(html)) !== null) {
+    const end = html.indexOf("</li>", m.index);
+    const row = html.slice(m.index, end > 0 ? end : m.index + 6e3);
+    const num = ((row.match(/data-chapter-number="([^"]*)"/) || row.match(/class="chapter-number"[^>]*data-number="([^"]*)"/) || [])[1] || "").trim();
+    const numN = (num.match(/\d+(?:\.\d+)?/) || [""])[0];
+    const numL = numN && numN.indexOf(".") >= 0 ? String(parseFloat(numN)) : numN;
+    const upRe = /href="(?:https:\/\/zonatmo\.org)?\/view_uploads\/(\d+)\/?"/g;
+    let u;
+    while ((u = upRe.exec(row)) !== null) {
+      const id = u[1];
+      if (map.has(id)) continue;
+      const near = row.slice(Math.max(0, u.index - 600), u.index + 600);
+      const sm = near.match(/href="[^"]*\/groups\/[^"]*"[^>]*>([^<]{1,60})</);
+      const scan = sm ? clean(sm[1]) : "";
+      map.set(id, { id, num: numL || id, scan });
+    }
+  }
+  if (!map.size) {
+    const re = /href="(?:https:\/\/zonatmo\.org)?\/view_uploads\/(\d+)\/?"/g;
+    let u;
+    while ((u = re.exec(html)) !== null) {
+      if (map.has(u[1])) continue;
+      const near = html.slice(Math.max(0, u.index - 500), u.index + 500);
+      const numN = ((near.match(/data-chapter-number="([^"]*)"/) || near.match(/Cap[ií]tulo\s*(\d+(?:\.\d+)?)/i) || [])[1] || "").trim() || u[1];
+      map.set(u[1], { id: u[1], num: numN, scan: "" });
+    }
+  }
+  const arr = [...map.values()];
+  arr.sort((a, b) => natCmp(a.num, b.num) || (a.scan || "").localeCompare(b.scan || ""));
+  return arr.slice(0, MAX_CAPS);
+}
+var SERIE_CACHE = /* @__PURE__ */ new Map();
+var SERIE_TTL = 6e5;
+function serieCachePut(slug, chapters3) {
+  SERIE_CACHE.set(slug, { chapters: chapters3, ts: Date.now() });
+  if (SERIE_CACHE.size > 10) {
+    const first = SERIE_CACHE.keys().next().value;
+    SERIE_CACHE.delete(first);
+  }
+}
+async function chaptersDe(slug, html0) {
+  const c = SERIE_CACHE.get(slug);
+  if (c && Date.now() - c.ts < SERIE_TTL) return c.chapters;
+  const html = html0 || await getHtml("/library/" + deSlug(slug) + "/");
+  const chapters3 = chapterList(html);
+  if (chapters3.length) serieCachePut(slug, chapters3);
+  return chapters3;
+}
+function seriesMeta(html, slug) {
+  const pick = (re) => {
+    const m = html.match(re);
+    return m ? clean(m[1]) : "";
+  };
+  let poster = "";
+  const im = html.match(/<img[^>]*class="[^"]*book-thumbnail[^"]*"[^>]*>/);
+  if (im) poster = absUrl((im[0].match(/(?:data-src|src)="([^"]+)"/) || [])[1]);
+  if (!poster) poster = pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/);
+  let overview = "";
+  const sy = html.match(/id="manga-synopsis"[^>]*>([\s\S]{0,3000}?)<\/(?:p|div)>/);
+  if (sy) overview = clean(sy[1].replace(/<[^>]+>/g, " "));
+  if (!overview) overview = pick(/property="og:description"[^>]*content="([^"]+)"/);
+  const genres = [];
+  const gre = /href="[^"]*\/tag\/[^"]*"[^>]*>([^<]{1,50})</g;
+  let g;
+  while ((g = gre.exec(html)) !== null && genres.length < 20) {
+    const t = clean(g[1]);
+    if (t && genres.indexOf(t) < 0) genres.push(t);
+  }
+  return {
+    slug,
+    title: pick(/<h1[^>]*class="[^"]*element-title[^"]*"[^>]*>([^<]{1,200})</) || pick(/property="og:title"[^>]*content="([^"]+)"/) || deSlug(slug).split("/")[2].replace(/-/g, " "),
+    poster: poster || void 0,
+    overview: overview.slice(0, 600) || void 0,
+    genres: genres.slice(0, 5)
+  };
+}
+function readerImages(html, uploadId) {
+  const out = [], seen = {};
+  const re = new RegExp(`https?:\\/\\/[^"'\\s>]+\\/chapters\\/` + uploadId + "\\/\\d+\\.(?:webp|jpe?g|png|avif|gif)", "g");
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    if (seen[m[0]]) continue;
+    seen[m[0]] = true;
+    out.push(m[0]);
+  }
+  if (!out.length) {
+    const re2 = /<img[^>]*class="[^"]*reader-image[^"]*"[^>]*>/g;
+    let t;
+    while ((t = re2.exec(html)) !== null) {
+      const src = (t[0].match(/(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/) || [])[1];
+      if (!src || seen[src]) continue;
+      seen[src] = true;
+      const u = absUrl(src);
+      if (u) out.push(u);
+    }
+  }
+  const num = (u) => parseInt((u.match(/\/(\d+)\.[a-z0-9]+(?:\?|$)/i) || [])[1], 10) || 0;
+  out.sort((a, b) => num(a) - num(b));
+  return out;
+}
+function chapterSlugDe(s) {
+  const m = String(s || "").match(/^up-(\d+)\.n(.+)$/);
+  return m ? { id: m[1], num: m[2] } : null;
+}
+var ORDEN = { new: "created_at", score: "likes_count", az: "title", old: "created_at" };
+async function list3(src, { page = 1, order = "new", search: search5, postsPerPage = 24 } = {}) {
+  const item = ORDEN[order] || "likes_count";
+  const dir = order === "az" || order === "old" ? "asc" : "desc";
+  const html = await libHtml(page, item, search5 || "");
+  const cards = seriesCards(html, postsPerPage || 24);
+  return { items: cardsToItems(src, cards), next: cards.length >= (postsPerPage || 24) && page < 30 ? String(page + 1) : null };
+}
+async function tops2(src, { page = 1, postsPerPage = 24 } = {}) {
+  return list3(src, { page, order: "score", postsPerPage });
+}
+async function latest2(src) {
+  return list3(src, { page: 1, order: "new", postsPerPage: 24 });
+}
+async function search4(src, q, { page = 1, postsPerPage = 24 } = {}) {
+  return list3(src, { page, order: "likes_count", search: q, postsPerPage });
+}
+async function detail3(src, slug) {
+  const html = await getHtml("/library/" + deSlug(slug) + "/");
+  const meta = seriesMeta(html, slug);
+  const chapters3 = await chaptersDe(slug, html);
+  return { ...meta, totalChapters: chapters3.length };
+}
+async function chapters2(src, slug, { order = "asc" } = {}) {
+  const list0 = await chaptersDe(slug);
+  const arr = list0.slice();
+  if (order === "desc") arr.reverse();
+  return {
+    items: arr.map((c) => ({
+      id: "up-" + c.id + ".n" + c.num,
+      slug: "up-" + c.id + ".n" + c.num,
+      number: c.num,
+      title: "Capítulo " + c.num + (c.scan ? " · " + c.scan : ""),
+      group: c.scan || void 0,
+      pago: false
+    })),
+    next: null,
+    // el HTML de la obra trae todos los capítulos: no hay paginación
+    total: arr.length
+  };
+}
+async function chapter3(src, slug, chapterSlug) {
+  const ch = chapterSlugDe(chapterSlug);
+  if (!ch) netError({ message: "capítulo desconocido" }, "el capítulo");
+  const html = await getHtml("/view_uploads/" + ch.id + "/", 45e3);
+  const pages = readerImages(html, ch.id);
+  if (!pages.length) netError({ message: "sin páginas" }, "las páginas del capítulo");
+  let prev = null, next = null;
+  try {
+    const lista = await chaptersDe(slug);
+    const i = lista.findIndex((x) => x.id === ch.id);
+    if (i >= 0) {
+      if (i > 0) prev = "up-" + lista[i - 1].id + ".n" + lista[i - 1].num;
+      if (i < lista.length - 1) next = "up-" + lista[i + 1].id + ".n" + lista[i + 1].num;
+    }
+  } catch {
+  }
+  return { pages, number: ch.num, title: "Capítulo " + ch.num, direction: "ltr", prev, next };
+}
+async function login3() {
+  netError({ message: "ZonaTMO.org no usa cuentas: el sitio público no las pide" }, "el inicio de sesión");
+}
+
 // src/novels.js
 var CAPS_TTL = 72e5;
 async function capsOf(src, slug, loader) {
@@ -1010,8 +1290,8 @@ function dropFiller(text) {
   }
   return out;
 }
-function asItems2(src, list3) {
-  return list3.map((m) => toItem(src, m)).filter(Boolean);
+function asItems2(src, list4) {
+  return list4.map((m) => toItem(src, m)).filter(Boolean);
 }
 function madaraHost(src) {
   return src === "an" ? "https://anslid.com" : "https://devilnovels.com";
@@ -1109,14 +1389,14 @@ async function madaraDetail(src, slug) {
     let m;
     while ((m = re.exec(seg)) && genres.length < 6) genres.push(unescapeHtml(m[1]).trim());
   }
-  const chapters2 = await madaraChapters(src, slug, html);
+  const chapters3 = await madaraChapters(src, slug, html);
   return {
     slug,
     title: t ? unescapeHtml(t[1]).trim() : slug.replace(/-novela$/, "").replace(/-/g, " "),
     overview: desc ? unescapeHtml(String(desc[1]).replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim() : void 0,
     poster: og ? og[1].replace(/&amp;/g, "&") : void 0,
     genres,
-    chapters: chapters2
+    chapters: chapters3
   };
 }
 async function madaraChapters(src, slug, detailHtml) {
@@ -1225,9 +1505,9 @@ async function skHome(src) {
   const out = [];
   for (const s of secs) {
     const raw = b[s.k];
-    const list3 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
-    if (!Array.isArray(list3) || !list3.length) continue;
-    const items = asItems2(src, list3.slice(0, 14).map((n) => ({
+    const list4 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
+    if (!Array.isArray(list4) || !list4.length) continue;
+    const items = asItems2(src, list4.slice(0, 14).map((n) => ({
       slug: String(n.id),
       title: n.title || n.nvl_title,
       overview: void 0,
@@ -1248,21 +1528,21 @@ async function skDetail(src, slug) {
     netError(e, "el detalle");
   }
   const n = r.body;
-  const chapters2 = [];
+  const chapters3 = [];
   const rawCaps = await capsOf(src, slug, async () => {
     const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads2(), timeoutMs: timeoutFor(src) });
     return Array.isArray(cr.body) ? cr.body : cr.body && cr.body.items || [];
   });
   for (const c of rawCaps) {
     const num = c.number != null ? String(c.number) : String(c.id);
-    chapters2.push({
+    chapters3.push({
       slug: String(c.id),
       number: num,
       title: c.title || "Capítulo " + num,
       pago: Boolean(c.is_vip || c.locked)
     });
   }
-  chapters2.sort((a, b) => Number(a.number) - Number(b.number));
+  chapters3.sort((a, b) => Number(a.number) - Number(b.number));
   return {
     slug,
     title: n.title,
@@ -1270,7 +1550,7 @@ async function skDetail(src, slug) {
     poster: skPoster(n),
     genres: Array.isArray(n.genres) ? n.genres.map((g) => String(g.name || g)).filter(Boolean).slice(0, 6) : void 0,
     status: n.status === "Finished" ? "Finalizada" : void 0,
-    chapters: chapters2
+    chapters: chapters3
   };
 }
 async function skChapter(src, slug, capId) {
@@ -1355,20 +1635,20 @@ async function mkDetail(src, slug) {
     const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor(src) });
     return Array.isArray(cr.body) ? cr.body : [];
   });
-  const chapters2 = rawCaps.map((c) => ({
+  const chapters3 = rawCaps.map((c) => ({
     slug: String(c.chapter_number),
     number: String(c.chapter_number),
     title: c.title || "Capítulo " + c.chapter_number,
     pago: Boolean(c.is_vip_only)
   }));
-  chapters2.sort((a, b) => Number(a.number) - Number(b.number));
+  chapters3.sort((a, b) => Number(a.number) - Number(b.number));
   return {
     slug,
     title: n.title,
     overview: n.synopsis ? clip(String(n.synopsis).replace(/<[^>]+>/g, " "), 600) : void 0,
     poster: mkCover(n.cover_image_url),
     genres: Array.isArray(n.genres) ? n.genres.map((g) => String(g.name || g)).filter(Boolean).slice(0, 6) : void 0,
-    chapters: chapters2
+    chapters: chapters3
   };
 }
 async function mkChapter(src, slug, capId) {
@@ -1529,7 +1809,7 @@ var THEMES = [
 
 // src/screen.js
 var nvAd = { search: novelSearch, list: null, latest: null, detail: novelDetail, chapter: novelChapter };
-var adapter2 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : SOURCES[src].kind === "manhwa" ? manhwa_exports : nvAd;
+var adapter2 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : SOURCES[src].kind === "zonatmoorg" ? zonatmoorg_exports : SOURCES[src].kind === "manhwa" ? manhwa_exports : nvAd;
 var isNovel = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
 var hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 function card(src, slug, title, poster) {
@@ -1721,8 +2001,8 @@ async function progressEntries() {
   const out = [];
   if (hasProgress()) {
     try {
-      const list3 = await kino.progress.list({ limit: 12 });
-      for (const e of Array.isArray(list3) ? list3 : []) {
+      const list4 = await kino.progress.list({ limit: 12 });
+      for (const e of Array.isArray(list4) ? list4 : []) {
         if (!e || e.done || !e.resume) continue;
         let resume;
         try {
@@ -1753,18 +2033,18 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     if (cached && cached.title) return cached;
   }
   const a = adapter2(p.src);
-  let d, chapters2 = [], next = null;
-  if (SOURCES[p.src].kind === "zonatmo") {
+  let d, chapters3 = [], next = null;
+  if (SOURCES[p.src].kind === "zonatmo" || SOURCES[p.src].kind === "zonatmoorg") {
     const [dRes, cRes] = await Promise.allSettled([a.detail(p.src, p.a), a.chapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" })]);
     if (dRes.status === "rejected") throw dRes.reason;
     d = dRes.value;
     if (cRes.status === "fulfilled") {
-      chapters2 = cRes.value.items;
+      chapters3 = cRes.value.items;
       next = cRes.value.next;
     }
   } else {
     d = await a.detail(p.src, p.a);
-    chapters2 = d.chapters || [];
+    chapters3 = d.chapters || [];
   }
   const det = {
     src: p.src,
@@ -1777,7 +2057,7 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     demography: d.demographyName,
     score: d.score,
     total: d.totalChapters,
-    chapters: chapters2.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title, pago: Boolean(c.pago) })),
+    chapters: chapters3.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title, pago: Boolean(c.pago) })),
     next,
     adult: d.adult
   };
@@ -2532,14 +2812,14 @@ async function screenEvent(ctx) {
     case "cap": {
       const ref = String(arg || "");
       try {
-        const chapter3 = await loadChapter(ref, { t: state && state.detail ? state.detail.title : void 0, p: state && state.detail ? state.detail.poster : void 0 });
-        chapter3.tk = ++navSeq;
-        const prev = storageProgress()[chapter3.mr];
+        const chapter4 = await loadChapter(ref, { t: state && state.detail ? state.detail.title : void 0, p: state && state.detail ? state.detail.poster : void 0 });
+        chapter4.tk = ++navSeq;
+        const prev = storageProgress()[chapter4.mr];
         if (prev && prev.cr === ref && (prev.page || 1) > 1) {
-          chapter3.resumePage = Math.min(prev.page, chapter3.total || prev.page);
+          chapter4.resumePage = Math.min(prev.page, chapter4.total || prev.page);
         }
         scrSave = { k: "", at: 0, page: 0, frac: 0 };
-        return { route: { push: "leer", params: { r: ref } }, state: { chapter: chapter3, imgPage: null, img: null, imgError: null, busyChapter: false } };
+        return { route: { push: "leer", params: { r: ref } }, state: { chapter: chapter4, imgPage: null, img: null, imgError: null, busyChapter: false } };
       } catch (e) {
         return { toast: errText(e) };
       }
@@ -2548,9 +2828,9 @@ async function screenEvent(ctx) {
       const ref = String(arg || "");
       const c = state && state.chapter;
       try {
-        const chapter3 = await loadChapter(ref, { t: c ? c.mTitle : void 0, p: c ? c.mPoster : void 0 });
-        chapter3.tk = ++navSeq;
-        return { state: { chapter: chapter3, imgPage: null, img: null, imgError: null, pagIdx: 0 } };
+        const chapter4 = await loadChapter(ref, { t: c ? c.mTitle : void 0, p: c ? c.mPoster : void 0 });
+        chapter4.tk = ++navSeq;
+        return { state: { chapter: chapter4, imgPage: null, img: null, imgError: null, pagIdx: 0 } };
       } catch (e) {
         return { toast: en ? "Could not open that chapter." : "No se pudo abrir ese capítulo." };
       }
@@ -2635,18 +2915,18 @@ async function handleOpen(ctx) {
   const args = route && (route.args || route.params) || null;
   if (args && args.r && args.m) {
     try {
-      const detail3 = await loadDetail(args.m);
+      const detail4 = await loadDetail(args.m);
       const prog = await readProgress(args.m);
-      return { route: { push: "detalle", params: { r: args.m } }, state: { detail: detail3, detailRef: args.m, prog, error: null, fav: Boolean(favsAll()[args.m]), bibTagCur: (biblioAll()[args.m] || {}).tag || null } };
+      return { route: { push: "detalle", params: { r: args.m } }, state: { detail: detail4, detailRef: args.m, prog, error: null, fav: Boolean(favsAll()[args.m]), bibTagCur: (biblioAll()[args.m] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
   }
   if (args && args.r) {
     try {
-      const detail3 = await loadDetail(args.r);
+      const detail4 = await loadDetail(args.r);
       const prog = await readProgress(args.r);
-      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail3, detailRef: args.r, prog, error: null, fav: Boolean(favsAll()[args.r]), bibTagCur: (biblioAll()[args.r] || {}).tag || null } };
+      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail4, detailRef: args.r, prog, error: null, fav: Boolean(favsAll()[args.r]), bibTagCur: (biblioAll()[args.r] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }

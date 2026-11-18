@@ -30,6 +30,17 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.11
+
+- **ZonaTMO.org vuelve a funcionar**: el sitio clásico de TMO en .org **no sirve la API JSON** `/wp-api/` (esa solo la tiene zonatmo.net, que sigue igual por API). La fuente `zo` ahora funciona como el sitio de verdad: raspa el HTML con la receta probada del plugin de referencia ZonaTM0 —
+  - listados y búsqueda por la **/biblioteca AJAX** (X-Requested-With, responde `{html: fragmento}`), con órdenes «actualizados» (`created_at`) y «lo más visto» (`likes_count`);
+  - la obra se lee de **/library/tipo/id/slug/**, que trae TODAS las filas de capítulos del HTML (sin paginar), ordenadas con comparación natural y el grupo de traducción en el título;
+  - el lector abre **/view_uploads/&lt;id&gt;/** y toma las páginas del HTML en bruto solo de `…/chapters/&lt;id&gt;/&lt;n&gt;.webp` (así no se cuelan portadas ni banners), ordenadas por número, con plan B por `reader-image`; las imágenes viven en **storage.zonatmo.org**, ya declarado en el manifiesto («Se conectará a: zonatmo.org, storage.zonatmo.org»);
+  - sin cuentas ni tokens: todo es público (el ajuste de cuentas sigue siendo de ZonaTMO .net).
+- El slug interno de la fuente codifica el trío del sitio (`manga.12345.solo-leveling`) y el capítulo el id de subida y número (`up-456789.n200.5`), ambos admitidos por el validador de refs; el número normaliza ceros finales (200.50 → 200.5).
+- Los vecinos Anterior/Siguiente del lector salen de la lista de la obra (caché de 10 obras, 10 min): cambiar de capítulo no vuelve a raspar la obra.
+- Cloudflare: si .org pide desafío, la tarjeta «Pre-clearance de Cloudflare» de Ajustes sigue siendo la vía para resolverlo una vez (la cookie cubre sitio y storage).
+
 ## Novedades v2.10
 
 - **Fin del «empieza a la mitad»**: al cambiar de capítulo, el lector reutilizaba el scroll del capítulo anterior (claves de widget constantes) y el nuevo capítulo arrancaba a media página. Ahora cada apertura lleva una clave única (token por apertura + capítulo): **cada capítulo empieza en su página 1**, en los tres modos (tira vertical, páginas RTL y novela). Es la misma corrección que el plugin de referencia ZonaTM0 documentó en su changelog v1.2.1 («clave única por apertura — el paginador arranca en la página 1, sin restaurar la última vista»), adoptada y verificada aquí.

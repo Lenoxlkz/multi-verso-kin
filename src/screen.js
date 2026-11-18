@@ -15,13 +15,14 @@
 
 import { cfChallengeSeen, cfClassify, cfStateFor, cfStatus, cfForget, cfClearChallenge, cfSaveCookies, imgHeads, isCfChallenge, fetchText, timeoutFor, UA, SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
 import * as zt from "./zonatmo.js";
+import * as zoA from "./zonatmoorg.js";
 import * as ms from "./manhwa.js";
 import * as nv from "./novels.js";
 import { THEMES } from "./themes.js";
 
 // El adaptador de novelas expone la misma interfaz (search/home/detail/chapter) que los de manga.
 const nvAd = { search: nv.novelSearch, list: null, latest: null, detail: nv.novelDetail, chapter: nv.novelChapter };
-const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : SOURCES[src].kind === "manhwa" ? ms : nvAd);
+const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : SOURCES[src].kind === "zonatmoorg" ? zoA : SOURCES[src].kind === "manhwa" ? ms : nvAd);
 const isNovel = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
 const hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 
@@ -276,7 +277,7 @@ async function loadDetail(ref, { skipCache = false } = {}) {
   }
   const a = adapter(p.src);
   let d, chapters = [], next = null;
-  if (SOURCES[p.src].kind === "zonatmo") {
+  if (SOURCES[p.src].kind === "zonatmo" || SOURCES[p.src].kind === "zonatmoorg") {
     // detalle y capítulos no dependen entre sí: en paralelo
     const [dRes, cRes] = await Promise.allSettled([a.detail(p.src, p.a), a.chapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" })]);
     if (dRes.status === "rejected") throw dRes.reason;

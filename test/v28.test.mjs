@@ -26,6 +26,6 @@ test("el Home de SkyNovels usa las claves nuevas de la API y la destacada como d
 });
 
 test("la versión avanza a 2.10.0", () => {
-  assert.equal(manifest.version, "2.10.0");
+  assert.equal(manifest.version, "2.11.0");
   assert.ok(built.includes("/v1/media/novels/"), "el build no lleva la ruta nueva");
 });

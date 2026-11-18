@@ -49,6 +49,6 @@ test("Ajustes: tarjeta de pre-clearance siempre a mano, con estado y borrado", (
 });
 
 test("la versión avanza a 2.10.0 y el build lleva el pre-clearance", () => {
-  assert.equal(manifest.version, "2.10.0");
+  assert.equal(manifest.version, "2.11.0");
   assert.ok(built.includes("Pre-clearance activa") && built.includes("cfClassify"), "el build no lleva el pre-clearance");
 });

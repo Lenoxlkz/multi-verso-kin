@@ -5,7 +5,7 @@
 
 export const SOURCES = {
   zt: { name: "ZonaTMO", host: "https://zonatmo.net", kind: "zonatmo" },
-  zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmo" },
+  zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmoorg" },
   ms: { name: "ManhwaSS", host: "https://manhwass.lat", kind: "manhwa" },
   mh: { name: "ManhwaShot", host: "https://manhwashot.lat", kind: "manhwa" },
   sk: { name: "Skynovels", host: "https://www.skynovels.net", kind: "skynovels" },

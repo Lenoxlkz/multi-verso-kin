@@ -1,7 +1,7 @@
 {
   "id": "multi-verso-kin",
   "name": "Multi-verso Kin",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "apiVersion": 20,
   "entry": "plugin.js",
   "description": "Manga, manhwa y novelas ligeras: ZonaTMO, ManhwaSS, Skynovels, MatchaNovels, Astral, Anslid y DevilNovels.",
@@ -12,6 +12,7 @@
     "*.zonatmo.net",
     "zonatmo.org",
     "*.zonatmo.org",
+    "storage.zonatmo.org",
     "manhwass.lat",
     "*.manhwass.lat",
     "manhwashot.lat",
@@ -288,6 +289,6 @@
   },
   "signature": {
     "authorKey": "b0bc4e128df02f948d02cd452328983c10a7834a4b824cd6dfb9276b52330544",
-    "value": "66ed76f66c2940d8d31d248c036d09361ca1f278f7e0f14fff33bfdd25913ff154b49083a6cb9bd3b6bb4b2a674e78950c57086d4019bc7470972b891d5df804"
+    "value": "cbcdc360220b184525c42d5d0bd9ace4ea08435964d8c06a2b44b5473434f479e8555206d638597665cf2e126fc512f862b7602374256d7b36b3bc841a9d8a02"
   }
 }
