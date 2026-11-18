@@ -13,14 +13,13 @@ export const SOURCES = {
   as: { name: "Astral Novels", host: "https://astralnovelstranslations.wordpress.com", kind: "astral" },
   an: { name: "Anslid", host: "https://anslid.com", kind: "madara" },
   dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "madara" },
-  ln: { name: "LegnNovels", host: "https://legnnovels.com", kind: "madara" },
 };
 
 // Fuentes de novelas (texto) frente a las de manga (imágenes): el lector cambia de modo.
-export const NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv", "ln"];
+export const NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv"];
 
 // Orden de las pestañas del Home: una por fuente, con sus secciones nativas.
-export const HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "ln", "zo", "mh"];
+export const HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "zo", "mh"];
 
 // Fuentes que arman las filas del Home (las gemelas se dejan para la búsqueda y el selector de fuentes).
 export const HOME_SOURCES = ["zt", "ms"];
@@ -97,6 +96,7 @@ export async function fetchText(url, { heads = {}, timeoutMs = 12000, method = "
   }
   const r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
   const text = r.text ? r.text() : "";
+  noteHttp(url, r.status, text);
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }
 
@@ -127,13 +127,23 @@ export const BASE_HEADS = {
 // Sin esto, el descargador de Kino pide las imágenes con su propio agente y varios hosts
 // (hotlink-check o Cloudflare) responden 403: la imagen queda en negro. Las fuentes amistosas
 // (ZonaTMO, ManhwaSS) aceptan ambos modos: verificado con peticiones reales.
-export function imgHeads(url, withReferer = true) {
+// Hosts que exigen Referer propio en sus imágenes (solo con evidencia; añadir por fuente).
+const IMG_REFERER = { "astralnovelstranslations.wordpress.com": true };
+
+/**
+ * Cabeceras para descargar una imagen: el UA interno SIEMPRE (prioritario); el Referer del
+ * propio host solo cuando la fuente lo requiere (mapa IMG_REFERER) o se fuerza. `force`
+ * admite true (Referer sí), false (nunca) y undefined (lo decide el mapa por host).
+ */
+export function imgHeads(url, force) {
   try {
     const u = String(url || "");
     const m = /^(https?:\/\/[^\/]+)/.exec(u);
     if (!m) return undefined;
     const h = { "User-Agent": UA };
-    if (withReferer) h["Referer"] = m[1] + "/";
+    const host = m[1].replace(/^https?:\/\//, "").replace(/^www\./, "");
+    const wantRef = force === true || (force !== false && Boolean(IMG_REFERER[host]));
+    if (wantRef) h["Referer"] = m[1] + "/";
     return h;
   } catch { return undefined; }
 }
@@ -177,11 +187,34 @@ export function cfCookieHead(url) {
   } catch { return undefined; }
 }
 
+// Registro corto de los últimos resultados HTTP por host: permite detectar un desafío de
+// Cloudflare a partir de las respuestas que ya llegaron (sin peticiones de control extra).
+let httpLog = [];
+
+function noteHttp(url, status, text) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(url || ""));
+    if (!m) return;
+    httpLog.push({ host: m[1], status: Number(status) || 0, sample: String(text || "").slice(0, 4000), t: Date.now() });
+    if (httpLog.length > 12) httpLog = httpLog.slice(-12);
+  } catch { /* el diagnóstico no debe romper nada */ }
+}
+
+/** ¿Hubo un desafío de Cloudflare en este host en la última llamada (20 s)? */
+export function cfChallengeSeen(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return false;
+    const now = Date.now();
+    return httpLog.some((e) => e.host === m[1] && now - e.t < 20000 && isCfChallenge(e.status, e.sample));
+  } catch { return false; }
+}
+
 /** ¿La respuesta es un desafío interactivo de Cloudflare? (403/429/503 con sus marcas). */
 export function isCfChallenge(status, text) {
   if (status !== 403 && status !== 429 && status !== 503) return false;
   const t = String(text || "").slice(0, 4000);
-  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser/i.test(t);
+  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser|used cloudflare to restrict access|access denied|enable javascript and cookies to continue/i.test(t);
 }
 
 export function timeoutFor(src) {

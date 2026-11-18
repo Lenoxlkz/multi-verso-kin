@@ -14,7 +14,6 @@
 //                       POST {novela}/ajax/chapters/ (XHR), contenido en {novela}/capitulo-N/
 //   dv · DevilNovels    Madara estándar (mismo motor que Anslid; tras Cloudflare, no verificable desde el kit:
 //                       se usa la misma estructura y un error elegante si Kino no puede llegar)
-//   ln · LegnNovels     Madara estándar (ídem)
 // El lector de novelas es de TEXTO: el campo `text` (array de párrafos) lo pinta screen.js como párrafos,
 // no como imágenes. Los ref siguen siendo "<src>|m|<slug>" y "<src>|c|<slug>|<capítulo>".
 
@@ -102,10 +101,10 @@ function asItems(src, list) {
   return list.map((m) => toItem(src, m)).filter(Boolean);
 }
 
-// ---------- madara (anslid, devilnovels, legnnovels) ----------
+// ---------- madara (anslid, devilnovels) ----------
 
 function madaraHost(src) {
-  return src === "an" ? "https://anslid.com" : src === "dv" ? "https://devilnovels.com" : "https://legnnovels.com";
+  return src === "an" ? "https://anslid.com" : "https://devilnovels.com";
 }
 
 /** Tarjetas de un archivo/búsqueda madara: div.page-item-detail con enlace, portada y título. */
@@ -118,14 +117,20 @@ function madaraCards(html, src, limit) {
     const seg = chunks[i].slice(0, 3500);
     const m = re.exec(seg);
     if (!m || m[1] === "feed") continue;
-    const img = /<img[^>]+src="([^"]+)"/.exec(seg) || /data-src="([^"]+)"/.exec(seg);
+    const img = (function (seg) {
+      for (const mm of seg.matchAll(/(?:data-src|src)="([^"]+)"/g)) {
+        const u = mm[1];
+        if (!/dflazy|\/images\/loading|placeholder|\bdummy\b/i.test(u)) return u;
+      }
+      return null;
+    })(seg);
     const h = /<h(?:3|4|5)[^>]*>\s*<a[^>]*>([^<]{1,200})<\/a>/.exec(seg) || /<a[^>]*rel="bookmark"[^>]*>([^<]{1,200})<\/a>/.exec(seg);
     const title = h ? unescapeHtml(h[1]).trim() : m[1].replace(/-novela$/, "").replace(/-/g, " ");
     out.push({
       slug: m[1],
       title,
       overview: undefined,
-      poster: img ? img[1].replace(/&amp;/g, "&") : undefined,
+      poster: img ? img.replace(/&amp;/g, "&") : undefined,
     });
   }
   return out;

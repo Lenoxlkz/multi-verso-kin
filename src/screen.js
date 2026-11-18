@@ -13,7 +13,7 @@
 //  - Colores: el tema del plugin (violeta) tiñe las páginas del plugin por defecto; los 8 temas de la app
 //    se ponen con un botón en Ajustes.
 
-import { imgHeads, cfSaveCookies, isCfChallenge, UA, SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
+import { cfChallengeSeen, imgHeads, cfSaveCookies, isCfChallenge, UA, SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
 import * as zt from "./zonatmo.js";
 import * as ms from "./manhwa.js";
 import * as nv from "./novels.js";
@@ -72,7 +72,7 @@ const FUENTES_URL = {
   ms: "https://manhwass.lat", mh: "https://manhwashot.lat",
   sk: "https://api.skynovels.net", mk: "https://matchanovels.com",
   as: "https://astralnovelstranslations.wordpress.com",
-  an: "https://anslid.com", dv: "https://devilnovels.com", ln: "https://legnnovels.com",
+  an: "https://anslid.com", dv: "https://devilnovels.com",
 };
 
 function storageProgress() {
@@ -167,24 +167,31 @@ async function loadHomeShelves(src, en) {
       for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
     }
     if (shelves.length) cacheSet(ck, shelves);
-    if (!shelves.length) {
-      // ¿fue un desafío de Cloudflare? una petición de control decide (solo en la excepción)
-      const base = FUENTES_URL[src];
-      if (base) {
-        try {
-          const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
-          if (isCfChallenge(ctrl.status, ctrl.text)) {
-            return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
-          }
-        } catch { /* sin red: el error genérico basta */ }
-      }
-      return { shelves, cf: false, err: en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió" };
-    }
+    if (!shelves.length) return probeCf(src, en, shelves);
     return { shelves, cf: false, err: null };
   } catch (e) {
-    const msg = String((e && e.userMessage) || (e && e.message) || "la fuente no respondió");
-    return { shelves: [], cf: false, err: SOURCES[src].name + ": " + msg.slice(0, 140) };
+    // los adaptadores lanzan con HTTP 403/503: la sonda decide si fue un desafío de Cloudflare
+    return probeCf(src, en, [], SOURCES[src].name + ": " + String((e && e.userMessage) || (e && e.message) || "la fuente no respondió").slice(0, 140));
   }
+}
+
+/** Sonda de control: ¿la fuente está detrás de un desafío interactivo de Cloudflare? */
+async function probeCf(src, en, shelves, fallbackErr) {
+  const base = FUENTES_URL[src];
+  // 1) los resultados HTTP de esta llamada ya muestran el desafío: nada que pedir
+  if (base && cfChallengeSeen(base)) {
+    return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+  }
+  // 2) si no, un control directo decide (una petición, solo en fallo)
+  if (base) {
+    try {
+      const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
+      if (isCfChallenge(ctrl.status, ctrl.text)) {
+        return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+      }
+    } catch { /* sin red: el error genérico basta */ }
+  }
+  return { shelves, cf: false, err: fallbackErr || (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
 }
 
 async function fetchOneRow(spec) {

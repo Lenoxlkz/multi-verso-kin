@@ -61,14 +61,17 @@ test("el Home muestra el panel de desafío y el detalle lo ofrece tras un error 
   assert.ok(src.includes('onPressed: { event: "cfAbrir", arg: src }'), "el botón del Home no lleva la fuente");
   assert.ok(src.includes("function detailErrorBox"), "el detalle no tiene su caja de error CF");
   assert.ok(src.includes('onPressed: { event: "cfAbrir", arg: ref }'), "el botón del detalle no lleva el ref");
-  const sonda = src.slice(src.indexOf("¿fue un desafío de Cloudflare?"), src.indexOf("return { shelves, cf: false, err"));
-  assert.ok(sonda.includes("isCfChallenge(ctrl.status, ctrl.text)"), "la sonda no usa isCfChallenge");
+  const sonda = src.slice(src.indexOf("async function probeCf"), src.indexOf("/** Sonda") + 1e9 || src.length);
+  const probe = src.slice(src.indexOf("async function probeCf"));
+  assert.ok(probe.includes("isCfChallenge(ctrl.status, ctrl.text)"), "la sonda no usa isCfChallenge");
+  // corre en AMBOS caminos de fallo: sin filas y el catch (los adaptadores lanzan con 403)
+  assert.ok(src.includes("return probeCf(src, en, shelves);") && src.includes("return probeCf(src, en, [],"), "la sonda no cubre el catch");
 });
 
 test("el manifiesto habilita el navegador visual con apiVersion 20", () => {
   assert.equal(manifest.apiVersion, 20);
   assert.equal(manifest.visualBrowser, true);
-  for (const h of ["skynovels.net", "matchanovels.com", "anslid.com", "devilnovels.com", "legnnovels.com"]) {
+  for (const h of ["skynovels.net", "matchanovels.com", "anslid.com", "devilnovels.com"]) {
     assert.ok(manifest.hosts.some((x) => x.includes(h)), "falta el host " + h);
   }
   assert.ok(built.includes("visualBrowser"), "el build no lleva el navegador visual");

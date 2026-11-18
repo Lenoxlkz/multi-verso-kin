@@ -15,11 +15,10 @@ var SOURCES = {
   mk: { name: "MatchaNovels", host: "https://matchanovels.com", kind: "matchanovels" },
   as: { name: "Astral Novels", host: "https://astralnovelstranslations.wordpress.com", kind: "astral" },
   an: { name: "Anslid", host: "https://anslid.com", kind: "madara" },
-  dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "madara" },
-  ln: { name: "LegnNovels", host: "https://legnnovels.com", kind: "madara" }
+  dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "madara" }
 };
-var NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv", "ln"];
-var HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "ln", "zo", "mh"];
+var NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv"];
+var HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "zo", "mh"];
 var HOME_SOURCES = ["zt", "ms"];
 var PAGO_TEXT_RE = /premium|\bvip\b|\bde pago\b|🔒|\bloqueado\b|\bpaid\b|\bunlock\b|\boro\b|\bcoin\b/i;
 var PAGO_CLASS_RE = /premium|\block|\bpaid|\bvip/i;
@@ -74,6 +73,7 @@ async function fetchText2(url, { heads: heads3 = {}, timeoutMs = 12e3, method = 
   }
   const r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
   const text = r.text ? r.text() : "";
+  noteHttp(url, r.status, text);
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }
 async function fetchJson(url, opts) {
@@ -92,13 +92,16 @@ var BASE_HEADS = {
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "es-ES,es;q=0.9,en;q=0.7"
 };
-function imgHeads(url, withReferer = true) {
+var IMG_REFERER = { "astralnovelstranslations.wordpress.com": true };
+function imgHeads(url, force) {
   try {
     const u = String(url || "");
     const m = /^(https?:\/\/[^\/]+)/.exec(u);
     if (!m) return void 0;
     const h = { "User-Agent": UA };
-    if (withReferer) h["Referer"] = m[1] + "/";
+    const host = m[1].replace(/^https?:\/\//, "").replace(/^www\./, "");
+    const wantRef = force === true || force !== false && Boolean(IMG_REFERER[host]);
+    if (wantRef) h["Referer"] = m[1] + "/";
     return h;
   } catch {
     return void 0;
@@ -137,10 +140,30 @@ function cfCookieHead(url) {
     return void 0;
   }
 }
+var httpLog = [];
+function noteHttp(url, status, text) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(url || ""));
+    if (!m) return;
+    httpLog.push({ host: m[1], status: Number(status) || 0, sample: String(text || "").slice(0, 4e3), t: Date.now() });
+    if (httpLog.length > 12) httpLog = httpLog.slice(-12);
+  } catch {
+  }
+}
+function cfChallengeSeen(hostUrl) {
+  try {
+    const m = /^(https?:\/\/[^\/]+)/.exec(String(hostUrl || ""));
+    if (!m) return false;
+    const now = Date.now();
+    return httpLog.some((e) => e.host === m[1] && now - e.t < 2e4 && isCfChallenge(e.status, e.sample));
+  } catch {
+    return false;
+  }
+}
 function isCfChallenge(status, text) {
   if (status !== 403 && status !== 429 && status !== 503) return false;
   const t = String(text || "").slice(0, 4e3);
-  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser/i.test(t);
+  return /just a moment|challenge-platform|cf-browser-verification|cf_chl_|attention required|checking your browser|used cloudflare to restrict access|access denied|enable javascript and cookies to continue/i.test(t);
 }
 function timeoutFor2(src) {
   return src === "zo" || src === "mh" ? 5e3 : 12e3;
@@ -922,7 +945,7 @@ function asItems2(src, list3) {
   return list3.map((m) => toItem(src, m)).filter(Boolean);
 }
 function madaraHost(src) {
-  return src === "an" ? "https://anslid.com" : src === "dv" ? "https://devilnovels.com" : "https://legnnovels.com";
+  return src === "an" ? "https://anslid.com" : "https://devilnovels.com";
 }
 function madaraCards(html, src, limit) {
   const out = [];
@@ -933,14 +956,20 @@ function madaraCards(html, src, limit) {
     const seg = chunks[i].slice(0, 3500);
     const m = re.exec(seg);
     if (!m || m[1] === "feed") continue;
-    const img = /<img[^>]+src="([^"]+)"/.exec(seg) || /data-src="([^"]+)"/.exec(seg);
+    const img = function(seg2) {
+      for (const mm of seg2.matchAll(/(?:data-src|src)="([^"]+)"/g)) {
+        const u = mm[1];
+        if (!/dflazy|\/images\/loading|placeholder|\bdummy\b/i.test(u)) return u;
+      }
+      return null;
+    }(seg);
     const h = /<h(?:3|4|5)[^>]*>\s*<a[^>]*>([^<]{1,200})<\/a>/.exec(seg) || /<a[^>]*rel="bookmark"[^>]*>([^<]{1,200})<\/a>/.exec(seg);
     const title = h ? unescapeHtml(h[1]).trim() : m[1].replace(/-novela$/, "").replace(/-/g, " ");
     out.push({
       slug: m[1],
       title,
       overview: void 0,
-      poster: img ? img[1].replace(/&amp;/g, "&") : void 0
+      poster: img ? img.replace(/&amp;/g, "&") : void 0
     });
   }
   return out;
@@ -1473,8 +1502,7 @@ var FUENTES_URL = {
   mk: "https://matchanovels.com",
   as: "https://astralnovelstranslations.wordpress.com",
   an: "https://anslid.com",
-  dv: "https://devilnovels.com",
-  ln: "https://legnnovels.com"
+  dv: "https://devilnovels.com"
 };
 function storageProgress() {
   try {
@@ -1562,24 +1590,27 @@ async function loadHomeShelves(src, en) {
       for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
     }
     if (shelves.length) cacheSet(ck, shelves);
-    if (!shelves.length) {
-      const base = FUENTES_URL[src];
-      if (base) {
-        try {
-          const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
-          if (isCfChallenge(ctrl.status, ctrl.text)) {
-            return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
-          }
-        } catch {
-        }
-      }
-      return { shelves, cf: false, err: en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió" };
-    }
+    if (!shelves.length) return probeCf(src, en, shelves);
     return { shelves, cf: false, err: null };
   } catch (e) {
-    const msg = String(e && e.userMessage || e && e.message || "la fuente no respondió");
-    return { shelves: [], cf: false, err: SOURCES[src].name + ": " + msg.slice(0, 140) };
+    return probeCf(src, en, [], SOURCES[src].name + ": " + String(e && e.userMessage || e && e.message || "la fuente no respondió").slice(0, 140));
   }
+}
+async function probeCf(src, en, shelves, fallbackErr) {
+  const base = FUENTES_URL[src];
+  if (base && cfChallengeSeen(base)) {
+    return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+  }
+  if (base) {
+    try {
+      const ctrl = await fetchText(base + "/", { heads: { Accept: "text/html" }, timeoutMs: timeoutFor(src) });
+      if (isCfChallenge(ctrl.status, ctrl.text)) {
+        return { shelves, cf: true, err: en ? SOURCES[src].name + " is behind a Cloudflare challenge" : SOURCES[src].name + " está detrás de un desafío de Cloudflare" };
+      }
+    } catch {
+    }
+  }
+  return { shelves, cf: false, err: fallbackErr || (en ? SOURCES[src].name + " did not answer" : SOURCES[src].name + " no respondió") };
 }
 async function fetchOneRow(spec) {
   const a = adapter2(spec.src);

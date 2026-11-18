@@ -1,10 +1,10 @@
 {
   "id": "multi-verso-kin",
   "name": "Multi-verso Kin",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "apiVersion": 20,
   "entry": "plugin.js",
-  "description": "Manga, manhwa y novelas ligeras: ZonaTMO, ManhwaSS, Skynovels, MatchaNovels, Astral, Anslid, DevilNovels y LegnNovels.",
+  "description": "Manga, manhwa y novelas ligeras: ZonaTMO, ManhwaSS, Skynovels, MatchaNovels, Astral, Anslid y DevilNovels.",
   "author": "Lenoxlkz",
   "homepage": "https://github.com/Lenoxlkz/multi-verso-kin",
   "hosts": [
@@ -29,9 +29,7 @@
     "anslid.com",
     "*.anslid.com",
     "devilnovels.com",
-    "*.devilnovels.com",
-    "legnnovels.com",
-    "*.legnnovels.com"
+    "*.devilnovels.com"
   ],
   "capabilities": [
     "search",
@@ -290,6 +288,6 @@
   },
   "signature": {
     "authorKey": "b0bc4e128df02f948d02cd452328983c10a7834a4b824cd6dfb9276b52330544",
-    "value": "e215f1087d0105cc3e41281cc7095965d02981273145044593512b18cf468465887af817c52a00eeb9d2400909516741fdd7bb7639d4a85c963854ff2009a20a"
+    "value": "cb266d57414a727c11c3fc5d28a918607367b7bd80bca8462526c216100282276459344277beccc2eac7bf514b60f817740c49407eeeb2aef3d3809f955f4200"
   }
 }

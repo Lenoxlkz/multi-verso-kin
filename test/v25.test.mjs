@@ -41,9 +41,9 @@ test("la cápsula abre, cierra por toque fuera y por temporizador de 5 s", () =>
   assert.ok(src.includes("if (!state.capsOpen) opts.fab = floatFab()"), "el FAB no se oculta con el panel abierto");
 });
 
-test("el panel lista las diez fuentes y cerrar con tabSrc", () => {
+test("el panel lista las nueve fuentes y cerrar con tabSrc", () => {
   const panel = src.slice(src.indexOf("function panelSources"), src.indexOf("function viewMain"));
-  for (const k of ["zt", "zo", "ms", "mh", "sk", "mk", "as", "an", "dv", "ln"]) {
+  for (const k of ["zt", "zo", "ms", "mh", "sk", "mk", "as", "an", "dv"]) {
     assert.ok(panel.includes('arg: ' + k) || panel.includes("arg: k"), "el panel no abre la fuente " + k);
   }
   const tab = src.slice(src.indexOf('case "tabSrc"'), src.indexOf('case "capsToggle"'));
@@ -96,7 +96,7 @@ test("la purga de caché expira antes de recortar por número", () => {
   assert.ok(pr.includes("kino.storage.remove"), "no borra nada");
 });
 
-test("la versión avanza a 2.5.0", () => {
-  assert.equal(manifest.version, "2.6.0");
+test("la versión avanza a 2.7.0", () => {
+  assert.equal(manifest.version, "2.7.0");
   assert.ok(built.includes("capsTick") && built.includes("borrarHistorial"), "el build no lleva las novedades");
 });
