@@ -30,6 +30,15 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.13
+
+RCA de las tres incidencias del home de DevilNovels (2026-11), con la estructura real del sitio verificada contra el índice de Google (el menú es Inicio · Lista de Novelas · Iniciar sesión · Registrarse; el tema usa un lazy-loader «dflazy»; las páginas de finalizadas firman «Título - Finalizada»):
+
+- **Las primeras tarjetas ya no son Login/Sign Up**: la lista de rutas que nunca son novelas estaba incompleta — el sitio llama a sus páginas de cuenta «Mi Login», «Mi Registro», «Mi Recuperar…» (`/mi-login`, `/mi-registro`, `/mi-recuperar`) y tiene una página «Acortador»; ninguna estaba excluida y el menú del sitio, que es lo primero del HTML, salía como las primeras tarjetas. Ahora se excluyen todas las rutas de cuenta/membresía/herramientas y además un filtro de texto tumba frases cortas (≤ 4 palabras) de acciones de cuenta, por si el sitio añade rutas nuevas.
+- **Cada tarjeta lleva su título y su portada (antes se mezclaban entre tarjetas)**: la extracción miraba 2600 caracteres HACIA ATRÁS para encontrar título y portada, y en una malla de tarjetas cogía los de la tarjeta ANTERIOR (títulos desplazados, duplicados y portadas repetidas). Ahora se extrae del enlace completo: título del atributo/encabezado/texto del propio enlace y portada de la imagen dentro del enlace o la más cercana por encima (1000 caracteres).
+- **Portadas de verdad, no el sustituto del lazy-loader**: los atributos se prueban por nombre y en orden (`data-src`, `data-lazy-src`, `data-original`, `src`) — el sustituto (`dflazy`, un GIF de 1 px en `src` o un `data:` URI) se descarta y se sigue mirando; las URLs relativas se absolutizan contra el dominio. Además un seguro quita las portadas de una sección si la mitad o más comparten la misma URL (un sustituto que se coló, no diseño del sitio).
+- **Las portadas cargan más rápido**: `devilnovels.com` entra en el mapa de hosts que exigen Referer propio en sus imágenes (WordPress con hotlink-check; sin Referer fallan y Kino reintenta). Los títulos firmados « - Finalizada» se limpian en el listado de finalizadas.
+
 ## Novedades v2.12.1
 
 - **El Home de DevilNovels ya no se queda en «no respondió» por residuos de la versión pasada**: el adaptador viejo (madara) pidió rutas inexistentes durante días, recibió 403 y dejó `devilnovels.com` **marcado como bloqueado por Cloudflare 24 h** en `kino.storage` (que sobrevive a la actualización del plugin). La sonda del Home creía esa marca SIN lanzar peticiones, así que el adaptador nuevo nunca llegaba a correr. Arreglos:

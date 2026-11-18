@@ -128,7 +128,9 @@ export const BASE_HEADS = {
 // (hotlink-check o Cloudflare) responden 403: la imagen queda en negro. Las fuentes amistosas
 // (ZonaTMO, ManhwaSS) aceptan ambos modos: verificado con peticiones reales.
 // Hosts que exigen Referer propio en sus imágenes (solo con evidencia; añadir por fuente).
-const IMG_REFERER = { "astralnovelstranslations.wordpress.com": true };
+// devilnovels.com: WordPress con hotlink-check; sin Referer las portadas fallan y Kino
+// reintenta — el «tarda demasiado» del RCA 2026-11.
+const IMG_REFERER = { "astralnovelstranslations.wordpress.com": true, "devilnovels.com": true, "www.devilnovels.com": true };
 
 /**
  * Cabeceras para descargar una imagen: el UA interno SIEMPRE (prioritario); el Referer del

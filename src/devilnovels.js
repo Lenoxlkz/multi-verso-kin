@@ -16,7 +16,11 @@
 import { fetchText, toItem, netError, PAGO_TEXT_RE } from "./env.js";
 
 const MAX_CAPS = 800; // tope de capítulos por obra (el detalle de Kino enseña 250)
-const RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|imagenes|membership-join|membership-account|memberships?|wp-login|login|register|registro|perfil|mi-cuenta|historial|dmca|politica-de-privacidad|politica-privacidad|contacto|feed|author|tag|category|page|wp-content|wp-admin|wp-json)(\/|$)/i;
+// Rutas del sitio que NUNCA son novelas: menú, cuenta y membresía (el tema es «Mi Login»,
+// «Mi Registro», «Mi Recuperar…»), herramientas («Acortador») y widgets del home.
+// Es el residuo del RCA 2026-11: /mi-login, /mi-registro y /mi-recuperar NO estaban y el menú
+// («Iniciar sesión», «Registrarse») salía como las primeras tarjetas del home.
+const RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|novelas-nuevas|ultimas-actualizaciones|top-vistas|top-lectores|comentarios|comentarios-recientes|comment|leer-ahora|imagenes|inicio|home|index|ranking|buscar|search|acortador|descargas|membership-join|membership-account|membership-checkout|membership-levels|memberships?|membresia|membresias|suscripcion|suscribete|subscribe|mi-cuenta|mi-login|mi-registro|mi-recuperar|mi-perfil|mi-lista|mi-historial|mi-activar|account|cuenta|perfil|usuario|checkout|payments|invoice|carrito|cart|wishlist|favoritos|favoritas|wp-login|login|signin|sign-in|signup|sign-up|signout|logout|register|registro|registrarse|registrar|iniciar-sesion|crear-cuenta|entrar|salir|recuperar|forgot-password|lostpassword|lost-password|reset-password|activate|activation|join|join-us|joinus|dmca|politica-de-privacidad|politica-privacidad|politica-de-cookies|terminos|terminos-y-condiciones|condiciones|aviso-legal|privacidad|contacto|nosotros|about|ayuda|help|faq|novela|novelas|genero|generos|genre|genres|author|tag|category|feed|page|amp|wp-content|wp-admin|wp-json|wp-includes)(\/|$)/i;
 
 // ---------- red ----------
 
@@ -61,30 +65,84 @@ function esNovelaSlug(s) {
   return /^[a-z0-9][a-z0-9-]{1,99}$/.test(s) && !RUTAS_FIJAS.test(s) && !/-capitulo-\d/.test(s);
 }
 
-/** Tarjetas de novela: enlaces raíz «/<slug>» con el título dentro del enlace y la portada justo encima. */
+/** ¿El texto del enlace es una acción de cuenta (login/registro/membresía)? Es lo primero que
+ *  muestra el menú del sitio y lo que contaminaba las primeras tarjetas del home (RCA 2026-11).
+ *  Solo frases cortas (≤ 4 palabras): un título de novela largo que EMPIECE igual no se pierde. */
+function esAuthText(t) {
+  const s = String(t).trim();
+  return s.length < 45 && s.split(/\s+/).length <= 4 &&
+    /^(iniciar\s+sesi|inicia\s+sesi|entrar\b|login\b|mi\s+login|sign\s?-?up|registr|crear\s+cuenta|mi\s+cuenta|recuperar|olvidaste|logout|cerrar\s+sesi|join\b|join\s?us|membres|suscr|apoyar|donar|donate|acortador)/i.test(s);
+}
+
+/** URL de portada desde una etiqueta <img>: cada atributo por SU NOMBRE y en orden de
+ *  preferencia (data-src antes que src). Los temas perezosos ponen el sustituto (dflazy, un
+ *  data: de 1 px) en src y la portada de verdad en data-src; coger «la primera coincidencia
+ *  del tag» daba a TODAS las tarjetas la misma imagen (el RCA de las portadas repetidas). */
+function urlDeImg(tag) {
+  for (const a of ["data-src", "data-lazy-src", "data-original", "src"]) {
+    const m = new RegExp("(?:^|\\s)" + a + "=\"([^\"]+)\"", "i").exec(tag);
+    if (!m) continue;
+    let u = m[1].trim().replace(/&amp;/g, "&");
+    if (!u || /^(?:data:|javascript:|blob:|#)/i.test(u)) continue;
+    if (/dflazy|\/images\/(?:loading|loader|placeholder|dummy)|placeholder|\bdummy\b|logo|avatar|spinner|loading\.(?:gif|svg|png)/i.test(u)) continue;
+    if (/^\/\//.test(u)) u = "https:" + u;
+    else if (/^\//.test(u)) u = "https://devilnovels.com" + u;
+    if (/^https?:\/\//i.test(u)) return u;
+  }
+  return "";
+}
+
+/** Tarjetas de novela: el enlace COMPLETO («/<slug>» con su contenido dentro), título y portada
+ *  desde el propio enlace. Nada de ventanas grandes hacia atrás: en una malla de tarjetas
+ *  alcanzaban la tarjeta ANTERIOR y mezclaban títulos y portadas entre novelas (RCA 2026-11). */
 function novelCards(html, limit) {
   const out = [], seen = {};
-  const re = /href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"[^>]*>([^<]{0,200})</gi;
+  const re = /<a\b([^>]*?)href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"([^>]*)>([\s\S]{0,4000}?)<\/a>/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
     if (limit && out.length >= limit) break;
-    const slug = m[1];
+    const slug = m[2];
     if (seen[slug] || !esNovelaSlug(slug)) continue;
-    seen[slug] = true;
-    let title = clean(m[2]);
+    const attrs = m[1] + " " + m[3];
+    const inner = m[4];
+    // título: attr del propio enlace → encabezado dentro del enlace → texto del enlace →
+    // encabezado JUSTO debajo (temas que separan portada y título) → alt de la portada → slug
+    let title = "";
+    const tA = /(?:^|\s)title="([^"]{3,200})"/i.exec(attrs);
+    if (tA) title = clean(tA[1]);
     if (title.length < 3) {
-      const win = html.slice(Math.max(0, m.index - 2600), m.index + 1200);
-      const h = win.match(/(?:title|alt)="([^"]{3,200})"/) || win.match(/<h[1-6][^>]*>\s*([^<]{3,200})</);
-      if (h) title = clean(h[1]);
+      const hi = inner.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
+      if (hi) title = clean(hi[1]);
+    }
+    if (title.length < 3) {
+      const tx = clean(inner);
+      if (tx.length >= 3) title = tx.slice(0, 200);
+    }
+    if (title.length < 3) {
+      const win = html.slice(m.index + m[0].length, m.index + m[0].length + 700);
+      const h2 = win.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
+      if (h2) title = clean(h2[1]);
+    }
+    if (title.length < 3) {
+      const al = /(?:^|\s)alt="([^"]{3,200})"/i.exec(attrs);
+      if (al) title = clean(al[1]);
     }
     if (title.length < 3) title = slug.replace(/-/g, " ");
-    // la portada es la imagen más cercana POR ENCIMA del enlace (la de debajo es la tarjeta siguiente)
+    // las páginas de finalizadas firman «Título - Finalizada»: el título propio es limpio
+    title = title.replace(/\s*[-–]\s*finalizada\s*$/i, "").trim() || title;
+    if (esAuthText(title)) continue;
+    // portada: la imagen DENTRO del enlace; si no hay, la más CERCANA por encima — de la más
+    // cercana a la más lejana, la primera que dé una URL de verdad (el sustituto del lazy-loader
+    // se descarta y sigue mirando; antes una sustituto dejaba la tarjeta sin portada)
     let poster = "";
-    const encima = html.slice(Math.max(0, m.index - 2600), m.index);
-    const im = encima.match(/<img[^>]+(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/);
-    if (im && !/dflazy|\/images\/loading|placeholder|\bdummy\b|logo|avatar/i.test(im[1])) {
-      poster = im[1].replace(/&amp;/g, "&");
+    const imgs = inner.match(/<img\b[^>]*>/gi) || [];
+    const encima = html.slice(Math.max(0, m.index - 1000), m.index);
+    const encimaArr = encima.match(/<img\b[^>]*>/gi) || [];
+    for (const tag of imgs.concat(encimaArr.reverse())) {
+      poster = urlDeImg(tag);
+      if (poster) break;
     }
+    seen[slug] = true;
     out.push({ slug, title, poster: poster || undefined });
   }
   return out;
@@ -179,7 +237,21 @@ export async function home(src) {
   for (const s of secs) {
     const p = settled[s.i];
     if (p.status !== "fulfilled" || !p.value) continue;
-    const items = asItems(novelCards(p.value, s.n));
+    const cards = novelCards(p.value, s.n);
+    // seguro anti-portadas repetidas (RCA 2026-11): si la mitad o más de las tarjetas con
+    // imagen comparten LA MISMA URL, es un sustituto que se coló, no diseño del sitio —
+    // mejor quitarlas todas que enseñar la misma portada en media sección
+    const conImg = cards.filter((c) => c.poster);
+    if (conImg.length >= 4) {
+      const cuenta = {};
+      let max = 0;
+      for (const c of conImg) {
+        cuenta[c.poster] = (cuenta[c.poster] || 0) + 1;
+        if (cuenta[c.poster] > max) max = cuenta[c.poster];
+      }
+      if (max * 2 > conImg.length) for (const c of cards) c.poster = undefined;
+    }
+    const items = asItems(cards);
     if (items.length) out.push({ id: "dv-" + s.id, title: s.t, titleEn: s.te, items });
   }
   return out;
@@ -190,6 +262,8 @@ export async function detail(src, slug) {
   const pick = (re) => { const m = html.match(re); return m ? clean(m[1]) : ""; };
   let poster = pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/);
   if (poster) poster = poster.replace(/&amp;/g, "&");
+  if (poster && /^\/\//.test(poster)) poster = "https:" + poster;
+  else if (poster && /^\//.test(poster)) poster = "https://devilnovels.com" + poster;
   let overview = pick(/<meta name="description" content="([^"]{10,600})"/) || pick(/property="og:description"[^>]*content="([^"]+)"/);
   if (!overview) {
     const sy = html.match(/class="[^"]*(?:summary__content|synopsis|sinopsis)[^"]*"[^>]*>([\s\S]{10,900}?)<\/div>/);

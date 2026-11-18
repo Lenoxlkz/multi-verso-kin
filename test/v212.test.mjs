@@ -60,7 +60,7 @@ test("«Abrir en el navegador» apunta a la raíz del dominio", () => {
 });
 
 test("la versión avanza a 2.12.1 y el build lleva el adaptador nuevo", () => {
-  assert.equal(manifest.version, "2.12.1");
+  assert.equal(manifest.version, "2.13.0");
   assert.ok(built.includes('"/" + slug + "/" + capSlug + "/" + id + "/"'), "el build no lleva el adaptador dv");
   assert.ok(built.includes("esNovela(s) ? novelSearch(s, q)"), "el build no lleva la búsqueda de novelas");
 });
@@ -85,7 +85,7 @@ globalThis.kino = {
       ["devilnovels.com/esclavo-de-las-sombras/", "dv/ficha.html"],
       ["devilnovels.com/?s=", "dv/busqueda.html"],
       ["devilnovels.com/listado-de-novelas", "dv/busqueda.html"],
-      ["devilnovels.com/novelas-finalizadas", "dv/busqueda.html"],
+      ["devilnovels.com/novelas-finalizadas", "dv/finalizadas.html"],
       ["devilnovels.com/", "dv/busqueda.html"],
     ];
     for (const [k, f] of map) {

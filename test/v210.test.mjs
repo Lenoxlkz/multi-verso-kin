@@ -54,6 +54,6 @@ test("modo páginas hasta 250 páginas solo si Kino declara el widget", () => {
 });
 
 test("la versión avanza a 2.10.0 y el build lleva las claves nuevas", () => {
-  assert.equal(manifest.version, "2.12.1");
+  assert.equal(manifest.version, "2.13.0");
   assert.ok(built.includes('key: "tira-" + (c.tk || 0)') && built.includes("initialPage: c.resumePage > 1"), "el build no lleva el arreglo");
 });

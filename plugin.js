@@ -92,7 +92,7 @@ var BASE_HEADS = {
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "es-ES,es;q=0.9,en;q=0.7"
 };
-var IMG_REFERER = { "astralnovelstranslations.wordpress.com": true };
+var IMG_REFERER = { "astralnovelstranslations.wordpress.com": true, "devilnovels.com": true, "www.devilnovels.com": true };
 function imgHeads(url, force) {
   try {
     const u = String(url || "");
@@ -779,7 +779,7 @@ async function login2(src, user, password) {
 
 // src/devilnovels.js
 var MAX_CAPS = 800;
-var RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|imagenes|membership-join|membership-account|memberships?|wp-login|login|register|registro|perfil|mi-cuenta|historial|dmca|politica-de-privacidad|politica-privacidad|contacto|feed|author|tag|category|page|wp-content|wp-admin|wp-json)(\/|$)/i;
+var RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|novelas-nuevas|ultimas-actualizaciones|top-vistas|top-lectores|comentarios|comentarios-recientes|comment|leer-ahora|imagenes|inicio|home|index|ranking|buscar|search|acortador|descargas|membership-join|membership-account|membership-checkout|membership-levels|memberships?|membresia|membresias|suscripcion|suscribete|subscribe|mi-cuenta|mi-login|mi-registro|mi-recuperar|mi-perfil|mi-lista|mi-historial|mi-activar|account|cuenta|perfil|usuario|checkout|payments|invoice|carrito|cart|wishlist|favoritos|favoritas|wp-login|login|signin|sign-in|signup|sign-up|signout|logout|register|registro|registrarse|registrar|iniciar-sesion|crear-cuenta|entrar|salir|recuperar|forgot-password|lostpassword|lost-password|reset-password|activate|activation|join|join-us|joinus|dmca|politica-de-privacidad|politica-privacidad|politica-de-cookies|terminos|terminos-y-condiciones|condiciones|aviso-legal|privacidad|contacto|nosotros|about|ayuda|help|faq|novela|novelas|genero|generos|genre|genres|author|tag|category|feed|page|amp|wp-content|wp-admin|wp-json|wp-includes)(\/|$)/i;
 async function getHtml(path, { what = "DevilNovels", timeout } = {}) {
   const r = await fetchText("https://devilnovels.com" + path, {
     heads: { Accept: "text/html", Referer: "https://devilnovels.com/" },
@@ -823,28 +823,65 @@ function numDe(slugCap) {
 function esNovelaSlug(s) {
   return /^[a-z0-9][a-z0-9-]{1,99}$/.test(s) && !RUTAS_FIJAS.test(s) && !/-capitulo-\d/.test(s);
 }
+function esAuthText(t) {
+  const s = String(t).trim();
+  return s.length < 45 && s.split(/\s+/).length <= 4 && /^(iniciar\s+sesi|inicia\s+sesi|entrar\b|login\b|mi\s+login|sign\s?-?up|registr|crear\s+cuenta|mi\s+cuenta|recuperar|olvidaste|logout|cerrar\s+sesi|join\b|join\s?us|membres|suscr|apoyar|donar|donate|acortador)/i.test(s);
+}
+function urlDeImg(tag) {
+  for (const a of ["data-src", "data-lazy-src", "data-original", "src"]) {
+    const m = new RegExp("(?:^|\\s)" + a + '="([^"]+)"', "i").exec(tag);
+    if (!m) continue;
+    let u = m[1].trim().replace(/&amp;/g, "&");
+    if (!u || /^(?:data:|javascript:|blob:|#)/i.test(u)) continue;
+    if (/dflazy|\/images\/(?:loading|loader|placeholder|dummy)|placeholder|\bdummy\b|logo|avatar|spinner|loading\.(?:gif|svg|png)/i.test(u)) continue;
+    if (/^\/\//.test(u)) u = "https:" + u;
+    else if (/^\//.test(u)) u = "https://devilnovels.com" + u;
+    if (/^https?:\/\//i.test(u)) return u;
+  }
+  return "";
+}
 function novelCards(html, limit) {
   const out = [], seen = {};
-  const re = /href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"[^>]*>([^<]{0,200})</gi;
+  const re = /<a\b([^>]*?)href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"([^>]*)>([\s\S]{0,4000}?)<\/a>/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
     if (limit && out.length >= limit) break;
-    const slug = m[1];
+    const slug = m[2];
     if (seen[slug] || !esNovelaSlug(slug)) continue;
-    seen[slug] = true;
-    let title = clean(m[2]);
+    const attrs = m[1] + " " + m[3];
+    const inner = m[4];
+    let title = "";
+    const tA = /(?:^|\s)title="([^"]{3,200})"/i.exec(attrs);
+    if (tA) title = clean(tA[1]);
     if (title.length < 3) {
-      const win = html.slice(Math.max(0, m.index - 2600), m.index + 1200);
-      const h = win.match(/(?:title|alt)="([^"]{3,200})"/) || win.match(/<h[1-6][^>]*>\s*([^<]{3,200})</);
-      if (h) title = clean(h[1]);
+      const hi = inner.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
+      if (hi) title = clean(hi[1]);
+    }
+    if (title.length < 3) {
+      const tx = clean(inner);
+      if (tx.length >= 3) title = tx.slice(0, 200);
+    }
+    if (title.length < 3) {
+      const win = html.slice(m.index + m[0].length, m.index + m[0].length + 700);
+      const h2 = win.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
+      if (h2) title = clean(h2[1]);
+    }
+    if (title.length < 3) {
+      const al = /(?:^|\s)alt="([^"]{3,200})"/i.exec(attrs);
+      if (al) title = clean(al[1]);
     }
     if (title.length < 3) title = slug.replace(/-/g, " ");
+    title = title.replace(/\s*[-–]\s*finalizada\s*$/i, "").trim() || title;
+    if (esAuthText(title)) continue;
     let poster = "";
-    const encima = html.slice(Math.max(0, m.index - 2600), m.index);
-    const im = encima.match(/<img[^>]+(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/);
-    if (im && !/dflazy|\/images\/loading|placeholder|\bdummy\b|logo|avatar/i.test(im[1])) {
-      poster = im[1].replace(/&amp;/g, "&");
+    const imgs = inner.match(/<img\b[^>]*>/gi) || [];
+    const encima = html.slice(Math.max(0, m.index - 1e3), m.index);
+    const encimaArr = encima.match(/<img\b[^>]*>/gi) || [];
+    for (const tag of imgs.concat(encimaArr.reverse())) {
+      poster = urlDeImg(tag);
+      if (poster) break;
     }
+    seen[slug] = true;
     out.push({ slug, title, poster: poster || void 0 });
   }
   return out;
@@ -921,7 +958,18 @@ async function home(src) {
   for (const s of secs) {
     const p = settled[s.i];
     if (p.status !== "fulfilled" || !p.value) continue;
-    const items = asItems2(novelCards(p.value, s.n));
+    const cards = novelCards(p.value, s.n);
+    const conImg = cards.filter((c) => c.poster);
+    if (conImg.length >= 4) {
+      const cuenta = {};
+      let max = 0;
+      for (const c of conImg) {
+        cuenta[c.poster] = (cuenta[c.poster] || 0) + 1;
+        if (cuenta[c.poster] > max) max = cuenta[c.poster];
+      }
+      if (max * 2 > conImg.length) for (const c of cards) c.poster = void 0;
+    }
+    const items = asItems2(cards);
     if (items.length) out.push({ id: "dv-" + s.id, title: s.t, titleEn: s.te, items });
   }
   return out;
@@ -934,6 +982,8 @@ async function detail3(src, slug) {
   };
   let poster = pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/);
   if (poster) poster = poster.replace(/&amp;/g, "&");
+  if (poster && /^\/\//.test(poster)) poster = "https:" + poster;
+  else if (poster && /^\//.test(poster)) poster = "https://devilnovels.com" + poster;
   let overview = pick(/<meta name="description" content="([^"]{10,600})"/) || pick(/property="og:description"[^>]*content="([^"]+)"/);
   if (!overview) {
     const sy = html.match(/class="[^"]*(?:summary__content|synopsis|sinopsis)[^"]*"[^>]*>([\s\S]{10,900}?)<\/div>/);
