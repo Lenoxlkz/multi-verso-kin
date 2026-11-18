@@ -13,7 +13,7 @@
 // El slug interno del capítulo es «<slug del cap>.<id>»: los slugs de WP no llevan punto, así que
 // el último punto separa siempre la id. Los vecinos salen de la lista en caché (una raspa, el resto no).
 
-import { fetchText, toItem, netError, PAGO_TEXT_RE } from "./env.js";
+import { fetchText, fetchJson, toItem, netError, PAGO_TEXT_RE, UA } from "./env.js";
 
 const MAX_CAPS = 800; // tope de capítulos por obra (el detalle de Kino enseña 250)
 // Rutas del sitio que NUNCA son novelas: menú, cuenta y membresía (el tema es «Mi Login»,
@@ -173,14 +173,252 @@ function asItems(list) {
   return list.map((m) => toItem("dv", m)).filter(Boolean);
 }
 
-// ---------- capítulos: lista en caché (2 h) como las demás fuentes ----------
+// ---------- capítulos: enumeración COMPLETA por lotes ----------
+// La ficha del sitio solo lista un par de capítulos (los extremos) y una novela llega a tener
+// 3000+. Los capítulos cuelgan de la novela en WordPress, así que la lista completa sale de la
+// REST del propio sitio (wp-json/wp/v2/pages?parent=<id>, 100 por página, total real en la
+// cabecera X-WP-Total). Planes, en orden:
+//   A — REST de WordPress paginada (la vía buena: TODOS los capítulos)
+//   B — la paginación de la propia ficha (enlaces ?cpage=N / page/N del tema)
+//   C — las filas de la ficha (extremos; siempre hay algo)
+// La carga es PROGRESIVA: capsPage entrega un lote y el siguiente solo se pide cuando la
+// pantalla lo pide — nada baja 3000 capítulos de golpe (análisis claro, menos recursos).
 
 const CAPS_TTL = 7200000;
 const CAPS_CACHE = new Map();
 
-function capsCachePut(slug, caps) {
-  CAPS_CACHE.set(slug, { caps, ts: Date.now() });
+function capsCachePut(slug, rows) {
+  CAPS_CACHE.set(slug, { rows, ts: Date.now() });
   if (CAPS_CACHE.size > 12) CAPS_CACHE.delete(CAPS_CACHE.keys().next().value);
+}
+
+function capsCacheGet(slug) {
+  const c = CAPS_CACHE.get(slug);
+  return c && Date.now() - c.ts < CAPS_TTL ? c.rows : null;
+}
+
+// ficha compartida: el detalle y la enumeración piden EL MISMO HTML (una red, no dos)
+const FICHA_TTL = 600000;
+const FICHA_CACHE = new Map();
+
+async function fichaDe(slug) {
+  const c = FICHA_CACHE.get(slug);
+  if (c && Date.now() - c.ts < FICHA_TTL) return c.html;
+  const html = await getHtml("/" + slug + "/", { what: "la novela en DevilNovels" });
+  if (FICHA_CACHE.size > 12) FICHA_CACHE.delete(FICHA_CACHE.keys().next().value);
+  FICHA_CACHE.set(slug, { html, ts: Date.now() });
+  return html;
+}
+
+// enumeración por obra: filas por id, REST viva o muerta, páginas ya pedidas y cierre
+const ENUM_TTL = 3600000;
+const ENUMS = new Map();
+
+function enumDe(slug) {
+  const e = ENUMS.get(slug);
+  if (e && Date.now() - e.ts < ENUM_TTL) return e;
+  const n = { ids: new Map(), rest: null, paginas: new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
+  if (ENUMS.size > 8) ENUMS.delete(ENUMS.keys().next().value);
+  ENUMS.set(slug, n);
+  return n;
+}
+
+function filaDe(capSlug, id, pago) {
+  const cs = String(capSlug);
+  return { capSlug: cs, id: String(id), number: numDe(cs) || String(id), pago: Boolean(pago) };
+}
+
+/** Añade una fila por id; la primera versión manda (la de la ficha trae la marca de pago),
+ *  y una marca de pago que aparezca después no se pierde. */
+function enumPon(e, fila) {
+  const prev = e.ids.get(fila.id);
+  if (!prev) { e.ids.set(fila.id, fila); return; }
+  if (fila.pago && !prev.pago) prev.pago = true;
+}
+
+function enumVuelca(e, html, slug) {
+  for (const r of capRows(html, slug)) enumPon(e, r);
+}
+
+function enumLista(e) {
+  return [...e.ids.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+}
+
+// ---------- plan A: la REST de WordPress ----------
+
+const REST_BASE = "https://devilnovels.com/wp-json/wp/v2/pages";
+const REST_PER = 100;
+const REST_MAX = 45; // 45 × 100 = 4500 capítulos de una obra, tope prudente
+const REST_TIMEOUT = 15000;
+
+function restHeads() {
+  return { Accept: "application/json", "User-Agent": UA };
+}
+
+function totalRest(headers) {
+  const t = Number((headers || {})["x-wp-total"]);
+  return Number.isFinite(t) && t > 0 ? t : undefined;
+}
+
+/** La novela es una PÁGINA de WP (vive en la raíz del dominio): su id sale de la REST por slug. */
+async function restPadre(slug) {
+  const r = await fetchJson(REST_BASE + "?slug=" + encodeURIComponent(slug) + "&_fields=id,slug", { heads: restHeads(), timeoutMs: REST_TIMEOUT });
+  if (!r.ok || !Array.isArray(r.body)) return null;
+  const hit = r.body.find((p) => p && String(p.slug) === slug && Number(p.id) > 0);
+  return hit ? { id: Number(hit.id), total: totalRest(r.headers) } : null;
+}
+
+async function restPagina(padreId, pagina, orden) {
+  return fetchJson(REST_BASE + "?parent=" + padreId + "&per_page=" + REST_PER + "&page=" + pagina +
+    "&orderby=date&order=" + orden + "&_fields=id,slug", { heads: restHeads(), timeoutMs: REST_TIMEOUT });
+}
+
+function restVuelca(e, body, slug) {
+  for (const p of body || []) {
+    if (!p || !(Number(p.id) > 0) || !p.slug || !/capitulo/i.test(String(p.slug))) continue;
+    enumPon(e, filaDe(p.slug, p.id));
+  }
+}
+
+/** Trae páginas REST ascendentes hasta cubrir el lote pedido (o hasta que la REST se acabe).
+ *  El contador de páginas ascendentes es PROPIO (el set «paginas» también guarda las de
+ *  descenso del lector, y mezclarlas haría saltar páginas). */
+async function enumRestHasta(e, slug, objetivo) {
+  for (let k = e.ascTraidas + 1; k <= REST_MAX && !e.restFin; k++) {
+    if (e.ascTraidas * REST_PER >= objetivo) break;
+    const r = await restPagina(e.rest.id, k, "asc");
+    if (!r.ok || !Array.isArray(r.body)) { e.restFin = true; break; }
+    e.ascTraidas = k;
+    e.paginas.add("asc" + k);
+    restVuelca(e, r.body, slug);
+    if (r.body.length < REST_PER) { e.restFin = true; e.completa = true; }
+    if (!e.rest.total) e.rest.total = totalRest(r.headers);
+  }
+  if (e.restFin) e.completa = true;
+}
+
+// ---------- plan B: la paginación de la propia ficha ----------
+
+async function enumFichaPaginas(e, slug) {
+  if (e.rest && e.rest.id) return; // con la REST viva esto no hace falta
+  const html = await fichaDe(slug);
+  const urls = new Set();
+  const re = new RegExp("href=\"(?:https?:\\/\\/[^\"\\/]+)?\\/(" + slug + "\\/(?:[^\"?]*[?&]cpage=(\\d+)|[^\"?]*page\\/(\\d+)))", "gi");
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const n = Number(m[2] || m[3]);
+    if (n >= 2 && n <= 60 && m[1]) urls.add("/" + m[1]);
+  }
+  if (!urls.size) { e.completa = true; return; }
+  const lista = [...urls].slice(0, 40);
+  for (let i = 0; i < lista.length; i += 4) {
+    const rs = await Promise.allSettled(lista.slice(i, i + 4).map((u) => getHtml(u, { what: "la lista de capítulos en DevilNovels" })));
+    for (const r of rs) if (r.status === "fulfilled" && r.value) enumVuelca(e, r.value, slug);
+  }
+  e.completa = true;
+}
+
+/** Estado de la enumeración de una obra: ficha volcada + primer intento de REST (una vez). */
+async function enumCaps(slug) {
+  const e = enumDe(slug);
+  if (e.completa) return e;
+  if (!e.fichaHecha) {
+    e.fichaHecha = true;
+    try { enumVuelca(e, await fichaDe(slug), slug); } catch { /* sin ficha: solo REST */ }
+  }
+  if (!e.restIntentada) {
+    e.restIntentada = true;
+    let padre = null;
+    try { padre = await restPadre(slug); } catch { padre = null; }
+    e.rest = padre ? { id: padre.id, total: padre.total } : { id: 0, total: undefined };
+    if (e.rest.id) {
+      try {
+        const r1 = await restPagina(e.rest.id, 1, "asc");
+        if (r1.ok && Array.isArray(r1.body)) {
+          e.ascTraidas = 1;
+          e.paginas.add("asc1");
+          restVuelca(e, r1.body, slug);
+          if (r1.body.length < REST_PER) { e.restFin = true; e.completa = true; }
+          if (!e.rest.total) e.rest.total = totalRest(r1.headers);
+        } else e.rest.id = 0;
+      } catch { e.rest.id = 0; }
+    }
+  }
+  return e;
+}
+
+function filaACap(r) {
+  return { slug: r.capSlug + "." + r.id, number: r.number, title: "Capítulo " + r.number, pago: r.pago };
+}
+
+/** Lote de capítulos para la pantalla ({items, next, total}) — la carga progresiva del detalle. */
+export async function capsPage(src, slug, opts = {}) {
+  const page = Math.max(1, Math.floor(Number(opts.page) || 1));
+  const per = Math.min(100, Math.max(10, Math.floor(Number(opts.postsPerPage) || 50)));
+  const e = await enumCaps(slug);
+  if (e.rest && e.rest.id) await enumRestHasta(e, slug, page * per);
+  else if (!e.fichaPaginas) { e.fichaPaginas = true; await enumFichaPaginas(e, slug); }
+  const rows = enumLista(e);
+  const desde = (page - 1) * per;
+  return {
+    items: rows.slice(desde, desde + per).map(filaACap),
+    next: desde + per < rows.length ? page + 1 : null,
+    total: e.rest && e.rest.total ? e.rest.total : (e.completa ? rows.length : undefined),
+  };
+}
+
+/** Lista COMPLETA (lector y respaldos): trae todo lo alcanzable de una obra, con caché de 2 h. */
+export async function capsList(src, slug) {
+  const enCache = capsCacheGet(slug);
+  if (enCache) return enCache.map(filaACap);
+  const e = await enumCaps(slug);
+  if (e.rest && e.rest.id) await enumRestHasta(e, slug, Infinity);
+  else if (!e.fichaPaginas) { e.fichaPaginas = true; await enumFichaPaginas(e, slug); }
+  const rows = enumLista(e);
+  if (rows.length) capsCachePut(slug, rows);
+  return rows.map(filaACap);
+}
+
+/** Vecinos del lector (prev/next) sin bajar la obra entera: la lista en caché primero; si no,
+ *  la REST en DESCENSO (la primera página trae los capítulos más nuevos, donde casi siempre
+ *  está el lector) hasta dar con el capítulo, y como respaldo los extremos de la ficha. */
+export async function vecinosDe(slug, id) {
+  const enCache = capsCacheGet(slug);
+  if (enCache) {
+    const i = enCache.findIndex((c) => c.id === String(id));
+    if (i >= 0) return vecinosEn(enCache, i);
+  }
+  const busco = String(id);
+  const e = await enumCaps(slug);
+  if (e.rest && e.rest.id) {
+    for (let k = 1; k <= 8 && !e.descFin; k++) {
+      if (!e.paginas.has("desc" + k)) {
+        const r = await restPagina(e.rest.id, k, "desc");
+        if (!r.ok || !Array.isArray(r.body)) { e.descFin = true; break; }
+        e.paginas.add("desc" + k);
+        restVuelca(e, r.body, slug);
+        if (r.body.length < REST_PER) { e.descFin = true; e.completa = true; }
+      }
+      const rows = enumLista(e);
+      const i = rows.findIndex((c) => c.id === busco);
+      if (i > 0) return vecinosEn(rows, i); // el anterior está a la vista: definitivo
+      if (i === 0 && (e.descFin || k >= 8)) return vecinosEn(rows, i);
+      // está en la primera posición cargada y pueden existir capítulos más viejos: otra página
+    }
+  } else if (!e.fichaPaginas) {
+    e.fichaPaginas = true;
+    await enumFichaPaginas(e, slug);
+  }
+  const rows = enumLista(e);
+  const i = rows.findIndex((c) => c.id === busco);
+  return i >= 0 ? vecinosEn(rows, i) : { prev: null, next: null };
+}
+
+function vecinosEn(rows, i) {
+  return {
+    prev: i > 0 ? rows[i - 1].capSlug + "." + rows[i - 1].id : null,
+    next: i < rows.length - 1 ? rows[i + 1].capSlug + "." + rows[i + 1].id : null,
+  };
 }
 
 /** Filas de capítulo: enlaces «/<novela>/<capitulo>/<id>» de la ficha (los hijos de ESTA novela). */
@@ -212,15 +450,6 @@ function capRows(html, slug) {
   }
   // la id de post crece con el tiempo: ordenar por id es el orden cronológico real
   return [...map.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0)).slice(0, MAX_CAPS);
-}
-
-async function capsDe(slug) {
-  const c = CAPS_CACHE.get(slug);
-  if (c && Date.now() - c.ts < CAPS_TTL) return c.caps;
-  const html = await getHtml("/" + slug + "/", { what: "la novela en DevilNovels" });
-  const caps = capRows(html, slug);
-  if (caps.length) capsCachePut(slug, caps);
-  return caps;
 }
 
 // ---------- interfaz del adaptador ----------
@@ -279,7 +508,8 @@ export async function home(src) {
 }
 
 export async function detail(src, slug) {
-  const html = await getHtml("/" + slug + "/", { what: "la novela en DevilNovels" });
+  // la ficha pasa por la caché compartida con la enumeración de capítulos (una red, no dos)
+  const html = await fichaDe(slug);
   const pick = (re) => { const m = html.match(re); return m ? clean(m[1]) : ""; };
   let poster = pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/);
   if (poster) poster = poster.replace(/&amp;/g, "&");
@@ -306,8 +536,6 @@ export async function detail(src, slug) {
       if (t && genres.indexOf(t) < 0) genres.push(t);
     }
   }
-  const caps = capRows(html, slug);
-  if (caps.length) capsCachePut(slug, caps);
   return {
     slug,
     title: pick(/property="og:title"[^>]*content="([^"]+)"/) ||
@@ -317,20 +545,12 @@ export async function detail(src, slug) {
     overview: overview || undefined,
     poster: poster || undefined,
     genres,
-    totalChapters: caps.length,
+    // el total real llega de la REST en el primer lote (X-WP-Total); no se baja la obra aquí
   };
 }
 
-/** La ficha necesita la lista: la expone novels.js para montar los capítulos con vecinos. */
-export async function capsList(src, slug) {
-  const caps = await capsDe(slug);
-  return caps.map((c) => ({
-    slug: c.capSlug + "." + c.id,
-    number: c.number,
-    title: "Capítulo " + c.number,
-    pago: c.pago,
-  }));
-}
+/** Lista COMPLETA y vecinos viven en el motor de enumeración (más arriba): capsList entrega
+ *  todos los capítulos alcanzables y vecinosDe los del lector sin bajar la obra entera. */
 
 export async function chapter(src, slug, capId) {
   // «<cap-slug>.<id>» → /<novela>/<cap-slug>/<id>/  (los slugs de WP no llevan punto)
@@ -362,13 +582,12 @@ export async function chapter(src, slug, capId) {
   }
   const p = htmlToParagraphs(seg);
 
-  // vecinos desde la lista en caché (orden cronológico por id: prev = anterior, next = siguiente)
+  // vecinos sin bajar la obra entera: caché → REST en descenso → extremos de la ficha
   let prev = null, next = null;
   try {
-    const caps = await capsDe(slug);
-    const i = caps.findIndex((c) => c.id === id);
-    if (i > 0) prev = caps[i - 1].capSlug + "." + caps[i - 1].id;
-    if (i >= 0 && i < caps.length - 1) next = caps[i + 1].capSlug + "." + caps[i + 1].id;
+    const v = await vecinosDe(slug, id);
+    prev = v.prev;
+    next = v.next;
   } catch { /* los vecinos son optativos */ }
   return {
     text: filtrar(p.text),

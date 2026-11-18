@@ -279,7 +279,7 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     if (cached && cached.title) return cached;
   }
   const a = adapter(p.src);
-  let d, chapters = [], next = null;
+  let d, chapters = [], next = null, totalCaps;
   if (SOURCES[p.src].kind === "zonatmo" || SOURCES[p.src].kind === "zonatmoorg") {
     // detalle y capítulos no dependen entre sí: en paralelo
     const [dRes, cRes] = await Promise.allSettled([a.detail(p.src, p.a), a.chapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" })]);
@@ -287,8 +287,19 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     d = dRes.value;
     if (cRes.status === "fulfilled") { chapters = cRes.value.items; next = cRes.value.next; }
   } else {
-    d = await a.detail(p.src, p.a);
-    chapters = d.chapters || [];
+    // novelas: ficha + PRIMER LOTE de capítulos en paralelo (DevilNovels pagina de verdad por
+    // la REST de WordPress; las API de una respuesta entregan el lote desde su caché) — nada
+    // baja la obra entera para abrir el detalle; «Cargar más» pide lo siguiente
+    const [dRes, cRes] = await Promise.allSettled([a.detail(p.src, p.a), nv.novelChapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" })]);
+    if (dRes.status === "rejected") throw dRes.reason;
+    d = dRes.value;
+    if (cRes.status === "fulfilled" && cRes.value && cRes.value.items && cRes.value.items.length) {
+      chapters = cRes.value.items;
+      next = cRes.value.next;
+      totalCaps = cRes.value.total;
+    } else if (!chapters.length) {
+      chapters = d.chapters || [];
+    }
   }
   const det = {
     src: p.src,
@@ -300,7 +311,7 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     status: d.statusName,
     demography: d.demographyName,
     score: d.score,
-    total: d.totalChapters,
+    total: typeof totalCaps === "number" ? totalCaps : d.totalChapters,
     chapters: chapters.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title, pago: Boolean(c.pago) })),
     next,
     adult: d.adult,
@@ -654,6 +665,20 @@ function descNode(overview, state, en) {
   };
 }
 
+/** Orden de la lista de capítulos por su número (1, 1.2, 2, 10…), estable; lo que no parsea
+ *  conserva su orden original. desc = invertir (recientes arriba). */
+function ordenarCaps(list, orden) {
+  const conIdx = (list || []).map((c, i) => ({ c, i, n: Number(c.n) }));
+  conIdx.sort((a, b) => {
+    const an = Number.isFinite(a.n), bn = Number.isFinite(b.n);
+    if (an && bn && a.n !== b.n) return a.n - b.n;
+    if (an !== bn) return an ? -1 : 1;
+    return a.i - b.i;
+  });
+  const asc = conIdx.map((x) => x.c);
+  return orden === "desc" ? asc.slice().reverse() : asc;
+}
+
 function viewDetalle(ctx) {
   const { state, device, lang } = ctx;
   const d = state.detail;
@@ -678,13 +703,17 @@ function viewDetalle(ctx) {
     ],
   };
   const prog = state.prog || null;
+  // orden de la lista: preferencia del usuario (persistente) o cronológico ascendente
+  const orden = state.capsOrder || (kino.storage.get("capsOrden") === "desc" ? "desc" : "asc");
+  const cronologica = ordenarCaps(d.chapters, "asc");
   const actions = [];
   if (prog && prog.cr) {
     actions.push({ type: "Button", variant: "primary", icon: "play", labelText: "Seguir: Cap. " + prog.n, labelTextEn: "Continue: Ch. " + prog.n, onPressed: { event: "cap", arg: prog.cr }, span: 12, fill: true });
   }
   if (d.chapters.length) {
-    const first = d.chapters[0];
-    const last = d.chapters[d.chapters.length - 1];
+    // primero y último son CRONOLÓGICOS: con la lista en desc no se intercambian
+    const first = cronologica[0];
+    const last = cronologica[cronologica.length - 1];
     actions.push({ type: "Button", variant: "secondary", labelText: "Primero (" + first.n + ")", labelTextEn: "First (" + first.n + ")", onPressed: { event: "cap", arg: first.r }, span: 6, fill: true });
     actions.push({ type: "Button", variant: "secondary", labelText: "Último (" + last.n + ")", labelTextEn: "Last (" + last.n + ")", onPressed: { event: "cap", arg: last.r }, span: 6, fill: true });
   }
@@ -695,7 +724,9 @@ function viewDetalle(ctx) {
   const shown = (state.chShow || 60);
   const ocultar = Boolean(kino.config.get("ocultarPago") === true || kino.config.get("ocultarPago") === "true");
   const conPago = d.chapters.filter((c) => c.pago);
-  const visibles = (ocultar ? d.chapters.filter((c) => !c.pago) : d.chapters).slice(0, shown);
+  // la lista respeta el orden elegido (se aplica al momento, sobre lo ya cargado)
+  const ordenada = ordenarCaps(ocultar ? d.chapters.filter((c) => !c.pago) : d.chapters, orden);
+  const visibles = ordenada.slice(0, shown);
   const chList = visibles.map((c, i) => {
     return {
       type: "Row", key: "ch" + i, gap: 4, padding: { x: 12, y: 4 },
@@ -720,6 +751,11 @@ function viewDetalle(ctx) {
     descNode(d.overview, state, en),
     ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) de pago oculto(s) (ajustable en Ajustes).", textEn: conPago.length + " paid chapter(s) hidden (toggle in Settings).", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
     !ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) con candado requieren cuenta premium de la fuente.", textEn: conPago.length + " locked chapter(s) need a premium account on the source.", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
+    // filtro de orden de capítulos: se aplica al instante y queda guardado para las próximas
+    d.chapters.length > 1 ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 2 }, children: [
+      { type: "Button", variant: orden === "asc" ? "primary" : "secondary", icon: "arrow_upward", labelText: "Antiguos primero", labelTextEn: "Oldest first", onPressed: { event: "capsOrder", arg: "asc" }, span: 6, fill: true },
+      { type: "Button", variant: orden === "desc" ? "primary" : "secondary", icon: "arrow_downward", labelText: "Recientes primero", labelTextEn: "Newest first", onPressed: { event: "capsOrder", arg: "desc" }, span: 6, fill: true },
+    ] } : null,
     d.chapters.length ? { type: "Column", children: chList } : empty("Sin capítulos listados", "No chapters listed"),
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
     d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente", labelTextEn: "Load more from source", onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null,
@@ -1052,9 +1088,13 @@ export async function screenEvent(ctx) {
       const d = state && state.detail;
       if (!d || !d.next) return null;
       try {
-        const c = await adapter(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
+        // novelas: lotes por novels.js (DevilNovels trae páginas REST de verdad; las API de una
+        // respuesta cortan su caché) — manga: el cursor propio de su adaptador
+        const c = isNovel(d.src)
+          ? await nv.novelChapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" })
+          : await adapter(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
         const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title, pago: Boolean(x.pago) }));
-        return { state: { detail: { ...d, chapters: d.chapters.concat(more).slice(0, 500), next: c.next } } };
+        return { state: { detail: { ...d, chapters: d.chapters.concat(more).slice(0, 4000), next: c.next } } };
       } catch (e) {
         return { toast: en ? "Could not load more chapters." : "No se pudieron cargar más capítulos." };
       }
@@ -1062,6 +1102,13 @@ export async function screenEvent(ctx) {
 
     case "descToggle": {
       return { state: { descOpen: !state.descOpen } };
+    }
+
+    case "capsOrder": {
+      // se aplica AL INSTANTE (solo cambia el estado) y queda guardado para los próximos detalles
+      const o = arg === "desc" ? "desc" : "asc";
+      try { kino.storage.set("capsOrden", o); } catch { /* optativa */ }
+      return { state: { capsOrder: o } };
     }
 
     case "chMas": {

@@ -101,10 +101,12 @@ export async function fetchText(url, { heads = {}, timeoutMs = 12000, method = "
 }
 
 export async function fetchJson(url, opts) {
-  const { status, ok, text } = await fetchText(url, opts);
+  const { status, ok, text, headers } = await fetchText(url, opts);
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
-  return { status, ok, body };
+  // headers llega junto al cuerpo: la REST de WordPress trae el total real de una lista en
+  // «X-WP-Total» / «X-WP-TotalPages» y algunos extremos ponen el cursor en cabeceras
+  return { status, ok, body, headers: headers || {} };
 }
 
 // User-Agent interno: UNA constante para todas las peticiones. Si Cloudflare o una fuente

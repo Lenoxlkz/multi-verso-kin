@@ -21,8 +21,12 @@ const F = (n) => readFileSync(join(root, "test", "fixtures", n), "utf8");
 test("dv tiene adaptador propio de raspaje HTML (kind devilnovels)", () => {
   assert.ok(env.includes('dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "devilnovels" }'), "dv no tiene kind propio");
   assert.ok(novels.includes('import * as dvA from "./devilnovels.js"'), "novels.js no importa el adaptador dv");
-  assert.ok(novels.includes('if (k === "devilnovels") return dvDetail'), "el detalle de dv no va por el adaptador nuevo");
+  assert.ok(novels.includes('if (k === "devilnovels") return dvA.detail'), "el detalle de dv no va por el adaptador nuevo");
   assert.ok(novels.includes('if (k === "devilnovels") return dvA.chapter'), "el lector de dv no va por el adaptador nuevo");
+  // v2.15.0: el detalle de dv ya NO incrusta la lista (la ficha solo trae los extremos);
+  // los capítulos llegan POR LOTES vía novelChapters → capsPage (REST de WordPress)
+  assert.ok(novels.includes("if (KIND_OF[src] === \"devilnovels\") return dvA.capsPage"), "novelChapters no despacha dv por lotes");
+  assert.ok(!novels.includes("d.chapters = await dvA.capsList"), "el detalle de dv sigue bajando TODA la obra al abrirlo");
 });
 
 test("receta real del sitio: novelas en la raíz y capítulos con id de post", () => {
@@ -39,9 +43,10 @@ test("receta real del sitio: novelas en la raíz y capítulos con id de post", (
 
 test("la id de post ordena los capítulos (orden cronológico real) y da vecinos", () => {
   assert.ok(src.includes('(Number(a.id) || 0) - (Number(b.id) || 0)'), "los capítulos no se ordenan por id de post");
-  assert.ok(src.includes("prev = caps[i - 1]"), "prev no es el capítulo anterior");
-  assert.ok(src.includes("next = caps[i + 1]"), "next no es el capítulo siguiente");
-  assert.ok(src.includes('c.capSlug + "." + c.id'), "el slug del capítulo no guarda <slug>.<id>");
+  // v2.15.0: los vecinos viven en vecinosDe/vecinosEn (REST en descenso, sin bajar la obra entera)
+  assert.ok(src.includes("rows[i - 1].capSlug + \".\" + rows[i - 1].id"), "prev no es el capítulo anterior");
+  assert.ok(src.includes("rows[i + 1].capSlug + \".\" + rows[i + 1].id"), "next no es el capítulo siguiente");
+  assert.ok(src.includes('r.capSlug + "." + r.id'), "el slug del capítulo no guarda <slug>.<id>");
 });
 
 test("el texto del capítulo descarta el chrome del sitio", () => {
@@ -60,7 +65,7 @@ test("«Abrir en el navegador» apunta a la raíz del dominio", () => {
 });
 
 test("la versión avanza y el build lleva el adaptador nuevo", () => {
-  assert.equal(manifest.version, "2.14.0");
+  assert.equal(manifest.version, "2.15.0");
   assert.ok(built.includes('"/" + slug + "/" + capSlug + "/" + id + "/"'), "el build no lleva el adaptador dv");
   assert.ok(built.includes("esNovela(s) ? novelSearch(s, q)"), "el build no lleva la búsqueda de novelas");
 });
@@ -103,7 +108,7 @@ globalThis.kino = {
   config: { get: () => null },
 };
 
-const { novelSearch, novelHome, novelDetail, novelChapter } = await import("../src/novels.js");
+const { novelSearch, novelHome, novelDetail, novelChapter, novelChapters } = await import("../src/novels.js");
 
 test("dv búsqueda: tarjetas raíz con título y portada, sin ruido del sitio", async () => {
   const s = await novelSearch("dv", "sombras");
@@ -114,16 +119,21 @@ test("dv búsqueda: tarjetas raíz con título y portada, sin ruido del sitio", 
   assert.ok(!s.items.some((i) => ["listado de novelas", "page", "membership join", "imagenes"].includes(String(i.title).toLowerCase())), "el ruido se coló como novela");
 });
 
-test("dv detalle: metadatos y capítulos ordenados por id (cronológico)", async () => {
+test("dv detalle: metadatos, y capítulos POR LOTES (REST caída → extremos de la ficha)", async () => {
   const d = await novelDetail("dv", "esclavo-de-las-sombras");
   assert.equal(d.title, "Esclavo de las Sombras");
   assert.ok(String(d.poster).includes("esclavo-portada"), "portada");
   assert.ok(d.overview && d.overview.length > 20, "sinopsis vacía");
   assert.ok(d.genres.includes("Acción"), "géneros: " + d.genres.join(","));
-  assert.equal(d.chapters.length, 4, "capítulos: " + d.chapters.length);
-  assert.equal(d.chapters[0].number, "1");
-  assert.equal(d.chapters[3].number, "1889");
-  assert.ok(d.chapters.some((c) => c.number === "1.2"), "el capítulo partido (-1-2) no sale como 1.2");
+  // v2.15.0: la ficha ya no arrastra la lista completa — llega por lotes y SIN red extra
+  // (el motor detecta la REST caída y entrega lo que tiene: los extremos de la ficha)
+  const lote = await novelChapters("dv", "esclavo-de-las-sombras", { page: 1, postsPerPage: 50 });
+  assert.equal(lote.items.length, 4, "lote: " + lote.items.length);
+  assert.equal(lote.items[0].number, "1");
+  assert.equal(lote.items[3].number, "1889");
+  assert.ok(lote.items.some((c) => c.number === "1.2"), "el capítulo partido (-1-2) no sale como 1.2");
+  assert.equal(lote.next, null, "con 4 capítulos no hay siguiente lote");
+  assert.equal(lote.total, 4, "total: " + lote.total);
 });
 
 test("dv lector: párrafos limpios, ilustraciones y vecinos por id", async () => {

@@ -30,6 +30,17 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.15
+
+**Capítulos completos con carga progresiva y filtro de orden de capítulos:**
+
+- **DevilNovels mostraba solo 2 capítulos de novelas de 3.000**: la ficha del sitio lista los extremos y nada más. El motor nuevo enumera TODOS los capítulos por la REST de WordPress — los capítulos son páginas hijas de la novela (`wp-json/wp/v2/pages?parent=<id>`, 100 por página, con el total real en la cabecera `X-WP-Total`). Si la REST está cerrada, cae a la paginación de la propia ficha (`?cpage=N` / `page/N`) y por último a las filas de la ficha.
+- **Carga progresiva en TODAS las fuentes de novela** (el detalle pinta el primer lote de 50 y «Cargar más de la fuente» pide lo siguiente): DevilNovels trae páginas REST de verdad; las API de una sola respuesta (Skynovels, Matcha, Astral, Anslid) cortan en lotes su lista ya cacheada, sin segundas descargas. El detalle de DevilNovels ya no baja la obra entera al abrirlo — antes la ficha incluía la lista completa.
+- **El lector no paga la enumeración completa**: los vecinos Anterior/Siguiente salen de la REST en DESCENSO (la primera página trae los 100 capítulos más nuevos, donde casi siempre se está leyendo) o de los extremos de la ficha si la REST está cerrada; el resultado queda en caché 2 h.
+- **Filtro de orden de capítulos** en el detalle de manga y novelas: «Antiguos primero» / «Recientes primero», se aplica al instante sobre la lista y queda guardado para las próximas visitas. «Primero» y «Último» siguen siendo cronológicos aunque la lista se muestre invertida (antes el orden de la fuente decidía, y en Anslid quedaban intercambiados).
+- **Una sola descarga compartida**: el detalle y el primer lote de capítulos piden lo mismo a la vez y la caché de capítulos deduplica en vuelo (antes eran dos descargas idénticas en paralelo).
+- Tests: 101 (motor REST con lotes y vecinos en descenso, lotes desde la caché para las API, filtro de orden instantáneo y persistido).
+
 ## Novedades v2.14
 
 **La v2.13.0 dejó la fuente DevilNovels muerta («no respondió»)** y esta versión lo arregla conservando TODO lo bueno de la 2.13.0, unificando las dos:

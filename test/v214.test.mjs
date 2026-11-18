@@ -16,7 +16,7 @@ const env = readFileSync(root + "src/env.js", "utf8");
 const manifest = JSON.parse(readFileSync(root + "kino-plugin.json", "utf8"));
 
 test("v2.14.0: manifest y unión de las dos versiones (buscador 2.12.1 + calidad 2.13.0)", () => {
-  assert.equal(manifest.version, "2.14.0");
+  assert.equal(manifest.version, "2.15.0");
   // el buscador base NO exige el cierre </a> (lo que mató la fuente en la 2.13.0)
   assert.ok(src.includes("([^>]*)>([^<]{0,200})<"), "falta el buscador tolerante de la 2.12.1");
   assert.ok(!src.includes("{0,4000}"), "residuo del inner de 4000 de la 2.13.0");

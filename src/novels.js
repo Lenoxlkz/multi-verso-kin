@@ -21,15 +21,28 @@ import { fetchText, fetchJson, join, toItem, clip, netError, UA, timeoutFor, cac
 
 // Las listas de capítulos cambian poco: 2 h de caché ahorra el XHR/POST de cada lectura.
 const CAPS_TTL = 7200000;
+const CAPS_VOLANDO = new Map();
 
-/** Lista de capítulos de una obra con caché (2 h). `loader` trae la lista cruda del sitio. */
+/** Lista de capítulos de una obra con caché (2 h). `loader` trae la lista cruda del sitio.
+ *  Dedupe en vuelo: el detalle y el primer lote de capítulos piden LO MISMO a la vez — una
+ *  sola red para los dos (antes eran dos descargas idénticas en paralelo). */
 async function capsOf(src, slug, loader) {
   const ck = cacheKey("caps", src + "|" + slug);
   const cached = cacheGet(ck, CAPS_TTL);
   if (Array.isArray(cached) && cached.length) return cached;
-  const caps = await loader();
-  if (Array.isArray(caps) && caps.length) cacheSet(ck, caps);
-  return caps || [];
+  const volando = CAPS_VOLANDO.get(ck);
+  if (volando) return volando;
+  const p = (async () => {
+    const caps = await loader();
+    if (Array.isArray(caps) && caps.length) cacheSet(ck, caps);
+    return caps || [];
+  })();
+  CAPS_VOLANDO.set(ck, p);
+  try {
+    return await p;
+  } finally {
+    CAPS_VOLANDO.delete(ck);
+  }
 }
 import { PAGO_TEXT_RE, PAGO_CLASS_RE } from "./env.js";
 import * as dvA from "./devilnovels.js";
@@ -355,6 +368,24 @@ async function skHome(src) {
   return out;
 }
 
+/** Capítulos de Skynovels (API), ya mapeados y en orden cronológico. Un solo loader para el
+ *  detalle, la pantalla progresiva y los vecinos (antes la lógica vivía copiada en cada uno). */
+async function skCaps(src, slug) {
+  const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads(), timeoutMs: timeoutFor(src) });
+  const raw = Array.isArray(cr.body) ? cr.body : (cr.body && cr.body.items) || [];
+  const caps = raw.map((c) => {
+    const num = c.number != null ? String(c.number) : String(c.id);
+    return {
+      slug: String(c.id),
+      number: num,
+      title: c.title || ("Capítulo " + num),
+      pago: Boolean(c.is_vip || c.locked),
+    };
+  });
+  caps.sort((a, b) => Number(a.number) - Number(b.number));
+  return caps;
+}
+
 async function skDetail(src, slug) {
   const r = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body || !r.body.id) {
@@ -363,21 +394,7 @@ async function skDetail(src, slug) {
     netError(e, "el detalle");
   }
   const n = r.body;
-  const chapters = [];
-  const rawCaps = await capsOf(src, slug, async () => {
-    const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads(), timeoutMs: timeoutFor(src) });
-    return Array.isArray(cr.body) ? cr.body : (cr.body && cr.body.items) || [];
-  });
-  for (const c of rawCaps) {
-    const num = c.number != null ? String(c.number) : String(c.id);
-    chapters.push({
-      slug: String(c.id),
-      number: num,
-      title: c.title || ("Capítulo " + num),
-      pago: Boolean(c.is_vip || c.locked),
-    });
-  }
-  chapters.sort((a, b) => Number(a.number) - Number(b.number));
+  const chapters = await capsOf(src, slug, () => skCaps(src, slug));
   return {
     slug,
     title: n.title,
@@ -462,6 +479,21 @@ async function mkHome(src) {
   return out;
 }
 
+/** Capítulos de MatchaNovels (API), ya mapeados y en orden ascendente. Loader único para el
+ *  detalle, la pantalla progresiva y los vecinos del lector. */
+async function mkCaps(src, slug) {
+  const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads(), timeoutMs: timeoutFor(src) });
+  const raw = Array.isArray(cr.body) ? cr.body : [];
+  const caps = raw.map((c) => ({
+    slug: String(c.chapter_number),
+    number: String(c.chapter_number),
+    title: c.title || ("Capítulo " + c.chapter_number),
+    pago: Boolean(c.is_vip_only),
+  }));
+  caps.sort((a, b) => Number(a.number) - Number(b.number));
+  return caps;
+}
+
 async function mkDetail(src, slug) {
   const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok || !r.body || !r.body.id) {
@@ -470,17 +502,7 @@ async function mkDetail(src, slug) {
     netError(e, "el detalle");
   }
   const n = r.body;
-  const rawCaps = await capsOf(src, slug, async () => {
-    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads(), timeoutMs: timeoutFor(src) });
-    return Array.isArray(cr.body) ? cr.body : [];
-  });
-  const chapters = rawCaps.map((c) => ({
-    slug: String(c.chapter_number),
-    number: String(c.chapter_number),
-    title: c.title || ("Capítulo " + c.chapter_number),
-    pago: Boolean(c.is_vip_only),
-  }));
-  chapters.sort((a, b) => Number(a.number) - Number(b.number));
+  const chapters = await capsOf(src, slug, () => mkCaps(src, slug));
   return {
     slug,
     title: n.title,
@@ -501,19 +523,17 @@ async function mkChapter(src, slug, capId) {
   const b = r.body;
   const p = htmlToParagraphs(b.content || "");
   // vecinos desde la lista en caché (sin re-pedir el detalle: 2 peticiones menos por capítulo)
-  const caps = (await capsOf(src, slug, async () => {
-    const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads(), timeoutMs: timeoutFor(src) });
-    return Array.isArray(cr.body) ? cr.body : [];
-  })).map((c) => String(c.chapter_number));
-  const idx = caps.indexOf(String(capId));
+  const caps = await capsOf(src, slug, () => mkCaps(src, slug));
+  const nums = caps.map((c) => c.number);
+  const idx = nums.indexOf(String(capId));
   return {
     text: dropFiller(p.text),
     imgs: p.imgs,
     number: String(b.chapter_number),
     title: unescapeHtml(b.title || ("Capítulo " + capId)),
     direction: "ltr",
-    prev: idx > 0 ? caps[idx - 1] : null, // la API va ascendente (1, 2, 3…): prev = el anterior
-    next: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
+    prev: idx > 0 ? nums[idx - 1] : null, // la API va ascendente (1, 2, 3…): prev = el anterior
+    next: idx >= 0 && idx < nums.length - 1 ? nums[idx + 1] : null,
   };
 }
 
@@ -648,7 +668,8 @@ export async function novelDetail(src, slug) {
   if (k === "sk") return skDetail(src, slug);
   if (k === "mk") return mkDetail(src, slug);
   if (k === "as") return asDetail(src, slug);
-  if (k === "devilnovels") return dvDetail(src, slug);
+  // DevilNovels: solo la ficha — los capítulos llegan POR LOTES (novelChapters, REST de WP)
+  if (k === "devilnovels") return dvA.detail(src, slug);
   return madaraDetail(src, slug);
 }
 
@@ -661,9 +682,29 @@ export async function novelChapter(src, slug, capId) {
   return madaraChapter(src, slug, capId);
 }
 
-/** DevilNovels: la ficha (con su lista de capítulos, que el detalle de Kino espera en d.chapters). */
-async function dvDetail(src, slug) {
-  const d = await dvA.detail(src, slug);
-  d.chapters = await dvA.capsList(src, slug);
-  return d;
+/** Loader de la lista completa de una fuente de novela (el que usan detalle y vecinos). */
+function capsLoader(src, slug) {
+  const k = KIND_OF[src];
+  if (k === "sk") return skCaps(src, slug);
+  if (k === "mk") return mkCaps(src, slug);
+  if (k === "as") return asCaps(src, slug);
+  return madaraChapters(src, slug);
+}
+
+/** Carga progresiva de capítulos para la pantalla, con el MISMO contrato que las fuentes de
+ *  manga ({items, next, total}). DevilNovels pagina de verdad (REST de WordPress, 100 por
+ *  página); las API que traen toda la lista en una respuesta la entregan en lotes desde su
+ *  caché compartida con el detalle — sin segundas descargas. Así la pantalla de detalle
+ *  pinta el primer lote rápido y «Cargar más» solo pide lo siguiente. */
+export async function novelChapters(src, slug, opts = {}) {
+  if (KIND_OF[src] === "devilnovels") return dvA.capsPage(src, slug, opts);
+  const page = Math.max(1, Math.floor(Number(opts.page) || 1));
+  const per = Math.min(100, Math.max(10, Math.floor(Number(opts.postsPerPage) || 50)));
+  const caps = await capsOf(src, slug, () => capsLoader(src, slug));
+  const desde = (page - 1) * per;
+  return {
+    items: caps.slice(desde, desde + per),
+    next: desde + per < caps.length ? page + 1 : null,
+    total: caps.length,
+  };
 }
