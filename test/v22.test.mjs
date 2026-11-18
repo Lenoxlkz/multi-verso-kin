@@ -26,7 +26,7 @@ test("los archivos locales se eliminaron por completo (v2.3)", () => {
   }
   const m = JSON.parse(readFileSync(join(root, "kino-plugin.json"), "utf8"));
   assert.equal(JSON.stringify(m.enhancements || {}).includes("files"), false, "el manifiesto aún declara files");
-  assert.equal(m.version, "2.3.0");
+  assert.ok(m.version >= "2.3.0", "la versión avanza desde 2.3");
 });
 
 test("el manifiesto no tiene tics y trae el ajuste de pago", () => {
@@ -76,7 +76,7 @@ test("filtros de búsqueda: todas o una fuente", () => {
 test("el detalle abre el manga en el navegador", () => {
   assert.ok(src.includes("Abrir en el navegador"), "falta el botón");
   assert.ok(src.includes("go: { url: { href: siteUrl"), "falta la acción go.url");
-  assert.ok(src.includes('"/manga/" + encodeURIComponent(d.slug) + "/"'), "la URL del sitio no se construye bien");
+  assert.ok(src.includes("function siteUrlOf"), "la URL del sitio no se construye por fuente");
 });
 
 test("descripción con Ver más / Ver menos (v2.2)", () => {

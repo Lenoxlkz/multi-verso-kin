@@ -1,14 +1,26 @@
-// env.js — las cuatro fuentes de Multi-verso Kin y las utilidades comunes.
-// Cada fuente tiene: id corto (prefijo de refs e ids), nombre, base https y un adaptador en zonatmo.js o manhwa.js.
-// zonatmo.org y manhwashot.lat son gemelos de zonatmo.net y manhwass.lat (mismo software): si un dominio
-// se cae o bloquea, el otro sigue. En la portada se usan los dominios primarios; la búsqueda alcanza los cuatro.
+// env.js — las diez fuentes de Multi-verso Kin y las utilidades comunes.
+// Cada fuente tiene: id corto (prefijo de refs e ids), nombre, base https y un adaptador en
+// zonatmo.js, manhwa.js o novels.js. zonatmo.org y manhwashot.lat son gemelos de zonatmo.net y
+// manhwass.lat (mismo software): si un dominio se cae o bloquea, el otro sigue.
 
 export const SOURCES = {
   zt: { name: "ZonaTMO", host: "https://zonatmo.net", kind: "zonatmo" },
   zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmo" },
   ms: { name: "ManhwaSS", host: "https://manhwass.lat", kind: "manhwa" },
   mh: { name: "ManhwaShot", host: "https://manhwashot.lat", kind: "manhwa" },
+  sk: { name: "Skynovels", host: "https://www.skynovels.net", kind: "skynovels" },
+  mk: { name: "MatchaNovels", host: "https://matchanovels.com", kind: "matchanovels" },
+  as: { name: "Astral Novels", host: "https://astralnovelstranslations.wordpress.com", kind: "astral" },
+  an: { name: "Anslid", host: "https://anslid.com", kind: "madara" },
+  dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "madara" },
+  ln: { name: "LegnNovels", host: "https://legnnovels.com", kind: "madara" },
 };
+
+// Fuentes de novelas (texto) frente a las de manga (imágenes): el lector cambia de modo.
+export const NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv", "ln"];
+
+// Orden de las pestañas del Home: una por fuente, con sus secciones nativas.
+export const HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "ln", "zo", "mh"];
 
 // Fuentes que arman las filas del Home (las gemelas se dejan para la búsqueda y el selector de fuentes).
 export const HOME_SOURCES = ["zt", "ms"];
@@ -77,8 +89,8 @@ export function join(src, path) {
  * Envoltorio de kino.fetch con reintento corto entre los dominios gemelos.
  * `heads` son cabeceras extra (Accept, Cookie, Authorization…); Kino quita las que no corresponden.
  */
-export async function fetchText(url, { heads = {}, timeoutMs = 12000 } = {}) {
-  const r = await kino.fetch(url, { headers: { "User-Agent": UA, ...heads }, timeoutMs });
+export async function fetchText(url, { heads = {}, timeoutMs = 12000, method = "GET", body } = {}) {
+  const r = await kino.fetch(url, { headers: { "User-Agent": UA, ...heads }, timeoutMs, method, body });
   const text = r.text ? r.text() : "";
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }

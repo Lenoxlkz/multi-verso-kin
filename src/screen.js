@@ -13,12 +13,16 @@
 //  - Colores: el tema del plugin (violeta) tiñe las páginas del plugin por defecto; los 8 temas de la app
 //    se ponen con un botón en Ajustes.
 
-import { SOURCES, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
+import { SOURCES, NOVEL_SOURCES, HOME_TABS, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, TTL } from "./env.js";
 import * as zt from "./zonatmo.js";
 import * as ms from "./manhwa.js";
+import * as nv from "./novels.js";
 import { THEMES } from "./themes.js";
 
-const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : ms);
+// El adaptador de novelas expone la misma interfaz (search/home/detail/chapter) que los de manga.
+const nvAd = { search: nv.novelSearch, list: null, latest: null, detail: nv.novelDetail, chapter: nv.novelChapter };
+const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : SOURCES[src].kind === "manhwa" ? ms : nvAd);
+const isNovel = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
 const hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 
 
@@ -122,25 +126,43 @@ async function readProgress(mr) {
 
 // ---------- filas del Home, con caché instantánea ----------
 
-function rowSpecs() {
-  return [
-    { id: "zt-new", src: "zt", title: "ZonaTMO · Actualizados", titleEn: "ZonaTMO · Updated", params: { page: 1, order: "new", postsPerPage: 12 }, pop: "zt:new" },
-    { id: "zt-pop", src: "zt", title: "ZonaTMO · Lo más visto", titleEn: "ZonaTMO · Most read", params: { tops: true, page: 1, postsPerPage: 12 }, pop: "zt:pop" },
-    { id: "ms-new", src: "ms", title: "ManhwaSS · Últimas actualizaciones", titleEn: "ManhwaSS · Latest", params: { latest: true }, pop: "ms:latest" },
-    { id: "ms-emi", src: "ms", title: "ManhwaSS · En emisión", titleEn: "ManhwaSS · Ongoing", params: { page: 1, estado: "on-going" }, pop: "ms:on-going" },
-    { id: "zt-top", src: "zt", title: "ZonaTMO · Mejor valorados", titleEn: "ZonaTMO · Top rated", params: { page: 1, order: "score", postsPerPage: 12 }, pop: "zt:score" },
-    { id: "ms-end", src: "ms", title: "ManhwaSS · Completados", titleEn: "ManhwaSS · Completed", params: { page: 1, estado: "end" }, pop: "ms:end" },
+/** Secciones del Home SOLO para las fuentes de manga, tal y como las muestra cada sitio:
+ *  ZonaTMO: actualizados / lo más visto / mejor valorados; ManhwaSS: últimas / en emisión / completados. */
+function tabSpecs(src) {
+  if (src === "zt" || src === "zo") return [
+    { id: src + "-new", src, title: SOURCES[src].name + " · Actualizados", titleEn: SOURCES[src].name + " · Updated", params: { page: 1, order: "new", postsPerPage: 12 } },
+    { id: src + "-pop", src, title: SOURCES[src].name + " · Lo más visto", titleEn: SOURCES[src].name + " · Most read", params: { tops: true, page: 1, postsPerPage: 12 } },
+    { id: src + "-top", src, title: SOURCES[src].name + " · Mejor valorados", titleEn: SOURCES[src].name + " · Top rated", params: { page: 1, order: "score", postsPerPage: 12 } },
   ];
+  if (src === "ms" || src === "mh") return [
+    { id: src + "-new", src, title: SOURCES[src].name + " · Últimas actualizaciones", titleEn: SOURCES[src].name + " · Latest", params: { latest: true } },
+    { id: src + "-emi", src, title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
+    { id: src + "-end", src, title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } },
+  ];
+  return [];
 }
 
-/** Las filas que haya en caché, en el orden fijo (lectura síncrona: pinta al instante). */
-function rowsFromCache() {
-  const rows = [];
-  for (const spec of rowSpecs()) {
-    const items = cacheGet(cacheKey("rows", spec.id), TTL.rows);
-    if (items && items.length) rows.push({ id: spec.id, title: spec.title, titleEn: spec.titleEn, items });
+/** Estantes del Home para UNA fuente (manga: sus filas nativas; novela: las secciones de su sitio). */
+async function loadHomeShelves(src) {
+  try {
+    const ck = cacheKey("home", src);
+    const cached = cacheGet(ck, TTL.rows);
+    if (cached && cached.length) return cached;
+    let shelves;
+    if (isNovel(src)) {
+      const raw = await nv.novelHome(src);
+      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
+    } else {
+      const specs = tabSpecs(src);
+      const settled = await Promise.allSettled(specs.map(fetchOneRow));
+      shelves = [];
+      for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
+    }
+    if (shelves.length) cacheSet(ck, shelves);
+    return shelves;
+  } catch {
+    return []; // la fuente no responde: el Home de esa pestaña queda vacío, sin romper nada
   }
-  return rows;
 }
 
 async function fetchOneRow(spec) {
@@ -155,13 +177,6 @@ async function fetchOneRow(spec) {
 }
 
 /** Refresca las 6 filas en paralelo; cada fila entra si pudo. */
-async function fetchRows() {
-  const settled = await Promise.allSettled(rowSpecs().map(fetchOneRow));
-  const rows = [];
-  for (const r of settled) if (r.status === "fulfilled" && r.value.items.length) rows.push(r.value);
-  return rows;
-}
-
 /** «Seguir leyendo»: kino.progress (0.9.83+) o el respaldo en storage. */
 async function progressEntries() {
   const out = [];
@@ -233,6 +248,32 @@ async function loadChapter(ref, args, { skipCache = false } = {}) {
   if (!skipCache) {
     const cached = cacheGet(cacheKey("ch", ref), TTL.chapter);
     if (cached && cached.pages && cached.pages.length) return withChapterMeta(cached, args);
+    if (cached && cached.text && cached.text.length) return withChapterMeta(cached, args);
+  }
+  if (isNovel(p.src)) {
+    // Novela: el capítulo es TEXTO (párrafos), no imágenes. El progreso se guarda al entrar.
+    const c = await nv.novelChapter(p.src, p.a, p.b);
+    const data = {
+      ref,
+      src: p.src,
+      mangaSlug: p.a,
+      mr: mangaRef(p.src, p.a),
+      text: c.text,
+      imgs: c.imgs,
+      number: c.number,
+      title: c.title,
+      direction: c.direction,
+      prev: c.prev ? chapterRef(p.src, p.a, c.prev) : null,
+      next: c.next ? chapterRef(p.src, p.a, c.next) : null,
+      total: c.text.length,
+      mode: "texto",
+    };
+    cacheSet(cacheKey("ch", ref), data);
+    const fin = withChapterMeta(data, args);
+    try {
+      saveProgress(fin.mr, ref, { number: fin.number, total: 1, mTitle: fin.mTitle, mPoster: fin.mPoster }, 1, 1);
+    } catch { /* el progreso es optativo */ }
+    return fin;
   }
   const a = adapter(p.src);
   const c = await a.chapter(p.src, p.a, p.b);
@@ -278,6 +319,7 @@ function scaffold(title, titleEn, ctx, body, opts) {
     type: "navigationBar",
     items: [
       { key: "home", icon: "home", label: "Inicio", labelEn: "Home" },
+      { key: "biblioteca", icon: "bookmark", label: "Biblioteca", labelEn: "Library" },
       { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" },
     ],
     value: o.navValue || "home",
@@ -299,7 +341,7 @@ function errorBox(msg, retryEvent) {
 
 /** El botón flotante de búsqueda, independiente, a la derecha. */
 function floatFab() {
-  return { type: "FloatingActionButton", icon: "search", labelText: "Buscar en las 4 fuentes", labelTextEn: "Search all 4 sources", onPressed: { go: { screen: { route: "buscar" } } }, fabPosition: "end" };
+  return { type: "FloatingActionButton", icon: "search", labelText: "Buscar en todas las fuentes", labelTextEn: "Search all sources", onPressed: { go: { screen: { route: "buscar" } } }, fabPosition: "end" };
 }
 
 // ---------- vista: portada ----------
@@ -307,43 +349,95 @@ function floatFab() {
 function viewMain(ctx) {
   const { state } = ctx;
   const kids = [];
-  let rows = state.rows;
+  // «Seguir leyendo» arriba, luego las pestañas por fuente y las secciones nativas de la fuente elegida.
+  const seguir = (state.rows || []).find((r) => r.id === "seguir-screen");
+  if (seguir && seguir.items && seguir.items.length) {
+    kids.push({
+      type: "titleRail",
+      title: seguir.title || "",
+      titleEn: seguir.titleEn,
+      items: seguir.items.map((x) => ({
+        id: ("seg-" + String(x.r)).slice(0, 110).replace(/[^A-Za-z0-9._~-]/g, "_"),
+        ref: String(x.m || x.r),
+        title: x.t || "Seguir leyendo",
+        kind: "movie",
+        poster: x.p || undefined,
+        badges: x.b ? [String(x.b).slice(0, 20)] : undefined,
+        lang: "es",
+        open: { screen: { args: { r: x.r, m: x.m, t: x.t, p: x.p } } },
+      })).filter(Boolean),
+      size: "small",
+    });
+  }
+  const src = state.hsrc || "zt";
+  kids.push({ type: "Chips", key: "homeTab", value: src, options: HOME_TABS.map((k) => ({ value: k, label: SOURCES[k].name })), onChanged: "tabSrc", padding: { x: 16, y: 8 } });
+  let shelves = state.hrows;
   let loading = false;
-  if (!rows || !rows.length) {
-    rows = rowsFromCache();
-    loading = !state.done && !rows.length;
+  if (!shelves) {
+    shelves = cacheGet(cacheKey("home", src), TTL.rows) || [];
+    loading = !state.done && !shelves.length;
   }
   if (loading) {
     kids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "Skeleton", shape: "card", height: 200 },
       { type: "Skeleton", shape: "card", height: 200 },
     ] });
-  } else {
-    for (const row of rows) {
-      const isProgress = row.items && row.items.length && row.items[0].s === undefined;
-      kids.push({
-        type: "titleRail",
-        title: row.title || "",
-        titleEn: row.titleEn,
-        items: (row.items || []).map((x) => (isProgress ? {
-          id: ("seg-" + String(x.r)).slice(0, 110).replace(/[^A-Za-z0-9._~-]/g, "_"),
-          ref: String(x.m || x.r),
-          title: x.t || "Seguir leyendo",
-          kind: "movie",
-          poster: x.p || undefined,
-          badges: x.b ? [String(x.b).slice(0, 20)] : undefined,
-          lang: "es",
-          open: { screen: { args: { r: x.r, m: x.m, t: x.t, p: x.p } } },
-        } : expandOne(x))).filter(Boolean),
-        size: "small",
-      });
+  } else if (shelves.length) {
+    for (const row of shelves) {
+      kids.push({ type: "titleRail", title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
     }
-    if (!rows.length) kids.push(empty("Sin filas por ahora", "No rows yet"));
+  } else if (state.error) {
+    kids.push(errorBox(state.error, "tabSrc"));
+  } else {
+    kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
   const opts = { close: true, navValue: "home" };
   if (!state.hideBar) { opts.bottomBar = true; opts.fab = floatFab(); }
   return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", onScroll: "scrMain", children: kids }, opts);
+}
+
+// ---------- biblioteca: Me Gustas y etiquetas ----------
+
+// Etiquetas de la Biblioteca (las cuatro que pide la pantalla de detalle).
+export const BIB_TAGS = [
+  { k: "leyendo", t: "Leyendo", te: "Reading" },
+  { k: "porleer", t: "Por leer", te: "To read" },
+  { k: "pendiente", t: "Pendiente", te: "On hold" },
+  { k: "terminado", t: "Terminado", te: "Finished" },
+];
+
+function storageObj(key) {
+  try { return JSON.parse(kino.storage.get(key) || "null") || {}; } catch { return {}; }
+}
+const favsAll = () => storageObj("favs");
+const biblioAll = () => storageObj("biblio");
+
+function viewBiblioteca(ctx) {
+  const { state, lang } = ctx;
+  const en = lang === "en";
+  const kids = [];
+  kids.push({ type: "Text", text: "Mis Me Gustas", textEn: "My likes", style: "h4", padding: { x: 16, y: 8 } });
+  const favItems = Object.entries(state.favs || favsAll()).slice(-60).reverse()
+    .map(([ref, m]) => ({ s: ref, t: m.t, p: m.p })).filter((x) => x.s);
+  if (favItems.length) {
+    kids.push({ type: "titleGrid", items: favItems.map(expandOne).filter(Boolean), columns: deviceCols(ctx) });
+  } else {
+    kids.push(empty("Sin Me Gustas todavía: ponles corazón desde el detalle del manga", "No likes yet: heart them from the manga detail"));
+  }
+  kids.push({ type: "Text", text: "Etiquetados", textEn: "Tagged", style: "h4", padding: { x: 16, y: 8 } });
+  const tag = state.bibTag && state.bibTag !== "todas" ? state.bibTag : null;
+  kids.push({ type: "Chips", key: "bibTag", value: tag || "todas", options: [{ value: "todas", label: en ? "All" : "Todas" }].concat(BIB_TAGS.map((t) => ({ value: t.k, label: t.t }))), onChanged: "bibTagF", padding: { x: 16, y: 8 } });
+  const bibItems = Object.entries(state.biblio || biblioAll())
+    .filter(([, m]) => !tag || m.tag === tag)
+    .slice(-120).reverse()
+    .map(([ref, m]) => ({ s: ref, t: m.t, p: m.p })).filter((x) => x.s);
+  if (bibItems.length) {
+    kids.push({ type: "titleGrid", items: bibItems.map(expandOne).filter(Boolean), columns: deviceCols(ctx) });
+  } else {
+    kids.push(empty(tag ? "Nada con esa etiqueta" : "Nada etiquetado todavía", tag ? "Nothing with that tag" : "Nothing tagged yet"));
+  }
+  return scaffold("Biblioteca", "Library", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "biblioteca", bottomBar: true });
 }
 
 // ---------- vista: búsqueda ----------
@@ -371,6 +465,17 @@ function viewBuscar(ctx) {
     if (!n) kids.push(empty('Sin resultados para "' + q.slice(0, 40) + '"', 'No results for "' + q.slice(0, 40) + '"'));
   }
   return scaffold("Buscar", "Search", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home", bottomBar: true });
+}
+
+/** La ficha de esta obra EN SU sitio web (para «Abrir en el navegador»). */
+function siteUrlOf(src, slug) {
+  const kind = SOURCES[src] && SOURCES[src].kind;
+  const e = encodeURIComponent(String(slug || ""));
+  if (kind === "skynovels") return "https://www.skynovels.net/novelas/" + e;
+  if (kind === "matchanovels") return "https://matchanovels.com/novela/" + e;
+  if (kind === "astral") return "https://astralnovelstranslations.wordpress.com/category/" + e + "/";
+  if (kind === "madara") return SOURCES[src].host + "/novela/" + e + "/";
+  return SOURCES[src].host + "/manga/" + e + "/";
 }
 
 function deviceCols(ctx) {
@@ -436,7 +541,10 @@ function viewDetalle(ctx) {
     actions.push({ type: "Button", variant: "secondary", labelText: "Primero (" + first.n + ")", labelTextEn: "First (" + first.n + ")", onPressed: { event: "cap", arg: first.r }, span: 6, fill: true });
     actions.push({ type: "Button", variant: "secondary", labelText: "Último (" + last.n + ")", labelTextEn: "Last (" + last.n + ")", onPressed: { event: "cap", arg: last.r }, span: 6, fill: true });
   }
-  const siteUrl = (SOURCES[d.src] ? SOURCES[d.src].host : "") + "/manga/" + encodeURIComponent(d.slug) + "/";
+  const siteUrl = siteUrlOf(d.src, d.slug);
+  const favOn = state.fav != null ? Boolean(state.fav) : Boolean(favsAll()[state.detailRef]);
+  const tagCur = state.bibTagCur !== undefined ? state.bibTagCur : ((biblioAll()[state.detailRef] || {}).tag || null);
+  const bibOpen = Boolean(state.bibOpen) || Boolean(tagCur);
   const shown = (state.chShow || 60);
   const ocultar = Boolean(kino.config.get("ocultarPago") === true || kino.config.get("ocultarPago") === "true");
   const conPago = d.chapters.filter((c) => c.pago);
@@ -454,6 +562,13 @@ function viewDetalle(ctx) {
   const kids = [
     { type: "Card", key: "tarjeta", children: [header] },
     ...(actions.length ? [{ type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: actions }] : []),
+    { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: [
+      { type: "Button", variant: "secondary", icon: "heart", labelText: favOn ? "Te gusta" : "Me Gusta", labelTextEn: favOn ? "Liked" : "Like", onPressed: { event: "fav" }, span: 6, fill: true },
+      { type: "Button", variant: "secondary", icon: "bookmark", labelText: "Agregar a Biblioteca", labelTextEn: "Add to Library", onPressed: { event: "bibOpen" }, span: 6, fill: true },
+    ] },
+    bibOpen ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: BIB_TAGS.map((t) => ({
+      type: "Button", variant: t.k === tagCur ? "primary" : "secondary", icon: t.k === tagCur ? "check" : undefined, labelText: t.t, labelTextEn: t.te, onPressed: { event: "biblio", arg: t.k }, span: 3, fill: true,
+    })).concat(tagCur ? [{ type: "TextButton", icon: "close", labelText: "Quitar etiqueta", labelTextEn: "Remove tag", onPressed: { event: "biblio", arg: "quitar" }, span: 12, fill: true }] : []) } : null,
     { type: "Button", variant: "secondary", icon: "language", labelText: "Abrir en el navegador", labelTextEn: "Open in browser", onPressed: { go: { url: { href: siteUrl, title: String(d.title).slice(0, 60) } } }, fill: true, padding: { x: 16, y: 4 } },
     descNode(d.overview, state, en),
     ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) de pago oculto(s) (ajustable en Ajustes).", textEn: conPago.length + " paid chapter(s) hidden (toggle in Settings).", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
@@ -472,13 +587,24 @@ function viewLeer(ctx) {
   const c = state.chapter;
   if (state.busyChapter && !c) return scaffold("Capítulo", "Chapter", ctx, { type: "Column", padding: 16, children: [{ type: "Skeleton", shape: "card", width: 400, height: 300 }] });
   if (!c) return scaffold("Capítulo", "Chapter", ctx, errorBox(state.error || "Faltan datos"));
+  const enL = (ctx.lang === "en");
   const nav = [
     c.prev ? { type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous", onPressed: { event: "nav", arg: c.prev }, span: 4, fill: true } : { type: "SizedBox", width: 16 },
-    { type: "Text", text: "Cap. " + c.number + "  ·  " + c.total + " pág.", textEn: "Ch. " + c.number + "  ·  " + c.total + " p.", style: "body", color: "muted", padding: 8 },
+    { type: "Text", text: c.text ? "Cap. " + c.number + "  ·  novela" : "Cap. " + c.number + "  ·  " + c.total + " pág.", textEn: c.text ? "Ch. " + c.number + "  ·  novel" : "Ch. " + c.number + "  ·  " + c.total + " p.", style: "body", color: "muted", padding: 8 },
     c.next ? { type: "Button", variant: "secondary", icon: "arrow_forward", labelText: "Siguiente", labelTextEn: "Next", onPressed: { event: "nav", arg: c.next }, span: 4, fill: true } : { type: "SizedBox", width: 16 },
   ];
   const kids = [];
-  if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= 8) {
+  if (c.text && c.text.length) {
+    // Modo novela: párrafos de texto con tipografía legible; las ilustraciones se intercalan arriba.
+    const bloques = [];
+    if (c.imgs && c.imgs.length) {
+      for (const u of c.imgs) bloques.push({ type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 6 } });
+    }
+    bloques.push({ type: "Text", text: c.title || ("Capítulo " + c.number), style: "h4", padding: { x: 16, y: 8 } });
+    for (const par of c.text.slice(0, 400)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
+    kids.push({ type: "SingleChildScrollView", key: "novela", children: [{ type: "Column", crossAxisAlignment: "stretch", children: bloques }] });
+    kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
+  } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= 8) {
     kids.push({
       type: "pages",
       key: "manga-pages",
@@ -524,6 +650,7 @@ export async function screen(ctx) {
   const route = (ctx.route && ctx.route.name) || "main";
   switch (route) {
     case "buscar": return viewBuscar(ctx);
+    case "biblioteca": return viewBiblioteca(ctx);
     case "detalle": return viewDetalle(ctx);
     case "leer": return viewLeer(ctx);
     case "ajustes": return viewAjustes(ctx);
@@ -558,8 +685,55 @@ export async function screenEvent(ctx) {
         if (here === "main") return { state: { hideBar: false, lastPos: 0 } }; // ya estás en Inicio
         return { route: { pop: true } }; // volver hacia Inicio, paso a paso
       }
+      if (key === "biblioteca") return here === "biblioteca" ? null : { route: { push: "biblioteca" } };
       if (key === "ajustes") return here === "ajustes" ? null : { route: { push: "ajustes" } };
       return null;
+    }
+
+    case "tabSrc": {
+      // Pestaña del Home: cambia de fuente y trae sus secciones nativas (caché primero).
+      const src = String(arg || value || "zt");
+      if (!SOURCES[src]) return null;
+      const cached = cacheGet(cacheKey("home", src), TTL.rows);
+      if (cached && cached.length) return { state: { hsrc: src, hrows: cached } };
+      const shelves = await loadHomeShelves(src);
+      return { state: { hsrc: src, hrows: shelves, error: null, done: true } };
+    }
+
+    case "bibTagF": {
+      return { state: { bibTag: String(arg || value || "todas") } };
+    }
+
+    case "fav": {
+      if (!(state && state.detail) || !state.detailRef) return null;
+      const d = state.detail;
+      const favs = favsAll();
+      const ya = Boolean(favs[state.detailRef]);
+      if (ya) delete favs[state.detailRef];
+      else favs[state.detailRef] = { s: d.src, t: String(d.title).slice(0, 180), p: d.poster || undefined, at: Date.now() };
+      try { kino.storage.set("favs", JSON.stringify(favs)); } catch { /* lleno: sigue */ }
+      return { state: { favs, fav: !ya, note: null }, toast: ya ? (en ? "Removed from your likes" : "Quitado de Mis Me Gustas") : (en ? "Added to your likes" : "Añadido a Mis Me Gustas") };
+    }
+
+    case "bibOpen": {
+      return { state: { bibOpen: !(state && state.bibOpen) } };
+    }
+
+    case "biblio": {
+      if (!(state && state.detail) || !state.detailRef) return null;
+      const tag = String(arg || value || "");
+      const d = state.detail;
+      const biblio = biblioAll();
+      if (tag === "quitar") {
+        delete biblio[state.detailRef];
+        try { kino.storage.set("biblio", JSON.stringify(biblio)); } catch { /* lleno */ }
+        return { state: { biblio, bibTagCur: null }, toast: en ? "Tag removed" : "Etiqueta quitada" };
+      }
+      const meta = BIB_TAGS.find((t) => t.k === tag);
+      if (!meta) return null;
+      biblio[state.detailRef] = { tag, s: d.src, t: String(d.title).slice(0, 180), p: d.poster || undefined, at: Date.now() };
+      try { kino.storage.set("biblio", JSON.stringify(biblio)); } catch { /* lleno */ }
+      return { state: { biblio, bibTagCur: tag, bibOpen: false }, toast: en ? "Tagged: " + meta.te : "Etiquetado: " + meta.t };
     }
 
     case "scrMain": {
@@ -713,7 +887,7 @@ async function handleOpen(ctx) {
     try {
       const detail = await loadDetail(args.m);
       const prog = await readProgress(args.m);
-      return { route: { push: "detalle", params: { r: args.m } }, state: { detail, detailRef: args.m, prog, error: null } };
+      return { route: { push: "detalle", params: { r: args.m } }, state: { detail, detailRef: args.m, prog, error: null, fav: Boolean(favsAll()[args.m]), bibTagCur: (biblioAll()[args.m] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
@@ -722,15 +896,22 @@ async function handleOpen(ctx) {
     try {
       const detail = await loadDetail(args.r);
       const prog = await readProgress(args.r);
-      return { route: { push: "detalle", params: { r: args.r } }, state: { detail, detailRef: args.r, prog, error: null } };
+      return { route: { push: "detalle", params: { r: args.r } }, state: { detail, detailRef: args.r, prog, error: null, fav: Boolean(favsAll()[args.r]), bibTagCur: (biblioAll()[args.r] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
   }
   purgeDl();
-  const [rows, seguir] = await Promise.allSettled([fetchRows(), progressEntries()]);
-  const out = [];
-  if (seguir.status === "fulfilled" && seguir.value && seguir.value.length) out.push(seguir.value[0]);
-  if (rows.status === "fulfilled") out.push(...rows.value);
-  return { state: { rows: out, done: true, error: null } };
+  const tab = (ctx.state && ctx.state.hsrc) || "zt";
+  const [seguir, shelves] = await Promise.allSettled([progressEntries(), loadHomeShelves(tab)]);
+  const out = seguir.status === "fulfilled" && seguir.value && seguir.value.length ? seguir.value : [];
+  return {
+    state: {
+      rows: out,
+      done: true,
+      error: null,
+      hsrc: tab,
+      hrows: shelves.status === "fulfilled" ? shelves.value : [],
+    },
+  };
 }

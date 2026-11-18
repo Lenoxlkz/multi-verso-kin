@@ -10,8 +10,16 @@ var SOURCES = {
   zt: { name: "ZonaTMO", host: "https://zonatmo.net", kind: "zonatmo" },
   zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmo" },
   ms: { name: "ManhwaSS", host: "https://manhwass.lat", kind: "manhwa" },
-  mh: { name: "ManhwaShot", host: "https://manhwashot.lat", kind: "manhwa" }
+  mh: { name: "ManhwaShot", host: "https://manhwashot.lat", kind: "manhwa" },
+  sk: { name: "Skynovels", host: "https://www.skynovels.net", kind: "skynovels" },
+  mk: { name: "MatchaNovels", host: "https://matchanovels.com", kind: "matchanovels" },
+  as: { name: "Astral Novels", host: "https://astralnovelstranslations.wordpress.com", kind: "astral" },
+  an: { name: "Anslid", host: "https://anslid.com", kind: "madara" },
+  dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "madara" },
+  ln: { name: "LegnNovels", host: "https://legnnovels.com", kind: "madara" }
 };
+var NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv", "ln"];
+var HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "ln", "zo", "mh"];
 var HOME_SOURCES = ["zt", "ms"];
 var PAGO_TEXT_RE = /premium|\bvip\b|\bde pago\b|🔒|\bloqueado\b|\bpaid\b|\bunlock\b|\boro\b|\bcoin\b/i;
 var PAGO_CLASS_RE = /premium|\block|\bpaid|\bvip/i;
@@ -50,11 +58,16 @@ function toItem(src, m) {
   item.open = { screen: { args: { r: item.ref, t: title } } };
   return item;
 }
+function clip(text, max) {
+  let t = String(text == null ? "" : text).slice(0, max);
+  if (/[\uD800-\uDBFF]$/.test(t)) t = t.slice(0, -1);
+  return t;
+}
 function join(src, path) {
   return SOURCES[src].host + (String(path).startsWith("/") ? path : "/" + path);
 }
-async function fetchText(url, { heads: heads2 = {}, timeoutMs = 12e3 } = {}) {
-  const r = await kino.fetch(url, { headers: { "User-Agent": UA, ...heads2 }, timeoutMs });
+async function fetchText(url, { heads: heads3 = {}, timeoutMs = 12e3, method = "GET", body } = {}) {
+  const r = await kino.fetch(url, { headers: { "User-Agent": UA, ...heads3 }, timeoutMs, method, body });
   const text = r.text ? r.text() : "";
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
 }
@@ -768,6 +781,540 @@ async function categories() {
   return tiles.slice(0, 24);
 }
 
+// src/novels.js
+function heads2(extra) {
+  return Object.assign({ "User-Agent": UA, Accept: "text/html,application/json,*/*" }, extra || {});
+}
+function unescapeHtml(t) {
+  return String(t || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;|&#39;|&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&#(\d+);/g, (_, n) => {
+    try {
+      return String.fromCodePoint(Number(n));
+    } catch {
+      return "";
+    }
+  }).replace(/&#x([0-9a-f]+);/gi, (_, n) => {
+    try {
+      return String.fromCodePoint(parseInt(n, 16));
+    } catch {
+      return "";
+    }
+  });
+}
+function htmlToParagraphs(html, maxChars) {
+  let body = String(html || "").replace(/<(script|style|noscript)[^>]*>[\s\S]*?<\/\1>/gi, " ");
+  const imgs = [];
+  body = body.replace(/<img[^>]+src="([^"]+)"[^>]*>/gi, (m, u) => {
+    if (/^https?:/i.test(u) && imgs.length < 8) imgs.push(u.replace(/&amp;/g, "&"));
+    return " ";
+  });
+  body = body.replace(/<\/\s*(p|div|h[1-6]|li|blockquote|tr)\s*>/gi, "\n\n");
+  body = body.replace(/<br\s*\/?>/gi, "\n");
+  body = unescapeHtml(body.replace(/<[^>]+>/g, " "));
+  body = body.replace(/[\u200b-\u200f\ufeff\u2060]/g, "");
+  const text = [];
+  for (const line of body.split("\n")) {
+    let t = line.replace(/\s+/g, " ").trim();
+    if (!t) continue;
+    if (t.length > 4e3) t = t.slice(0, 4e3);
+    text.push(t);
+    if (text.length >= (maxChars || 900)) break;
+  }
+  return { text, imgs };
+}
+function esRelleno(t) {
+  return /está bloqueado|membresía lo lees|desbloqueo|suscr[ií]bete para/i.test(t);
+}
+function dropFiller(text) {
+  const out = [];
+  for (const t of text) {
+    if (out.length >= 6 && esRelleno(t) && t.length < 220) continue;
+    if (/^(prev\s+next|comments? for chapter|manga discussion|deja una respuesta|tu direcci[oó]n de correo|class=|href=|<|data-)/i.test(t.trim().slice(0, 40)) && t.length < 300) continue;
+    out.push(t);
+  }
+  return out;
+}
+function asItems2(src, list3) {
+  return list3.map((m) => toItem(src, m)).filter(Boolean);
+}
+function madaraHost(src) {
+  return src === "an" ? "https://anslid.com" : src === "dv" ? "https://devilnovels.com" : "https://legnnovels.com";
+}
+function madaraCards(html, src, limit) {
+  const out = [];
+  const chunks = String(html).split(/class="page-item-detail/);
+  const re = /href="https?:\/\/[^"]*\/novela\/([a-z0-9-]+)\/"/i;
+  for (let i = 1; i < chunks.length; i++) {
+    if (limit && out.length >= limit) break;
+    const seg = chunks[i].slice(0, 3500);
+    const m = re.exec(seg);
+    if (!m || m[1] === "feed") continue;
+    const img = /<img[^>]+src="([^"]+)"/.exec(seg) || /data-src="([^"]+)"/.exec(seg);
+    const h = /<h(?:3|4|5)[^>]*>\s*<a[^>]*>([^<]{1,200})<\/a>/.exec(seg) || /<a[^>]*rel="bookmark"[^>]*>([^<]{1,200})<\/a>/.exec(seg);
+    const title = h ? unescapeHtml(h[1]).trim() : m[1].replace(/-novela$/, "").replace(/-/g, " ");
+    out.push({
+      slug: m[1],
+      title,
+      overview: void 0,
+      poster: img ? img[1].replace(/&amp;/g, "&") : void 0
+    });
+  }
+  return out;
+}
+async function madaraSearch(src, q) {
+  try {
+    const r = await fetchText(madaraHost(src) + "/wp-admin/admin-ajax.php", {
+      heads: heads2({ "X-Requested-With": "XMLHttpRequest", Referer: madaraHost(src) + "/", "Content-Type": "application/x-www-form-urlencoded" }),
+      method: "POST",
+      body: "action=wp-manga-search-manga&title=" + encodeURIComponent(q),
+      timeoutMs: timeoutFor(src)
+    });
+    if (r.ok && r.text) {
+      const d = JSON.parse(r.text);
+      const items = [];
+      for (const it of d && d.data || []) {
+        const m = /\/novela\/([a-z0-9-]+)\//i.exec(it && it.url || "");
+        if (m && items.length < 30) {
+          items.push(toItem(src, { slug: m[1], title: (it.title || m[1]).trim() }));
+        }
+      }
+      const ok = items.filter(Boolean);
+      if (ok.length) return { items: ok };
+    }
+  } catch {
+  }
+  const r2 = await fetchText(madaraHost(src) + "/?s=" + encodeURIComponent(q) + "&post_type=wp-manga", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r2.ok) netError(new Error("HTTP " + r2.status), "la búsqueda en " + madaraHost(src));
+  return { items: asItems2(src, madaraCards(r2.text, src, 30)) };
+}
+async function madaraHome(src) {
+  const specs = [
+    { id: "trending", t: "Tendencias", te: "Trending", ob: "trending" },
+    { id: "latest", t: "Últimas actualizaciones", te: "Latest updates", ob: "latest" },
+    { id: "views", t: "Más leídas", te: "Most read", ob: "views" },
+    { id: "rating", t: "Mejor valoradas", te: "Top rated", ob: "rating" },
+    { id: "new", t: "Nuevas", te: "New", ob: "new" }
+  ];
+  const settled = await Promise.allSettled(specs.map((s) => fetchText(madaraHost(src) + "/novela/?m_orderby=" + s.ob, { heads: heads2(), timeoutMs: timeoutFor(src) })));
+  const out = [];
+  for (let i = 0; i < specs.length; i++) {
+    const p = settled[i];
+    if (p.status !== "fulfilled" || !p.value.ok) continue;
+    const items = asItems2(src, madaraCards(p.value.text, src, 14));
+    if (items.length) out.push({ id: src + "-" + specs[i].id, title: specs[i].t, titleEn: specs[i].te, items });
+  }
+  return out;
+}
+async function madaraDetail(src, slug) {
+  const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Esta novela no está disponible en la fuente.";
+    }
+    netError(e, "el detalle");
+  }
+  const html = r.text;
+  const t = /<h1[^>]*class="[^"]*post-title[^"]*"[^>]*>\s*<a[^>]*>([^<]{1,220})<\/a>/.exec(html) || /<h1[^>]*>([^<]{1,220})<\/h1>/.exec(html) || /<meta[^>]+property="og:title"[^>]+content="([^"]+)"/.exec(html);
+  const og = /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/.exec(html);
+  const desc = /<meta name="description" content="([^"]{0,600})"/.exec(html) || /<div[^>]*class="[^"]*summary__content[^"]*"[^>]*>([\s\S]{10,900}?)<\/div>/.exec(html);
+  const genres = [];
+  const g0 = html.indexOf("genres-content");
+  if (g0 >= 0) {
+    const seg = html.slice(g0, g0 + 2e3);
+    const re = />([^<>]{2,40})<\/a>/g;
+    let m;
+    while ((m = re.exec(seg)) && genres.length < 6) genres.push(unescapeHtml(m[1]).trim());
+  }
+  const chapters2 = await madaraChapters(src, slug, html);
+  return {
+    slug,
+    title: t ? unescapeHtml(t[1]).trim() : slug.replace(/-novela$/, "").replace(/-/g, " "),
+    overview: desc ? unescapeHtml(String(desc[1]).replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim() : void 0,
+    poster: og ? og[1].replace(/&amp;/g, "&") : void 0,
+    genres,
+    chapters: chapters2
+  };
+}
+async function madaraChapters(src, slug, detailHtml) {
+  const caps = [];
+  try {
+    const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/ajax/chapters/", {
+      heads: heads2({ "X-Requested-With": "XMLHttpRequest", Referer: madaraHost(src) + "/novela/" + slug + "/", "Content-Type": "application/x-www-form-urlencoded" }),
+      method: "POST",
+      timeoutMs: timeoutFor(src)
+    });
+    if (r.ok && r.text && /chapter/i.test(r.text.slice(0, 6e4))) {
+      const re = /href="https?:\/\/[^"]*\/novela\/[a-z0-9-]+\/((?:[a-z0-9-]+\/)?capitulo-[0-9.]+(?:-[0-9]+)?)\/"/gi;
+      let m;
+      while ((m = re.exec(r.text)) && caps.length < 800) {
+        const cs = m[1];
+        const num = String(cs).replace(/^.*capitulo-/, "").replace(/\/$/, "");
+        caps.push({ slug: cs, number: num, title: "Capítulo " + num, pago: PAGO_TEXT_RE.test("capitulo " + num) && false });
+      }
+    }
+  } catch {
+  }
+  if (!caps.length && detailHtml) {
+    const re = /href="https?:\/\/[^"]*\/novela\/[a-z0-9-]+\/((?:[a-z0-9-]+\/)?capitulo-[0-9.]+(?:-[0-9]+)?)\/"/gi;
+    let m;
+    while ((m = re.exec(detailHtml)) && caps.length < 800) {
+      const num = String(m[1]).replace(/^.*capitulo-/, "");
+      caps.push({ slug: m[1], number: num, title: "Capítulo " + num });
+    }
+  }
+  caps.reverse();
+  return caps;
+}
+async function madaraChapter(src, slug, capId) {
+  const url = madaraHost(src) + "/novela/" + slug + "/" + capId + "/";
+  const r = await fetchText(url, { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Este capítulo ya no está disponible.";
+    }
+    netError(e, "el capítulo");
+  }
+  const html = r.text;
+  let i0 = html.indexOf('class="reading-content"');
+  if (i0 < 0) i0 = html.indexOf("reading-content");
+  let seg = i0 >= 0 ? html.slice(i0, i0 + 4e5) : html;
+  const cortes = ["manga-discussion", "comments-area", 'id="respond"', "MANGA DISCUSSION", "c-blog__footer", "wp-manga-nav-content"];
+  for (const c of cortes) {
+    const j = seg.indexOf(c);
+    if (j > 200) seg = seg.slice(0, j);
+  }
+  const p = htmlToParagraphs(seg, 900);
+  const caps = (await madaraChapters(src, slug)).map((c) => c.slug);
+  const cur = capId;
+  const idx = caps.indexOf(cur);
+  return {
+    text: dropFiller(p.text),
+    imgs: p.imgs,
+    number: String(capId).replace(/^.*capitulo-/, ""),
+    title: "Capítulo " + String(capId).replace(/^.*capitulo-/, ""),
+    direction: "ltr",
+    prev: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
+    next: idx > 0 ? caps[idx - 1] : null
+  };
+}
+var SK_API = "https://api.skynovels.net";
+function skPoster(n) {
+  return n.image ? SK_API + "/img/" + n.image : void 0;
+}
+async function skSearch(src, q) {
+  const r = await fetchJson(SK_API + "/v1/novels?q=" + encodeURIComponent(q) + "&limit=40", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "la búsqueda en Skynovels");
+  const items = [];
+  for (const n of r.body.items || []) {
+    if (items.length >= 40) break;
+    items.push(toItem(src, {
+      slug: String(n.id),
+      title: n.title,
+      overview: n.synopsis ? clip(n.synopsis, 200) : void 0,
+      poster: skPoster(n),
+      rating: n.rating != null ? Number(n.rating) : void 0
+    }));
+  }
+  return { items: items.filter(Boolean) };
+}
+async function skHome(src) {
+  const r = await fetchJson(SK_API + "/v1/home", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body) return [];
+  const b = r.body;
+  const secs = [
+    { id: "updated", t: "Actualizadas hoy", te: "Updated today", k: "updated" },
+    { id: "trending", t: "Tendencias de hoy", te: "Trending today", k: "trendingViews" },
+    { id: "week", t: "Lo más leído de la semana", te: "Most read this week", k: "weeklyViews" },
+    { id: "month", t: "Lo más leído del mes", te: "Most read this month", k: "monthlyViews" },
+    { id: "views", t: "Lo más leído de siempre", te: "Most read of all time", k: "views" },
+    { id: "top", t: "Mejor valoradas", te: "Top rated", k: "top_rated" },
+    { id: "recent", t: "Recientes", te: "Recent", k: "recent" },
+    { id: "finished", t: "Finalizadas", te: "Finished", k: "finished" }
+  ];
+  const out = [];
+  for (const s of secs) {
+    const raw = b[s.k];
+    const list3 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : [];
+    if (!Array.isArray(list3) || !list3.length) continue;
+    const items = asItems2(src, list3.slice(0, 14).map((n) => ({
+      slug: String(n.id),
+      title: n.title || n.nvl_title,
+      overview: void 0,
+      poster: skPoster(n)
+    }))).filter(Boolean);
+    if (items.length) out.push({ id: src + "-" + s.id, title: s.t, titleEn: s.te, items });
+  }
+  return out;
+}
+async function skDetail(src, slug) {
+  const r = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body || !r.body.id) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Esta novela no está disponible en Skynovels.";
+    }
+    netError(e, "el detalle");
+  }
+  const n = r.body;
+  const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const chapters2 = [];
+  const rawCaps = Array.isArray(cr.body) ? cr.body : cr.body && cr.body.items || [];
+  for (const c of rawCaps) {
+    const num = c.number != null ? String(c.number) : String(c.id);
+    chapters2.push({
+      slug: String(c.id),
+      number: num,
+      title: c.title || "Capítulo " + num,
+      pago: Boolean(c.is_vip || c.locked)
+    });
+  }
+  chapters2.sort((a, b) => Number(a.number) - Number(b.number));
+  return {
+    slug,
+    title: n.title,
+    overview: n.synopsis ? clip(n.synopsis, 600) : void 0,
+    poster: skPoster(n),
+    genres: Array.isArray(n.genres) ? n.genres.map((g) => String(g.name || g)).filter(Boolean).slice(0, 6) : void 0,
+    status: n.status === "Finished" ? "Finalizada" : void 0,
+    chapters: chapters2
+  };
+}
+async function skChapter(src, slug, capId) {
+  const r = await fetchJson(SK_API + "/v1/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Este capítulo no está disponible en Skynovels.";
+    }
+    netError(e, "el capítulo");
+  }
+  const b = r.body;
+  let paras = [];
+  const c = b.content;
+  if (c && Array.isArray(c.paragraphs)) paras = c.paragraphs.map((x) => String(x).replace(/[\u200b-\u200f\uFEFF\u2060]/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  else if (typeof c === "string") paras = htmlToParagraphs(c).text;
+  else if (b.chp_content) paras = htmlToParagraphs(b.chp_content).text;
+  return {
+    text: dropFiller(paras).slice(0, 900),
+    number: b.number != null ? String(b.number) : capId,
+    title: unescapeHtml(b.title || "Capítulo " + capId),
+    direction: "ltr",
+    prev: b.prev_id ? String(b.prev_id) : null,
+    next: b.next_id ? String(b.next_id) : null
+  };
+}
+var MK_API = "https://matchanovels.com/api/v1/public";
+function mkCover(u) {
+  if (!u) return void 0;
+  return /^https:/i.test(u) ? u : "https://matchanovels.com" + String(u);
+}
+async function mkSearch(src, q) {
+  const r = await fetchJson(MK_API + "/novels?search=" + encodeURIComponent(q) + "&page=1", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "la búsqueda en MatchaNovels");
+  const items = [];
+  for (const n of r.body.items || []) {
+    if (items.length >= 40) break;
+    items.push(toItem(src, {
+      slug: String(n.slug),
+      title: n.title,
+      poster: mkCover(n.cover_image_url),
+      overview: n.synopsis ? clip(n.synopsis, 200) : void 0
+    }));
+  }
+  return { items: items.filter(Boolean) };
+}
+async function mkHome(src) {
+  const specs = [
+    { id: "latest", t: "Actualizaciones recientes", te: "Latest updates", p: "page=1" },
+    { id: "views", t: "Más leídas", te: "Most read", p: "page=1&order=views" },
+    { id: "followers", t: "Más seguidas", te: "Most followed", p: "page=1&order=followers" },
+    { id: "completed", t: "Completadas", te: "Completed", p: "page=1&status=completed" },
+    { id: "ongoing", t: "En curso", te: "Ongoing", p: "page=1&status=ongoing" }
+  ];
+  const settled = await Promise.allSettled(specs.map((s) => fetchJson(MK_API + "/novels?" + s.p, { heads: heads2(), timeoutMs: timeoutFor(src) })));
+  const out = [];
+  for (let i = 0; i < specs.length; i++) {
+    const p = settled[i];
+    if (p.status !== "fulfilled" || !p.value.ok || !p.value.body) continue;
+    const items = asItems2(src, (p.value.body.items || []).slice(0, 14).map((n) => ({
+      slug: String(n.slug),
+      title: n.title,
+      poster: mkCover(n.cover_image_url)
+    }))).filter(Boolean);
+    if (items.length) out.push({ id: src + "-" + specs[i].id, title: specs[i].t, titleEn: specs[i].te, items });
+  }
+  return out;
+}
+async function mkDetail(src, slug) {
+  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body || !r.body.id) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Esta novela no está disponible en MatchaNovels.";
+    }
+    netError(e, "el detalle");
+  }
+  const n = r.body;
+  const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor(src) });
+  const rawCaps = Array.isArray(cr.body) ? cr.body : [];
+  const chapters2 = rawCaps.map((c) => ({
+    slug: String(c.chapter_number),
+    number: String(c.chapter_number),
+    title: c.title || "Capítulo " + c.chapter_number,
+    pago: Boolean(c.is_vip_only)
+  }));
+  chapters2.sort((a, b) => Number(a.number) - Number(b.number));
+  return {
+    slug,
+    title: n.title,
+    overview: n.synopsis ? clip(String(n.synopsis).replace(/<[^>]+>/g, " "), 600) : void 0,
+    poster: mkCover(n.cover_image_url),
+    genres: Array.isArray(n.genres) ? n.genres.map((g) => String(g.name || g)).filter(Boolean).slice(0, 6) : void 0,
+    chapters: chapters2
+  };
+}
+async function mkChapter(src, slug, capId) {
+  const r = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters/" + encodeURIComponent(capId), { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Este capítulo no está disponible en MatchaNovels.";
+    }
+    netError(e, "el capítulo");
+  }
+  const b = r.body;
+  const p = htmlToParagraphs(b.content || "");
+  const caps = (await mkDetail(src, slug)).chapters.map((c) => c.slug);
+  const idx = caps.indexOf(String(capId));
+  return {
+    text: dropFiller(p.text),
+    imgs: p.imgs,
+    number: String(b.chapter_number),
+    title: unescapeHtml(b.title || "Capítulo " + capId),
+    direction: "ltr",
+    prev: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
+    next: idx > 0 ? caps[idx - 1] : null
+  };
+}
+var AS_API = "https://public-api.wordpress.com/rest/v1.1/sites/astralnovelstranslations.wordpress.com";
+async function asApi(path, src) {
+  const r = await fetchJson(AS_API + path, { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "Astral Novels");
+  return r.body;
+}
+function asCover(post) {
+  return post && (post.featured_image || post.post_thumbnail && post.post_thumbnail.URL) || void 0;
+}
+function asCat(post) {
+  const c = post && post.categories && Object.values(post.categories)[0];
+  return c && c.slug ? String(c.slug) : null;
+}
+async function asSearch(src, q) {
+  const b = await asApi("/posts?search=" + encodeURIComponent(q) + "&number=40", src);
+  const seen = [];
+  const out = [];
+  for (const p of b.posts || []) {
+    const cat = asCat(p);
+    if (!cat || seen.indexOf(cat) >= 0) continue;
+    seen.push(cat);
+    out.push(toItem(src, {
+      slug: cat,
+      title: cat.replace(/-/g, " "),
+      overview: clip(p.title, 120),
+      poster: asCover(p)
+    }));
+    if (out.length >= 24) break;
+  }
+  return { items: out.filter(Boolean) };
+}
+async function asHome(src) {
+  const b = await asApi("/posts?number=30", src);
+  const items = [];
+  for (const p of b.posts || []) {
+    const cat = asCat(p);
+    if (!cat) continue;
+    const it = toItem(src, {
+      slug: cat,
+      title: cat.replace(/-/g, " "),
+      overview: clip(p.title, 120),
+      poster: asCover(p)
+    });
+    if (it && !items.some((x) => x.id === it.id)) items.push(it);
+    if (items.length >= 14) break;
+  }
+  return items.length ? [{ id: src + "-latest", title: "Últimos capítulos publicados", titleEn: "Latest chapter posts", items }] : [];
+}
+async function asDetail(src, slug) {
+  const caps = [];
+  const b = await asApi("/posts?category=" + encodeURIComponent(slug) + "&number=100&order_by=date", src);
+  for (const p of b.posts || []) {
+    const m = /cap[ií]tulo\s*([0-9.]+)/i.exec(p.title || "");
+    const num = m ? m[1] : String(p.ID);
+    caps.push({ slug: String(p.ID), number: num, title: p.title || "Capítulo " + num, pago: false });
+  }
+  caps.reverse();
+  const first = (b.posts || [])[0];
+  return {
+    slug,
+    title: slug.replace(/-/g, " "),
+    overview: first ? clip(String(first.title), 160) : void 0,
+    poster: asCover(first),
+    chapters: caps
+  };
+}
+async function asChapter(src, slug, capId) {
+  const b = await asApi("/posts/" + encodeURIComponent(capId), src);
+  if (!b || !b.ID) netError(new Error("not_found"), "el capítulo");
+  const p = htmlToParagraphs(b.content || "");
+  const caps = (await asDetail(src, slug)).chapters.map((c) => c.slug);
+  const idx = caps.indexOf(String(capId));
+  return {
+    text: dropFiller(p.text),
+    imgs: p.imgs,
+    number: (/[Cc]ap[ií]tulo\s*([0-9.]+)/.exec(b.title || "") || [])[1] || String(capId),
+    title: unescapeHtml(b.title || "Capítulo " + capId),
+    direction: "ltr",
+    prev: idx >= 0 && idx < caps.length - 1 ? caps[idx + 1] : null,
+    next: idx > 0 ? caps[idx - 1] : null
+  };
+}
+var KIND_OF = { sk: "sk", mk: "mk", as: "as", an: "madara", dv: "madara", ln: "madara" };
+async function novelSearch(src, q) {
+  const k = KIND_OF[src];
+  if (k === "sk") return skSearch(src, q);
+  if (k === "mk") return mkSearch(src, q);
+  if (k === "as") return asSearch(src, q);
+  return madaraSearch(src, q);
+}
+async function novelHome(src) {
+  const k = KIND_OF[src];
+  if (k === "sk") return skHome(src);
+  if (k === "mk") return mkHome(src);
+  if (k === "as") return asHome(src);
+  return madaraHome(src);
+}
+async function novelDetail(src, slug) {
+  const k = KIND_OF[src];
+  if (k === "sk") return skDetail(src, slug);
+  if (k === "mk") return mkDetail(src, slug);
+  if (k === "as") return asDetail(src, slug);
+  return madaraDetail(src, slug);
+}
+async function novelChapter(src, slug, capId) {
+  const k = KIND_OF[src];
+  if (k === "sk") return skChapter(src, slug, capId);
+  if (k === "mk") return mkChapter(src, slug, capId);
+  if (k === "as") return asChapter(src, slug, capId);
+  return madaraChapter(src, slug, capId);
+}
+
 // src/themes.js
 var THEMES = [
   { id: "zonatmo-naranja", name: { es: "ZonaTMO Naranja", en: "ZonaTMO Orange" } },
@@ -782,7 +1329,9 @@ var THEMES = [
 ];
 
 // src/screen.js
-var adapter2 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : manhwa_exports;
+var nvAd = { search: novelSearch, list: null, latest: null, detail: novelDetail, chapter: novelChapter };
+var adapter2 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : SOURCES[src].kind === "manhwa" ? manhwa_exports : nvAd;
+var isNovel = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
 var hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 function card(src, slug, title, poster) {
   return {
@@ -873,23 +1422,39 @@ async function readProgress(mr) {
   const d = all[mr];
   return d && d.cr ? { cr: d.cr, n: d.n || "" } : null;
 }
-function rowSpecs() {
-  return [
-    { id: "zt-new", src: "zt", title: "ZonaTMO · Actualizados", titleEn: "ZonaTMO · Updated", params: { page: 1, order: "new", postsPerPage: 12 }, pop: "zt:new" },
-    { id: "zt-pop", src: "zt", title: "ZonaTMO · Lo más visto", titleEn: "ZonaTMO · Most read", params: { tops: true, page: 1, postsPerPage: 12 }, pop: "zt:pop" },
-    { id: "ms-new", src: "ms", title: "ManhwaSS · Últimas actualizaciones", titleEn: "ManhwaSS · Latest", params: { latest: true }, pop: "ms:latest" },
-    { id: "ms-emi", src: "ms", title: "ManhwaSS · En emisión", titleEn: "ManhwaSS · Ongoing", params: { page: 1, estado: "on-going" }, pop: "ms:on-going" },
-    { id: "zt-top", src: "zt", title: "ZonaTMO · Mejor valorados", titleEn: "ZonaTMO · Top rated", params: { page: 1, order: "score", postsPerPage: 12 }, pop: "zt:score" },
-    { id: "ms-end", src: "ms", title: "ManhwaSS · Completados", titleEn: "ManhwaSS · Completed", params: { page: 1, estado: "end" }, pop: "ms:end" }
+function tabSpecs(src) {
+  if (src === "zt" || src === "zo") return [
+    { id: src + "-new", src, title: SOURCES[src].name + " · Actualizados", titleEn: SOURCES[src].name + " · Updated", params: { page: 1, order: "new", postsPerPage: 12 } },
+    { id: src + "-pop", src, title: SOURCES[src].name + " · Lo más visto", titleEn: SOURCES[src].name + " · Most read", params: { tops: true, page: 1, postsPerPage: 12 } },
+    { id: src + "-top", src, title: SOURCES[src].name + " · Mejor valorados", titleEn: SOURCES[src].name + " · Top rated", params: { page: 1, order: "score", postsPerPage: 12 } }
   ];
+  if (src === "ms" || src === "mh") return [
+    { id: src + "-new", src, title: SOURCES[src].name + " · Últimas actualizaciones", titleEn: SOURCES[src].name + " · Latest", params: { latest: true } },
+    { id: src + "-emi", src, title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
+    { id: src + "-end", src, title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } }
+  ];
+  return [];
 }
-function rowsFromCache() {
-  const rows = [];
-  for (const spec of rowSpecs()) {
-    const items = cacheGet(cacheKey("rows", spec.id), TTL.rows);
-    if (items && items.length) rows.push({ id: spec.id, title: spec.title, titleEn: spec.titleEn, items });
+async function loadHomeShelves(src) {
+  try {
+    const ck = cacheKey("home", src);
+    const cached = cacheGet(ck, TTL.rows);
+    if (cached && cached.length) return cached;
+    let shelves;
+    if (isNovel(src)) {
+      const raw = await novelHome(src);
+      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
+    } else {
+      const specs = tabSpecs(src);
+      const settled = await Promise.allSettled(specs.map(fetchOneRow));
+      shelves = [];
+      for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
+    }
+    if (shelves.length) cacheSet(ck, shelves);
+    return shelves;
+  } catch {
+    return [];
   }
-  return rows;
 }
 async function fetchOneRow(spec) {
   const a = adapter2(spec.src);
@@ -900,12 +1465,6 @@ async function fetchOneRow(spec) {
   const items = res.items.slice(0, 12).map(compactCard);
   if (items.length) cacheSet(cacheKey("rows", spec.id), items);
   return { id: spec.id, title: spec.title, titleEn: spec.titleEn, ref: spec.pop, items };
-}
-async function fetchRows() {
-  const settled = await Promise.allSettled(rowSpecs().map(fetchOneRow));
-  const rows = [];
-  for (const r of settled) if (r.status === "fulfilled" && r.value.items.length) rows.push(r.value);
-  return rows;
 }
 async function progressEntries() {
   const out = [];
@@ -980,6 +1539,32 @@ async function loadChapter(ref, args, { skipCache = false } = {}) {
   if (!skipCache) {
     const cached = cacheGet(cacheKey("ch", ref), TTL.chapter);
     if (cached && cached.pages && cached.pages.length) return withChapterMeta(cached, args);
+    if (cached && cached.text && cached.text.length) return withChapterMeta(cached, args);
+  }
+  if (isNovel(p.src)) {
+    const c2 = await novelChapter(p.src, p.a, p.b);
+    const data2 = {
+      ref,
+      src: p.src,
+      mangaSlug: p.a,
+      mr: mangaRef(p.src, p.a),
+      text: c2.text,
+      imgs: c2.imgs,
+      number: c2.number,
+      title: c2.title,
+      direction: c2.direction,
+      prev: c2.prev ? chapterRef(p.src, p.a, c2.prev) : null,
+      next: c2.next ? chapterRef(p.src, p.a, c2.next) : null,
+      total: c2.text.length,
+      mode: "texto"
+    };
+    cacheSet(cacheKey("ch", ref), data2);
+    const fin = withChapterMeta(data2, args);
+    try {
+      saveProgress(fin.mr, ref, { number: fin.number, total: 1, mTitle: fin.mTitle, mPoster: fin.mPoster }, 1, 1);
+    } catch {
+    }
+    return fin;
   }
   const a = adapter2(p.src);
   const c = await a.chapter(p.src, p.a, p.b);
@@ -1019,6 +1604,7 @@ function scaffold(title, titleEn, ctx, body, opts) {
     type: "navigationBar",
     items: [
       { key: "home", icon: "home", label: "Inicio", labelEn: "Home" },
+      { key: "biblioteca", icon: "bookmark", label: "Biblioteca", labelEn: "Library" },
       { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" }
     ],
     value: o.navValue || "home",
@@ -1036,43 +1622,51 @@ function errorBox(msg, retryEvent) {
   ] };
 }
 function floatFab() {
-  return { type: "FloatingActionButton", icon: "search", labelText: "Buscar en las 4 fuentes", labelTextEn: "Search all 4 sources", onPressed: { go: { screen: { route: "buscar" } } }, fabPosition: "end" };
+  return { type: "FloatingActionButton", icon: "search", labelText: "Buscar en todas las fuentes", labelTextEn: "Search all sources", onPressed: { go: { screen: { route: "buscar" } } }, fabPosition: "end" };
 }
 function viewMain(ctx) {
   const { state } = ctx;
   const kids = [];
-  let rows = state.rows;
+  const seguir = (state.rows || []).find((r) => r.id === "seguir-screen");
+  if (seguir && seguir.items && seguir.items.length) {
+    kids.push({
+      type: "titleRail",
+      title: seguir.title || "",
+      titleEn: seguir.titleEn,
+      items: seguir.items.map((x) => ({
+        id: ("seg-" + String(x.r)).slice(0, 110).replace(/[^A-Za-z0-9._~-]/g, "_"),
+        ref: String(x.m || x.r),
+        title: x.t || "Seguir leyendo",
+        kind: "movie",
+        poster: x.p || void 0,
+        badges: x.b ? [String(x.b).slice(0, 20)] : void 0,
+        lang: "es",
+        open: { screen: { args: { r: x.r, m: x.m, t: x.t, p: x.p } } }
+      })).filter(Boolean),
+      size: "small"
+    });
+  }
+  const src = state.hsrc || "zt";
+  kids.push({ type: "Chips", key: "homeTab", value: src, options: HOME_TABS.map((k) => ({ value: k, label: SOURCES[k].name })), onChanged: "tabSrc", padding: { x: 16, y: 8 } });
+  let shelves = state.hrows;
   let loading = false;
-  if (!rows || !rows.length) {
-    rows = rowsFromCache();
-    loading = !state.done && !rows.length;
+  if (!shelves) {
+    shelves = cacheGet(cacheKey("home", src), TTL.rows) || [];
+    loading = !state.done && !shelves.length;
   }
   if (loading) {
     kids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "Skeleton", shape: "card", height: 200 },
       { type: "Skeleton", shape: "card", height: 200 }
     ] });
-  } else {
-    for (const row of rows) {
-      const isProgress = row.items && row.items.length && row.items[0].s === void 0;
-      kids.push({
-        type: "titleRail",
-        title: row.title || "",
-        titleEn: row.titleEn,
-        items: (row.items || []).map((x) => isProgress ? {
-          id: ("seg-" + String(x.r)).slice(0, 110).replace(/[^A-Za-z0-9._~-]/g, "_"),
-          ref: String(x.m || x.r),
-          title: x.t || "Seguir leyendo",
-          kind: "movie",
-          poster: x.p || void 0,
-          badges: x.b ? [String(x.b).slice(0, 20)] : void 0,
-          lang: "es",
-          open: { screen: { args: { r: x.r, m: x.m, t: x.t, p: x.p } } }
-        } : expandOne(x)).filter(Boolean),
-        size: "small"
-      });
+  } else if (shelves.length) {
+    for (const row of shelves) {
+      kids.push({ type: "titleRail", title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
     }
-    if (!rows.length) kids.push(empty("Sin filas por ahora", "No rows yet"));
+  } else if (state.error) {
+    kids.push(errorBox(state.error, "tabSrc"));
+  } else {
+    kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
   const opts = { close: true, navValue: "home" };
@@ -1081,6 +1675,43 @@ function viewMain(ctx) {
     opts.fab = floatFab();
   }
   return scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, { type: "SingleChildScrollView", onScroll: "scrMain", children: kids }, opts);
+}
+var BIB_TAGS = [
+  { k: "leyendo", t: "Leyendo", te: "Reading" },
+  { k: "porleer", t: "Por leer", te: "To read" },
+  { k: "pendiente", t: "Pendiente", te: "On hold" },
+  { k: "terminado", t: "Terminado", te: "Finished" }
+];
+function storageObj(key) {
+  try {
+    return JSON.parse(kino.storage.get(key) || "null") || {};
+  } catch {
+    return {};
+  }
+}
+var favsAll = () => storageObj("favs");
+var biblioAll = () => storageObj("biblio");
+function viewBiblioteca(ctx) {
+  const { state, lang } = ctx;
+  const en = lang === "en";
+  const kids = [];
+  kids.push({ type: "Text", text: "Mis Me Gustas", textEn: "My likes", style: "h4", padding: { x: 16, y: 8 } });
+  const favItems = Object.entries(state.favs || favsAll()).slice(-60).reverse().map(([ref, m]) => ({ s: ref, t: m.t, p: m.p })).filter((x) => x.s);
+  if (favItems.length) {
+    kids.push({ type: "titleGrid", items: favItems.map(expandOne).filter(Boolean), columns: deviceCols(ctx) });
+  } else {
+    kids.push(empty("Sin Me Gustas todavía: ponles corazón desde el detalle del manga", "No likes yet: heart them from the manga detail"));
+  }
+  kids.push({ type: "Text", text: "Etiquetados", textEn: "Tagged", style: "h4", padding: { x: 16, y: 8 } });
+  const tag = state.bibTag && state.bibTag !== "todas" ? state.bibTag : null;
+  kids.push({ type: "Chips", key: "bibTag", value: tag || "todas", options: [{ value: "todas", label: en ? "All" : "Todas" }].concat(BIB_TAGS.map((t) => ({ value: t.k, label: t.t }))), onChanged: "bibTagF", padding: { x: 16, y: 8 } });
+  const bibItems = Object.entries(state.biblio || biblioAll()).filter(([, m]) => !tag || m.tag === tag).slice(-120).reverse().map(([ref, m]) => ({ s: ref, t: m.t, p: m.p })).filter((x) => x.s);
+  if (bibItems.length) {
+    kids.push({ type: "titleGrid", items: bibItems.map(expandOne).filter(Boolean), columns: deviceCols(ctx) });
+  } else {
+    kids.push(empty(tag ? "Nada con esa etiqueta" : "Nada etiquetado todavía", tag ? "Nothing with that tag" : "Nothing tagged yet"));
+  }
+  return scaffold("Biblioteca", "Library", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "biblioteca", bottomBar: true });
 }
 function viewBuscar(ctx) {
   const { state, lang } = ctx;
@@ -1105,6 +1736,15 @@ function viewBuscar(ctx) {
     if (!n) kids.push(empty('Sin resultados para "' + q.slice(0, 40) + '"', 'No results for "' + q.slice(0, 40) + '"'));
   }
   return scaffold("Buscar", "Search", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home", bottomBar: true });
+}
+function siteUrlOf(src, slug) {
+  const kind = SOURCES[src] && SOURCES[src].kind;
+  const e = encodeURIComponent(String(slug || ""));
+  if (kind === "skynovels") return "https://www.skynovels.net/novelas/" + e;
+  if (kind === "matchanovels") return "https://matchanovels.com/novela/" + e;
+  if (kind === "astral") return "https://astralnovelstranslations.wordpress.com/category/" + e + "/";
+  if (kind === "madara") return SOURCES[src].host + "/novela/" + e + "/";
+  return SOURCES[src].host + "/manga/" + e + "/";
 }
 function deviceCols(ctx) {
   const c = ctx.size && ctx.size.widthClass;
@@ -1168,7 +1808,10 @@ function viewDetalle(ctx) {
     actions.push({ type: "Button", variant: "secondary", labelText: "Primero (" + first.n + ")", labelTextEn: "First (" + first.n + ")", onPressed: { event: "cap", arg: first.r }, span: 6, fill: true });
     actions.push({ type: "Button", variant: "secondary", labelText: "Último (" + last.n + ")", labelTextEn: "Last (" + last.n + ")", onPressed: { event: "cap", arg: last.r }, span: 6, fill: true });
   }
-  const siteUrl = (SOURCES[d.src] ? SOURCES[d.src].host : "") + "/manga/" + encodeURIComponent(d.slug) + "/";
+  const siteUrl = siteUrlOf(d.src, d.slug);
+  const favOn = state.fav != null ? Boolean(state.fav) : Boolean(favsAll()[state.detailRef]);
+  const tagCur = state.bibTagCur !== void 0 ? state.bibTagCur : (biblioAll()[state.detailRef] || {}).tag || null;
+  const bibOpen = Boolean(state.bibOpen) || Boolean(tagCur);
   const shown = state.chShow || 60;
   const ocultar = Boolean(kino.config.get("ocultarPago") === true || kino.config.get("ocultarPago") === "true");
   const conPago = d.chapters.filter((c) => c.pago);
@@ -1189,6 +1832,20 @@ function viewDetalle(ctx) {
   const kids = [
     { type: "Card", key: "tarjeta", children: [header] },
     ...actions.length ? [{ type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: actions }] : [],
+    { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: [
+      { type: "Button", variant: "secondary", icon: "heart", labelText: favOn ? "Te gusta" : "Me Gusta", labelTextEn: favOn ? "Liked" : "Like", onPressed: { event: "fav" }, span: 6, fill: true },
+      { type: "Button", variant: "secondary", icon: "bookmark", labelText: "Agregar a Biblioteca", labelTextEn: "Add to Library", onPressed: { event: "bibOpen" }, span: 6, fill: true }
+    ] },
+    bibOpen ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: BIB_TAGS.map((t) => ({
+      type: "Button",
+      variant: t.k === tagCur ? "primary" : "secondary",
+      icon: t.k === tagCur ? "check" : void 0,
+      labelText: t.t,
+      labelTextEn: t.te,
+      onPressed: { event: "biblio", arg: t.k },
+      span: 3,
+      fill: true
+    })).concat(tagCur ? [{ type: "TextButton", icon: "close", labelText: "Quitar etiqueta", labelTextEn: "Remove tag", onPressed: { event: "biblio", arg: "quitar" }, span: 12, fill: true }] : []) } : null,
     { type: "Button", variant: "secondary", icon: "language", labelText: "Abrir en el navegador", labelTextEn: "Open in browser", onPressed: { go: { url: { href: siteUrl, title: String(d.title).slice(0, 60) } } }, fill: true, padding: { x: 16, y: 4 } },
     descNode(d.overview, state, en),
     ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) de pago oculto(s) (ajustable en Ajustes).", textEn: conPago.length + " paid chapter(s) hidden (toggle in Settings).", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
@@ -1204,13 +1861,23 @@ function viewLeer(ctx) {
   const c = state.chapter;
   if (state.busyChapter && !c) return scaffold("Capítulo", "Chapter", ctx, { type: "Column", padding: 16, children: [{ type: "Skeleton", shape: "card", width: 400, height: 300 }] });
   if (!c) return scaffold("Capítulo", "Chapter", ctx, errorBox(state.error || "Faltan datos"));
+  const enL = ctx.lang === "en";
   const nav = [
     c.prev ? { type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous", onPressed: { event: "nav", arg: c.prev }, span: 4, fill: true } : { type: "SizedBox", width: 16 },
-    { type: "Text", text: "Cap. " + c.number + "  ·  " + c.total + " pág.", textEn: "Ch. " + c.number + "  ·  " + c.total + " p.", style: "body", color: "muted", padding: 8 },
+    { type: "Text", text: c.text ? "Cap. " + c.number + "  ·  novela" : "Cap. " + c.number + "  ·  " + c.total + " pág.", textEn: c.text ? "Ch. " + c.number + "  ·  novel" : "Ch. " + c.number + "  ·  " + c.total + " p.", style: "body", color: "muted", padding: 8 },
     c.next ? { type: "Button", variant: "secondary", icon: "arrow_forward", labelText: "Siguiente", labelTextEn: "Next", onPressed: { event: "nav", arg: c.next }, span: 4, fill: true } : { type: "SizedBox", width: 16 }
   ];
   const kids = [];
-  if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= 8) {
+  if (c.text && c.text.length) {
+    const bloques = [];
+    if (c.imgs && c.imgs.length) {
+      for (const u of c.imgs) bloques.push({ type: "Image", url: u, aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 6 } });
+    }
+    bloques.push({ type: "Text", text: c.title || "Capítulo " + c.number, style: "h4", padding: { x: 16, y: 8 } });
+    for (const par of c.text.slice(0, 400)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
+    kids.push({ type: "SingleChildScrollView", key: "novela", children: [{ type: "Column", crossAxisAlignment: "stretch", children: bloques }] });
+    kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
+  } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= 8) {
     kids.push({
       type: "pages",
       key: "manga-pages",
@@ -1263,6 +1930,8 @@ async function screen(ctx) {
   switch (route) {
     case "buscar":
       return viewBuscar(ctx);
+    case "biblioteca":
+      return viewBiblioteca(ctx);
     case "detalle":
       return viewDetalle(ctx);
     case "leer":
@@ -1294,8 +1963,58 @@ async function screenEvent(ctx) {
         if (here === "main") return { state: { hideBar: false, lastPos: 0 } };
         return { route: { pop: true } };
       }
+      if (key === "biblioteca") return here === "biblioteca" ? null : { route: { push: "biblioteca" } };
       if (key === "ajustes") return here === "ajustes" ? null : { route: { push: "ajustes" } };
       return null;
+    }
+    case "tabSrc": {
+      const src = String(arg || value || "zt");
+      if (!SOURCES[src]) return null;
+      const cached = cacheGet(cacheKey("home", src), TTL.rows);
+      if (cached && cached.length) return { state: { hsrc: src, hrows: cached } };
+      const shelves = await loadHomeShelves(src);
+      return { state: { hsrc: src, hrows: shelves, error: null, done: true } };
+    }
+    case "bibTagF": {
+      return { state: { bibTag: String(arg || value || "todas") } };
+    }
+    case "fav": {
+      if (!(state && state.detail) || !state.detailRef) return null;
+      const d = state.detail;
+      const favs = favsAll();
+      const ya = Boolean(favs[state.detailRef]);
+      if (ya) delete favs[state.detailRef];
+      else favs[state.detailRef] = { s: d.src, t: String(d.title).slice(0, 180), p: d.poster || void 0, at: Date.now() };
+      try {
+        kino.storage.set("favs", JSON.stringify(favs));
+      } catch {
+      }
+      return { state: { favs, fav: !ya, note: null }, toast: ya ? en ? "Removed from your likes" : "Quitado de Mis Me Gustas" : en ? "Added to your likes" : "Añadido a Mis Me Gustas" };
+    }
+    case "bibOpen": {
+      return { state: { bibOpen: !(state && state.bibOpen) } };
+    }
+    case "biblio": {
+      if (!(state && state.detail) || !state.detailRef) return null;
+      const tag = String(arg || value || "");
+      const d = state.detail;
+      const biblio = biblioAll();
+      if (tag === "quitar") {
+        delete biblio[state.detailRef];
+        try {
+          kino.storage.set("biblio", JSON.stringify(biblio));
+        } catch {
+        }
+        return { state: { biblio, bibTagCur: null }, toast: en ? "Tag removed" : "Etiqueta quitada" };
+      }
+      const meta = BIB_TAGS.find((t) => t.k === tag);
+      if (!meta) return null;
+      biblio[state.detailRef] = { tag, s: d.src, t: String(d.title).slice(0, 180), p: d.poster || void 0, at: Date.now() };
+      try {
+        kino.storage.set("biblio", JSON.stringify(biblio));
+      } catch {
+      }
+      return { state: { biblio, bibTagCur: tag, bibOpen: false }, toast: en ? "Tagged: " + meta.te : "Etiquetado: " + meta.t };
     }
     case "scrMain": {
       const pos = Math.max(0, Math.min(1, Number(value) || 0));
@@ -1430,7 +2149,7 @@ async function handleOpen(ctx) {
     try {
       const detail3 = await loadDetail(args.m);
       const prog = await readProgress(args.m);
-      return { route: { push: "detalle", params: { r: args.m } }, state: { detail: detail3, detailRef: args.m, prog, error: null } };
+      return { route: { push: "detalle", params: { r: args.m } }, state: { detail: detail3, detailRef: args.m, prog, error: null, fav: Boolean(favsAll()[args.m]), bibTagCur: (biblioAll()[args.m] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
@@ -1439,17 +2158,24 @@ async function handleOpen(ctx) {
     try {
       const detail3 = await loadDetail(args.r);
       const prog = await readProgress(args.r);
-      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail3, detailRef: args.r, prog, error: null } };
+      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail3, detailRef: args.r, prog, error: null, fav: Boolean(favsAll()[args.r]), bibTagCur: (biblioAll()[args.r] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
   }
   purgeDl();
-  const [rows, seguir] = await Promise.allSettled([fetchRows(), progressEntries()]);
-  const out = [];
-  if (seguir.status === "fulfilled" && seguir.value && seguir.value.length) out.push(seguir.value[0]);
-  if (rows.status === "fulfilled") out.push(...rows.value);
-  return { state: { rows: out, done: true, error: null } };
+  const tab = ctx.state && ctx.state.hsrc || "zt";
+  const [seguir, shelves] = await Promise.allSettled([progressEntries(), loadHomeShelves(tab)]);
+  const out = seguir.status === "fulfilled" && seguir.value && seguir.value.length ? seguir.value : [];
+  return {
+    state: {
+      rows: out,
+      done: true,
+      error: null,
+      hsrc: tab,
+      hrows: shelves.status === "fulfilled" ? shelves.value : []
+    }
+  };
 }
 
 // src/action.js
