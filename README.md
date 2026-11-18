@@ -100,5 +100,4 @@ Firma de nuevo después de cualquier cambio en `plugin.js` o en `version`: `vali
 - **ZonaTMO** (`zonatmo.js`): API JSON propia del sitio (`/wp-api/api/...`): `listing/manga` con `orderBy`/`search`/`genres`, `tops/views/yesterday`, `single/manga/{slug}`, `single/manga/{slug}/chapters`, `single/manga/{slug}/{capitulo}` (el `jit` de cada capítulo arma la ruta de página en `cdn.zonatmo.to`). Las imágenes no piden Referer.
 - **ManhwaShot** (`manhwa.js`): búsqueda JSON (`/api/search/?q=`) y el resto del HTML renderizado del sitio Next.js (tarjetas `.s-card`, capítulos `.ch-row`, imágenes del lector `img/WP-manga/`). Tiene un parser de respaldo por regex para entornos sin el selector HTML de Kino (el kit de Node).
 
-Si un sitio cambia su interfaz, el primer lugar que hay que revisar son esas rutas y selectore
-s.
+Si un sitio cambia su interfaz, el primer lugar que hay que revisar son esas rutas y selectores.
