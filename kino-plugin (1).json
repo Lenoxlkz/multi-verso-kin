@@ -1,0 +1,280 @@
+{
+  "id": "multi-verso-kin",
+  "name": "Multi-verso Kin",
+  "version": "2.3.0",
+  "apiVersion": 18,
+  "entry": "plugin.js",
+  "description": "Manga y manhwa en español de 4 fuentes: ZonaTMO (net y org) y ManhwaShot (ss y hot). Lector propio, búsqueda global, seguir leyendo y lectura sin conexión.",
+  "author": "Lenoxlkz",
+  "homepage": "https://github.com/Lenoxlkz/multi-verso-kin",
+  "hosts": [
+    "zonatmo.net",
+    "*.zonatmo.net",
+    "zonatmo.org",
+    "*.zonatmo.org",
+    "manhwass.lat",
+    "*.manhwass.lat",
+    "manhwashot.lat",
+    "*.manhwashot.lat",
+    "cdn.zonatmo.to",
+    "*.cdn.zonatmo.to"
+  ],
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "screen",
+    "storageLarge"
+  ],
+  "catalogOnly": true,
+  "visualBrowser": true,
+  "categories": [
+    "manga"
+  ],
+  "color": "#7C5CFF",
+  "icon": "icon.png",
+  "screen": {
+    "label": "Multi-verso",
+    "labelEn": "Multi-verse",
+    "icon": "magic",
+    "menuOpens": "both",
+    "opensFrom": [
+      "menu",
+      "settings"
+    ],
+    "settingsButton": {
+      "label": "Abrir Multi-verso",
+      "labelEn": "Open Multi-verse"
+    },
+    "settingsIn": "both"
+  },
+  "section": {
+    "label": "Multi-verso",
+    "labelEn": "Multi-verse"
+  },
+  "settings": [
+    {
+      "key": "cuentas",
+      "label": "Cuentas",
+      "labelEn": "Accounts",
+      "type": "status"
+    },
+    {
+      "key": "zt_user",
+      "label": "Correo de ZonaTMO",
+      "labelEn": "ZonaTMO email",
+      "type": "text",
+      "hint": "Opcional: solo si tienes cuenta",
+      "hintEn": "Optional: only if you have an account"
+    },
+    {
+      "key": "zt_pass",
+      "label": "Contraseña de ZonaTMO",
+      "labelEn": "ZonaTMO password",
+      "type": "password"
+    },
+    {
+      "key": "zt_token",
+      "label": "Token de ZonaTMO",
+      "labelEn": "ZonaTMO token",
+      "type": "password",
+      "hint": "Lo escribe «Entrar con ventana»",
+      "hintEn": "Written by \"Sign in with a window\""
+    },
+    {
+      "key": "ms_user",
+      "label": "Usuario o correo de Manhwa",
+      "labelEn": "Manhwa user or email",
+      "type": "text",
+      "hint": "Opcional: solo si tienes cuenta",
+      "hintEn": "Optional: only if you have an account"
+    },
+    {
+      "key": "ms_pass",
+      "label": "Contraseña de Manhwa",
+      "labelEn": "Manhwa password",
+      "type": "password"
+    },
+    {
+      "key": "ms_cookie",
+      "label": "Cookies de Manhwa",
+      "labelEn": "Manhwa cookies",
+      "type": "password",
+      "hint": "Las escribe «Entrar con ventana»",
+      "hintEn": "Written by \"Sign in with a window\""
+    },
+    {
+      "key": "win_zt",
+      "label": "Entrar con ventana (ZonaTMO)",
+      "labelEn": "Sign in with a window (ZonaTMO)",
+      "type": "action"
+    },
+    {
+      "key": "log_zt",
+      "label": "Entrar con correo y contraseña (ZonaTMO)",
+      "labelEn": "Email sign-in (ZonaTMO)",
+      "type": "action"
+    },
+    {
+      "key": "win_ms",
+      "label": "Entrar con ventana (Manhwa)",
+      "labelEn": "Sign in with a window (Manhwa)",
+      "type": "action"
+    },
+    {
+      "key": "log_ms",
+      "label": "Entrar con usuario y contraseña (Manhwa)",
+      "labelEn": "User sign-in (Manhwa)",
+      "type": "action"
+    },
+    {
+      "key": "salir",
+      "label": "Salir de las cuentas",
+      "labelEn": "Sign out",
+      "type": "action",
+      "clearSettings": [
+        "zt_user",
+        "zt_pass",
+        "zt_token",
+        "ms_user",
+        "ms_pass",
+        "ms_cookie"
+      ],
+      "confirm": "¿Borrar los datos de las cuentas guardadas en este plugin?",
+      "confirmEn": "Erase the account data stored in this plugin?"
+    },
+    {
+      "key": "ocultarPago",
+      "type": "toggle",
+      "label": "Ocultar capítulos de pago",
+      "labelEn": "Hide paid chapters",
+      "hint": "Oculta los capítulos marcados como premium en las fuentes.",
+      "hintEn": "Hides chapters flagged as premium in the sources."
+    }
+  ],
+  "appThemes": [
+    {
+      "id": "zonatmo-naranja",
+      "name": {
+        "es": "ZonaTMO Naranja",
+        "en": "ZonaTMO Orange"
+      },
+      "colors": {
+        "accent": "#FF8A3D",
+        "onAccent": "#1A0E05",
+        "background": "#13100C",
+        "surface": "#1E1913",
+        "surfaceHigh": "#2A231B"
+      }
+    },
+    {
+      "id": "manhwa-violeta",
+      "name": {
+        "es": "Manhwa Violeta",
+        "en": "Manhwa Violet"
+      },
+      "colors": {
+        "accent": "#A78BFA",
+        "onAccent": "#140F24",
+        "background": "#100E17",
+        "surface": "#181526",
+        "surfaceHigh": "#221E33"
+      }
+    },
+    {
+      "id": "manhwa-esmeralda",
+      "name": {
+        "es": "Manhwa Esmeralda",
+        "en": "Manhwa Emerald"
+      },
+      "colors": {
+        "accent": "#4ADE80",
+        "onAccent": "#07160C",
+        "background": "#0C1310",
+        "surface": "#14201B",
+        "surfaceHigh": "#1D2C25"
+      }
+    },
+    {
+      "id": "indigo-electrico",
+      "name": {
+        "es": "Índigo Eléctrico",
+        "en": "Electric Indigo"
+      },
+      "colors": {
+        "accent": "#818CF8",
+        "onAccent": "#0D0F26",
+        "background": "#0C0D18",
+        "surface": "#141627",
+        "surfaceHigh": "#1D2035"
+      }
+    },
+    {
+      "id": "cian-profundo",
+      "name": {
+        "es": "Cian Profundo",
+        "en": "Deep Cyan"
+      },
+      "colors": {
+        "accent": "#38BDF8",
+        "onAccent": "#05121C",
+        "background": "#0A1218",
+        "surface": "#121E26",
+        "surfaceHigh": "#1A2A34"
+      }
+    },
+    {
+      "id": "rosa-neon",
+      "name": {
+        "es": "Rosa Neón",
+        "en": "Neon Pink"
+      },
+      "colors": {
+        "accent": "#F472B6",
+        "onAccent": "#1F0A16",
+        "background": "#14090F",
+        "surface": "#1E1118",
+        "surfaceHigh": "#2A1922"
+      }
+    },
+    {
+      "id": "lima-solar",
+      "name": {
+        "es": "Lima Solar",
+        "en": "Solar Lime"
+      },
+      "colors": {
+        "accent": "#A3E635",
+        "onAccent": "#131A05",
+        "background": "#10140A",
+        "surface": "#171D10",
+        "surfaceHigh": "#202917"
+      }
+    },
+    {
+      "id": "amoled-black",
+      "name": {
+        "es": "Modo Oscuro AMOLED",
+        "en": "AMOLED Black"
+      },
+      "colors": {
+        "accent": "#7C4DFF",
+        "onAccent": "#FFFFFF",
+        "background": "#000000",
+        "surface": "#000000",
+        "surfaceHigh": "#0A0A0A"
+      }
+    }
+  ],
+  "enhancements": {
+    "22": {
+      "capabilities": [
+        "progress"
+      ]
+    }
+  },
+  "signature": {
+    "authorKey": "b0bc4e128df02f948d02cd452328983c10a7834a4b824cd6dfb9276b52330544",
+    "value": "df0a892d46b30608fbea7aa2eff5d753cc0552c36f0d601f03dc0d3e6b08a11b6c94c4d3c577591a62523b23e36975e902fbbdc7eb6521e1c86902aadc31ec0f"
+  }
+}
