@@ -24,6 +24,15 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.2
+
+- **La descarga de capítulos se retiró por completo** (motor, cola, tics, ruta y botones): no era sostenible con los límites de la plataforma (2 MB por árbol, cuota de storage). Al abrir el plugin se purgan los restos viejos de storage y se libera la cuota. Queda «Leer archivos locales» (carpetas o imágenes del aparato) en la portada y en Ajustes.
+- **Lector en inmersión**: sin barra de navegación; conserva anterior/siguiente y el capítulo actual, y añade el botón «Salir del capítulo» para volver al detalle.
+- **Tema «Modo Oscuro AMOLED»** (negro puro) entre los 8 temas (se retiró «ZonaTMO Ámbar», casi idéntico a Naranja: la plataforma limita a 8).
+- **Descripciones con «Ver más»/«Ver menos»** cuando la sinopsis es larga.
+- **Capítulos de pago**: detección por texto/clase de la fila (candado en la lista), aviso de cuántos hay, apertura normal (si tu cuenta premium de la fuente da acceso funciona) y ajuste «Ocultar capítulos de pago» para esconderlos. Hoy ninguna fuente publica el marcado de forma fiable: es mejor esfuerzo y se activará solo cuando una fuente lo marque.
+- **Cero trabajo de fondo**: sin temporizadores, cada toque se atiende al instante.
+
 ## Novedades v2.1
 
 - **Descargas que no estorban**: el motor baja unas páginas por turno (tics de 1-3 s) en cualquier ruta del plugin, no solo en Descargas; los toques nunca esperan un capítulo entero. Página lenta = reintento (hasta 3), ya no mata la descarga ni el temporizador.

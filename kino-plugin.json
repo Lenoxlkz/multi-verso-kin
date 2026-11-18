@@ -1,7 +1,7 @@
 {
   "id": "multi-verso-kin",
   "name": "Multi-verso Kin",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "apiVersion": 18,
   "entry": "plugin.js",
   "description": "Manga y manhwa en español de 4 fuentes: ZonaTMO (net y org) y ManhwaShot (ss y hot). Lector propio, búsqueda global, seguir leyendo y lectura sin conexión.",
@@ -46,13 +46,7 @@
       "label": "Abrir Multi-verso",
       "labelEn": "Open Multi-verse"
     },
-    "settingsIn": "both",
-    "every": [
-      {
-        "ms": 1000,
-        "event": "tickDescarga"
-      }
-    ]
+    "settingsIn": "both"
   },
   "section": {
     "label": "Multi-verso",
@@ -148,6 +142,14 @@
       ],
       "confirm": "¿Borrar los datos de las cuentas guardadas en este plugin?",
       "confirmEn": "Erase the account data stored in this plugin?"
+    },
+    {
+      "key": "ocultarPago",
+      "type": "toggle",
+      "label": "Ocultar capítulos de pago",
+      "labelEn": "Hide paid chapters",
+      "hint": "Oculta los capítulos marcados como premium en las fuentes.",
+      "hintEn": "Hides chapters flagged as premium in the sources."
     }
   ],
   "appThemes": [
@@ -163,20 +165,6 @@
         "background": "#13100C",
         "surface": "#1E1913",
         "surfaceHigh": "#2A231B"
-      }
-    },
-    {
-      "id": "zonatmo-ambar",
-      "name": {
-        "es": "ZonaTMO Ámbar",
-        "en": "ZonaTMO Amber"
-      },
-      "colors": {
-        "accent": "#F2B33D",
-        "onAccent": "#201605",
-        "background": "#12110D",
-        "surface": "#1D1B14",
-        "surfaceHigh": "#29261C"
       }
     },
     {
@@ -262,6 +250,20 @@
         "surface": "#171D10",
         "surfaceHigh": "#202917"
       }
+    },
+    {
+      "id": "amoled-black",
+      "name": {
+        "es": "Modo Oscuro AMOLED",
+        "en": "AMOLED Black"
+      },
+      "colors": {
+        "accent": "#7C4DFF",
+        "onAccent": "#FFFFFF",
+        "background": "#000000",
+        "surface": "#000000",
+        "surfaceHigh": "#0A0A0A"
+      }
     }
   ],
   "enhancements": {
@@ -278,6 +280,6 @@
   },
   "signature": {
     "authorKey": "b0bc4e128df02f948d02cd452328983c10a7834a4b824cd6dfb9276b52330544",
-    "value": "d3e1762ad89f7b43155672915bc05a7bac3a5c2fb791caa6d6f5e6be4af6cc2ba3d941f277731812140b9643ea190dc593ea73545e7bdc37cf41225be4de5a0d"
+    "value": "c52bf5281dba1802f6ebcc5177a5d7670b15338f8d87b226db57fbd38707c7f00901436575c7f84c94b465f660afa03c451383d905f72c5d89a8b1d28cab4a05"
   }
 }
