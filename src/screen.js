@@ -17,13 +17,12 @@ import { SOURCES, parseRef, mangaRef, chapterRef, cacheKey, cacheGet, cacheSet, 
 import * as zt from "./zonatmo.js";
 import * as ms from "./manhwa.js";
 import { THEMES } from "./themes.js";
-import * as dl from "./downloads.js";
 
 const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : ms);
 const hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 const hasFiles = () => typeof kino.files === "object" && kino.files && typeof kino.files.pick === "function";
 const hasConvert = () => typeof kino.crypto === "object" && kino.crypto && typeof kino.crypto.convert === "function";
-const BATCHES = [5, 10, 20, 30];
+
 
 // ---------- utilidades de estado compacto ----------
 
@@ -222,7 +221,7 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     demography: d.demographyName,
     score: d.score,
     total: d.totalChapters,
-    chapters: chapters.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title })),
+    chapters: chapters.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title, pago: Boolean(c.pago) })),
     next,
     adult: d.adult,
   };
@@ -282,7 +281,6 @@ function scaffold(title, titleEn, ctx, body, opts) {
     items: [
       { key: "home", icon: "home", label: "Inicio", labelEn: "Home" },
       { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" },
-      { key: "descargas", icon: "download", label: "Descargas", labelEn: "Downloads" },
     ],
     value: o.navValue || "home",
     onChanged: "navBar",
@@ -299,17 +297,6 @@ function errorBox(msg, retryEvent) {
     { type: "errorState", icon: "error", title: "Algo falló", titleEn: "Something failed", text: String(msg).slice(0, 300) },
     { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: retryEvent || "reintentar" } },
   ] };
-}
-
-/** La barra flotante inferior: Ajustes y Descargas juntas. */
-function floatBar() {
-  return {
-    type: "Card", margin: { x: 12, y: 8 },
-    children: [{ type: "Row", gap: 8, padding: { x: 8, y: 4 }, children: [
-      { type: "Button", variant: "secondary", icon: "settings", labelText: "Ajustes", labelTextEn: "Settings", onPressed: { go: { screen: { route: "ajustes" } } }, fill: true, span: 6 },
-      { type: "Button", variant: "secondary", icon: "download", labelText: "Descargas", labelTextEn: "Downloads", onPressed: { go: { screen: { route: "descargas" } } }, fill: true, span: 6 },
-    ] }],
-  };
 }
 
 /** El botón flotante de búsqueda, independiente, a la derecha. */
@@ -355,6 +342,7 @@ function viewMain(ctx) {
     }
     if (!rows.length) kids.push(empty("Sin filas por ahora", "No rows yet"));
   }
+  kids.push({ type: "Button", variant: "secondary", icon: "upload", labelText: "Leer archivos locales (sin conexión)", labelTextEn: "Read local files (offline)", onPressed: { go: { screen: { route: "offline" } } }, fill: true, padding: { x: 16, y: 8 } });
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
   const opts = { close: true, navValue: "home" };
   if (!state.hideBar) { opts.bottomBar = true; opts.fab = floatFab(); }
@@ -395,17 +383,29 @@ function deviceCols(ctx) {
 
 // ---------- vista: detalle ----------
 
-function dlBadgeOf(cr, dlS) {
-  if (dl.isDownloaded(cr, dlS)) return "ok";
-  if (dl.isQueued(cr, dlS)) return "cola";
-  return null;
+const DESC_CORTA = 240;
+const DESC_LARGA = 4000;
+
+/** Descripción con «Ver más»/«Ver menos» cuando se corta. */
+function descNode(overview, state, en) {
+  if (!overview) return null;
+  const txt = String(overview);
+  const abierta = Boolean(state.descOpen);
+  if (txt.length <= DESC_CORTA) return { type: "Text", text: txt, style: "body", padding: { x: 16, y: 8 } };
+  const visto = abierta ? txt.slice(0, DESC_LARGA) + (txt.length > DESC_LARGA ? "…" : "") : txt.slice(0, DESC_CORTA).replace(/\s+\S*$/, "") + "…";
+  return {
+    type: "Column", padding: { x: 16, y: 8 }, gap: 4,
+    children: [
+      { type: "Text", text: visto, style: "body" },
+      { type: "TextButton", labelText: abierta ? (en ? "See less" : "Ver menos") : (en ? "See more" : "Ver más"), labelTextEn: abierta ? "See less" : "See more", onPressed: { event: "descToggle" } },
+    ],
+  };
 }
 
 function viewDetalle(ctx) {
   const { state, device, lang } = ctx;
   const d = state.detail;
   const en = lang === "en";
-  const dlS = dl.dlState(); // una lectura por vista
   if (state.busyDetail && !d) {
     return scaffold("Cargando", "Loading", ctx, { type: "Column", padding: 16, gap: 12, children: [
       { type: "Row", gap: 12, children: [{ type: "Skeleton", shape: "card", width: 120, height: 180 }, { type: "Column", gap: 8, flex: 1, children: [{ type: "Skeleton", shape: "line", height: 24 }, { type: "Skeleton", shape: "line", height: 16 }, { type: "Skeleton", shape: "line", height: 16 }] }] },
@@ -436,30 +436,26 @@ function viewDetalle(ctx) {
     actions.push({ type: "Button", variant: "secondary", labelText: "Primero (" + first.n + ")", labelTextEn: "First (" + first.n + ")", onPressed: { event: "cap", arg: first.r }, span: 6, fill: true });
     actions.push({ type: "Button", variant: "secondary", labelText: "Último (" + last.n + ")", labelTextEn: "Last (" + last.n + ")", onPressed: { event: "cap", arg: last.r }, span: 6, fill: true });
   }
-  const batch = state.dlBatch || 10;
-  const batchRow = d.chapters.length ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: [
-    { type: "Chips", key: "dlb", value: String(batch), options: BATCHES.map((b) => ({ value: String(b), label: String(b) })), onChanged: "dlBatch", span: 12 },
-    { type: "Button", variant: "primary", icon: "download", labelText: "Descargar lote de " + batch, labelTextEn: "Download batch of " + batch, onPressed: { event: "dlLote" }, fill: true, span: 12 },
-  ] } : null;
   const shown = (state.chShow || 60);
-  const visibles = d.chapters.slice(0, shown);
+  const ocultar = Boolean(kino.config.get("ocultarPago") === true || kino.config.get("ocultarPago") === "true");
+  const conPago = d.chapters.filter((c) => c.pago);
+  const visibles = (ocultar ? d.chapters.filter((c) => !c.pago) : d.chapters).slice(0, shown);
   const chList = visibles.map((c, i) => {
-    const badge = dlBadgeOf(c.r, dlS);
     return {
       type: "Row", key: "ch" + i, gap: 4, padding: { x: 12, y: 4 },
       children: [
         { type: "Text", text: "Cap. " + c.n + (c.t && c.t !== "Capítulo " + c.n ? " · " + String(c.t).slice(0, 28) : ""), textEn: "Ch. " + c.n, style: "body", flex: 1, onTap: { event: "cap", arg: c.r } },
-        badge === "cola" ? { type: "IconButton", icon: "schedule", labelText: "En la cola", labelTextEn: "Queued", onPressed: { event: "nada" } }
-          : { type: "IconButton", icon: badge === "ok" ? "check" : "download", labelText: badge === "ok" ? (en ? "Downloaded · tap to re-download" : "Descargado · toca para repetir") : (en ? "Download this chapter" : "Descargar este capítulo"), labelTextEn: badge === "ok" ? "Downloaded · tap to re-download" : "Download this chapter", onPressed: { event: "dlCap", arg: c.r } },
+        c.pago ? { type: "IconButton", icon: "lock", labelText: en ? "Paid chapter" : "Capítulo de pago", labelTextEn: "Paid chapter", onPressed: { event: "nada" } } : null,
         { type: "IconButton", icon: "play", labelText: "Leer", labelTextEn: "Read", onPressed: { event: "cap", arg: c.r } },
-      ],
+      ].filter(Boolean),
     };
   });
   const kids = [
     { type: "Card", key: "tarjeta", children: [header] },
     ...(actions.length ? [{ type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: actions }] : []),
-    ...(batchRow ? [batchRow] : []),
-    d.overview ? { type: "Text", text: String(d.overview).slice(0, 800), style: "body", padding: { x: 16, y: 8 } } : null,
+    descNode(d.overview, state, en),
+    ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) de pago oculto(s) (ajustable en Ajustes).", textEn: conPago.length + " paid chapter(s) hidden (toggle in Settings).", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
+    !ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) con candado requieren cuenta premium de la fuente.", textEn: conPago.length + " locked chapter(s) need a premium account on the source.", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
     d.chapters.length ? { type: "Column", children: chList } : empty("Sin capítulos listados", "No chapters listed"),
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
     d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente", labelTextEn: "Load more from source", onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null,
@@ -480,27 +476,7 @@ function viewLeer(ctx) {
     c.next ? { type: "Button", variant: "secondary", icon: "arrow_forward", labelText: "Siguiente", labelTextEn: "Next", onPressed: { event: "nav", arg: c.next }, span: 4, fill: true } : { type: "SizedBox", width: 16 },
   ];
   const kids = [];
-  if (c.offline === "dl") {
-    // Capítulo descargado: la página se lee DIRECTO de kino.storage aquí en la vista (síncrono),
-    // sin pasar por el state: así caben páginas de hasta ~150 KB (límite de Kino para data:).
-    const pg = Math.max(1, Math.min(c.total || 1, state.imgPage || 1));
-    const raw = dl.readDlPage(c, pg);
-    let pageNode;
-    if (!raw) pageNode = { type: "errorState", icon: "warning", title: "Página " + pg, titleEn: "Page " + pg, text: "No se encontró la página." };
-    else if (raw.b64.length > 190000) pageNode = { type: "errorState", icon: "warning", title: "Página " + pg, titleEn: "Page " + pg, text: "Esta página pesa más de 150 KB: es el límite de Kino para imágenes sin conexión." };
-    else pageNode = { type: "Image", url: "data:" + raw.mime + ";base64," + raw.b64, aspect: "600:2400", fit: "contain", alt: "Página " + pg, altEn: "Page " + pg };
-    kids.push({
-      type: "Column", children: [
-        { type: "Column", flex: 1, children: [pageNode] },
-        { type: "Row", wrap: true, gap: 8, padding: 12, children: [
-          { type: "Button", variant: "secondary", labelText: "◀ Página", labelTextEn: "◀ Page", onPressed: { event: "pagOff", arg: "-1" }, span: 3, fill: true },
-          { type: "Button", variant: "secondary", labelText: "Página ▶", labelTextEn: "Page ▶", onPressed: { event: "pagOff", arg: "1" }, span: 3, fill: true },
-          { type: "Text", text: pg + " / " + c.total, style: "body", color: "muted", padding: 8 },
-        ] },
-        { type: "Row", wrap: true, gap: 8, padding: 12, children: nav },
-      ],
-    });
-  } else if (c.offline === "files") {
+  if (c.offline === "files") {
     kids.push({
       type: "Column", children: [
         { type: "Column", flex: 1, children: [
@@ -539,65 +515,23 @@ function viewLeer(ctx) {
     });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   }
-  return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, { navValue: "home", bottomBar: true });
+  kids.push({ type: "TextButton", icon: "close", labelText: "Salir del capítulo", labelTextEn: "Exit chapter", onPressed: { event: "atras" }, padding: { x: 16, y: 8 } });
+  // Inmersión: en el lector no hay barra de navegación (solo fila de capítulos + salir).
+  return scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", children: kids }, {});
 }
 
-// ---------- vista: descargas ----------
+// ---------- vista: sin conexión (archivos del aparato) ----------
 
-function mb(bytes) {
-  return (bytes / 1024 / 1024).toFixed(1);
-}
-
-function viewDescargas(ctx) {
+function viewOffline(ctx) {
   const { state, lang } = ctx;
   const en = lang === "en";
-  const s = state.dl || dl.dlState();
   const kids = [];
   kids.push({
     type: "Column", padding: 16, gap: 8, children: [
-      { type: "Text", text: "Descargas para leer sin conexión", textEn: "Downloads for offline reading", style: "h4" },
-      { type: "Text", text: "Las descargas avanzan solas mientras uses el plugin, en la ruta que sea. Unas páginas por turno para no estorbar los toques.", textEn: "Downloads keep going while you use the plugin, on any route. A few pages per turn so taps stay snappy.", style: "body", color: "muted" },
-      { type: "LinearProgressIndicator", value: Math.min(1, s.bytes / dl.DL_QUOTA), labelText: mb(s.bytes) + " de " + mb(dl.DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " capítulos", labelTextEn: mb(s.bytes) + " of " + mb(dl.DL_QUOTA) + " MB · " + Object.keys(s.lista).length + " chapters" },
+      { type: "Text", text: "Leer archivos locales", textEn: "Read local files", style: "h4" },
+      { type: "Text", text: "Lee imágenes guardadas en tu aparato: carpetas o selecciones sueltas (JPEG, PNG, WebP, GIF, AVIF).", textEn: "Read images stored on your device: folders or loose picks (JPEG, PNG, WebP, GIF, AVIF).", style: "body", color: "muted" },
     ],
   });
-  const pendientes = (s.cola || []).filter((e) => e.estado !== "error");
-  const errores = (s.cola || []).filter((e) => e.estado === "error");
-  if (pendientes.length || errores.length) {
-    kids.push({ type: "Text", text: "En cola", textEn: "Queued", style: "h4", padding: { x: 16, y: 4 } });
-    kids.push({ type: "Column", children: pendientes.slice(0, 30).map((e, i) => ({
-      type: "Row", key: "q" + i, gap: 8, padding: { x: 12, y: 4 },
-      children: [
-        { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Cap. " + (e.number || "?") + (e.estado === "bajando" && e.total ? " (página " + ((e.hecho || 0) + 1) + " de " + e.total + ")" : ""), textEn: (e.mTitle ? e.mTitle.slice(0, 22) + " · " : "") + "Ch. " + (e.number || "?") + (e.estado === "bajando" && e.total ? " (page " + ((e.hecho || 0) + 1) + " of " + e.total + ")" : ""), style: "body", flex: 1 },
-        { type: "IconButton", icon: "close", labelText: "Quitar de la cola", labelTextEn: "Remove from queue", onPressed: { event: "dlQuitarCola", arg: e.cr } },
-      ],
-    })) });
-    if (errores.length) {
-      kids.push({ type: "Text", text: "Con problemas", textEn: "Failed", style: "h4", color: "error", padding: { x: 16, y: 4 } });
-      kids.push({ type: "Column", children: errores.slice(0, 10).map((e, i) => ({
-        type: "Row", key: "e" + i, gap: 8, padding: { x: 12, y: 4 },
-        children: [
-          { type: "Text", text: "Cap. " + (e.number || "?") + " · " + String(e.err || "error").slice(0, 40), textEn: "Ch. " + (e.number || "?") + " · " + String(e.err || "error").slice(0, 40), style: "body", color: "error", flex: 1 },
-          { type: "IconButton", icon: "refresh", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "dlReintentar", arg: e.cr } },
-        ],
-      })) });
-    }
-    kids.push({ type: "TextButton", labelText: "Vaciar la cola", labelTextEn: "Clear queue", onPressed: { event: "dlVaciar" }, padding: { x: 16, y: 4 } });
-  }
-  const lista = Object.entries(s.lista || {}).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
-  kids.push({ type: "Text", text: "Descargados (" + lista.length + ")", textEn: "Downloaded (" + lista.length + ")", style: "h4", padding: { x: 16, y: 8 } });
-  if (!lista.length) kids.push(empty("Todavía no descargaste nada", "Nothing downloaded yet"));
-  kids.push({ type: "Column", children: lista.slice(0, 40).map(([cr, e], i) => ({
-    type: "Row", key: "d" + i, gap: 4, padding: { x: 12, y: 4 },
-    children: [
-      { type: "Text", text: (e.mTitle ? e.mTitle.slice(0, 20) + " · " : "") + "Cap. " + (e.number || "?") + " · " + e.pages + " pág.", textEn: (e.mTitle ? e.mTitle.slice(0, 20) + " · " : "") + "Ch. " + (e.number || "?") + " · " + e.pages + " p.", style: "body", flex: 1, onTap: { event: "dlAbrir", arg: cr } },
-      { type: "IconButton", icon: "play", labelText: "Leer", labelTextEn: "Read", onPressed: { event: "dlAbrir", arg: cr } },
-      { type: "IconButton", icon: "delete", labelText: "Borrar", labelTextEn: "Delete", onPressed: { event: "dlBorrar", arg: cr } },
-    ],
-  })) });
-  const batch = state.dlBatch || 10;
-  kids.push({ type: "Text", text: "Tamaño de lote para «Descargar lote» en los títulos", textEn: "Batch size for \"Download batch\" on titles", style: "body", padding: { x: 16, y: 8 } });
-  kids.push({ type: "Chips", key: "dlb2", value: String(batch), options: BATCHES.map((b) => ({ value: String(b), label: String(b) })), onChanged: "dlBatch" });
-  kids.push({ type: "Text", text: "Archivos del aparato", textEn: "Files on this device", style: "h4", padding: { x: 16, y: 8 } });
   if (!hasFiles()) {
     kids.push({ type: "Text", text: "Tu Kino no trae la función de archivos (0.9.82+).", textEn: "Your Kino has no files feature (0.9.82+).", style: "body", color: "muted", padding: { x: 16 } });
   } else {
@@ -606,6 +540,7 @@ function viewDescargas(ctx) {
       { type: "Button", variant: "secondary", icon: "add", labelText: "Imágenes sueltas", labelTextEn: "Loose images", onPressed: { event: "pickImgs" }, span: 6, fill: true },
     ] });
     const lib = state.lib || offlineLibrary();
+    if (!lib.length) kids.push(empty("Todavía no agregaste archivos", "No files added yet"));
     lib.forEach((it, i) => {
       kids.push({
         type: "Row", key: "of" + i, gap: 4, padding: { x: 12, y: 4 },
@@ -617,7 +552,7 @@ function viewDescargas(ctx) {
       });
     });
   }
-  return scaffold("Descargas", "Downloads", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "descargas", bottomBar: true });
+  return scaffold("Sin conexión", "Offline", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home", bottomBar: true });
 }
 
 // ---------- vista: ajustes ----------
@@ -625,7 +560,8 @@ function viewDescargas(ctx) {
 function viewAjustes(ctx) {
   const kids = [
     { type: "Text", text: "Cuentas y ajustes del plugin. También están en Ajustes ▸ Plugins ▸ Multi-verso Kin.", textEn: "Accounts and plugin settings. Also in Settings ▸ Plugins ▸ Multi-verso Kin.", style: "body", padding: 16 },
-    { type: "settings", keys: ["cuentas", "zt_user", "zt_pass", "log_zt", "zt_token", "win_zt", "ms_user", "ms_pass", "log_ms", "ms_cookie", "win_ms", "salir"], onSaved: "saved" },
+    { type: "settings", keys: ["cuentas", "zt_user", "zt_pass", "log_zt", "zt_token", "win_zt", "ms_user", "ms_pass", "log_ms", "ms_cookie", "win_ms", "ocultarPago", "salir"], onSaved: "saved" },
+    { type: "Button", variant: "secondary", icon: "upload", labelText: "Leer archivos locales (sin conexión)", labelTextEn: "Read local files (offline)", onPressed: { go: { screen: { route: "offline" } } }, fill: true, padding: { x: 16, y: 8 } },
     { type: "Text", text: "Temas de la app (8)", textEn: "App themes (8)", style: "h4", padding: { x: 16, y: 8 } },
     { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: THEMES.map((t) => ({
       type: "Button", variant: "secondary", labelText: t.name.es, labelTextEn: t.name.en, onPressed: { go: { useTheme: { theme: t.id } } }, span: 6, fill: true,
@@ -643,7 +579,7 @@ export async function screen(ctx) {
     case "buscar": return viewBuscar(ctx);
     case "detalle": return viewDetalle(ctx);
     case "leer": return viewLeer(ctx);
-    case "descargas": return viewDescargas(ctx);
+    case "offline": return viewOffline(ctx);
     case "ajustes": return viewAjustes(ctx);
     case "main":
     default: return viewMain(ctx);
@@ -677,7 +613,6 @@ export async function screenEvent(ctx) {
         return { route: { pop: true } }; // volver hacia Inicio, paso a paso
       }
       if (key === "ajustes") return here === "ajustes" ? null : { route: { push: "ajustes" } };
-      if (key === "descargas") return here === "descargas" ? null : { route: { push: "descargas" } };
       return null;
     }
 
@@ -720,11 +655,15 @@ export async function screenEvent(ctx) {
       if (!d || !d.next) return null;
       try {
         const c = await adapter(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
-        const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title }));
+        const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title, pago: Boolean(x.pago) }));
         return { state: { detail: { ...d, chapters: d.chapters.concat(more).slice(0, 500), next: c.next } } };
       } catch (e) {
         return { toast: en ? "Could not load more chapters." : "No se pudieron cargar más capítulos." };
       }
+    }
+
+    case "descToggle": {
+      return { state: { descOpen: !state.descOpen } };
     }
 
     case "chMas": {
@@ -781,101 +720,6 @@ export async function screenEvent(ctx) {
 
     case "saved": {
       return { toast: en ? "Settings saved" : "Ajustes guardados" };
-    }
-
-    // ----- descargas -----
-    case "dlBatch": {
-      const b = Number(value) || 10;
-      try { kino.storage.set("dlbatch", String(BATCHES.indexOf(b) >= 0 ? b : 10)); } catch { /* sigue igual */ }
-      return { state: { dlBatch: b } };
-    }
-
-    case "dlCap": {
-      const ref = String(arg || "");
-      const d = state && state.detail;
-      const p = parseRef(ref);
-      const meta = d && p
-        ? { src: p.src, slug: p.a, number: (d.chapters.find((c) => c.r === ref) || {}).n || "", mTitle: d.title, mPoster: d.poster }
-        : null;
-      if (!meta) return { toast: en ? "Open the title first." : "Abre antes el título." };
-      if (dl.isDownloaded(ref)) dl.removeDl(ref);
-      const ok = dl.enqueue(ref, meta);
-      if (!ok) return { toast: en ? "Already queued or downloaded." : "Ya estaba en la cola o descargado." };
-      return {
-        toast: en ? "Chapter queued: watch it in Downloads." : "Capítulo en cola: míralo en Descargas.",
-        state: { dl: dl.dlState() },
-      };
-    }
-
-    case "dlLote": {
-      const d = state && state.detail;
-      if (!d || !d.chapters || !d.chapters.length) return { toast: en ? "No chapters to download." : "No hay capítulos para descargar." };
-      const batch = state.dlBatch || Number(kino.storage.get("dlbatch")) || 10;
-      const refs = [];
-      for (const c of d.chapters) {
-        if (!dl.isDownloaded(c.r) && !dl.isQueued(c.r)) refs.push(c.r);
-        if (refs.length >= batch) break;
-      }
-      if (!refs.length) return { toast: en ? "Everything is already downloaded or queued." : "Todo ya está descargado o en cola." };
-      const metaOf = (cr) => {
-        const p = parseRef(cr);
-        const c = d.chapters.find((x) => x.r === cr) || {};
-        return { src: p.src, slug: p.a, number: c.n || "", mTitle: d.title, mPoster: d.poster };
-      };
-      const n = dl.enqueueMany(refs, metaOf);
-      const desde = (d.chapters.find((x) => x.r === refs[0]) || {}).n || "?";
-      return {
-        route: { push: "descargas" },
-        state: { dl: dl.dlState(), dlBatch: batch, note: en ? n + " chapters queued (from Ch. " + desde + ")." : n + " capítulos en cola (desde el Cap. " + desde + ")." },
-      };
-    }
-
-    case "dlQuitarCola": {
-      dl.removeFromQueue(String(arg));
-      return { state: { dl: dl.dlState() } };
-    }
-
-    case "dlVaciar": {
-      dl.clearQueue();
-      return { state: { dl: dl.dlState() }, toast: en ? "Queue cleared." : "Cola vaciada." };
-    }
-
-    case "dlReintentar": {
-      const cr = String(arg || "");
-      dl.removeFromQueue(cr);
-      const p = parseRef(cr);
-      const d = state && state.detail;
-      dl.enqueue(cr, { src: p ? p.src : "", slug: p ? p.a : "", number: "", mTitle: d ? d.title : "", mPoster: d ? d.poster : "" });
-      return { state: { dl: dl.dlState() } };
-    }
-
-    case "dlBorrar": {
-      dl.removeDl(String(arg));
-      return { state: { dl: dl.dlState() }, toast: en ? "Deleted." : "Borrado." };
-    }
-
-    case "dlAbrir": {
-      const cr = String(arg || "");
-      const chapter = dl.readDlMeta(cr);
-      if (!chapter) return { toast: en ? "That download is gone." : "Esa descarga ya no está." };
-      return {
-        route: { push: "leer", params: { r: "dl:" + cr } },
-        state: { chapter, imgPage: 1, img: null, imgError: null },
-      };
-    }
-
-    case "tickDescarga": {
-      // Unas pocas páginas por tic: los toques nunca esperan más de ~2,5 s. Los tics corren
-      // mientras la pantalla del plugin esté abierta, en la ruta que sea (los declaró el manifiesto).
-      try {
-        const res = await dl.processTick();
-        if (res.nothing) return null;
-        const patch = { dl: dl.dlState() };
-        if (res.failed) return { state: patch, toast: en ? "Failed: " + String((res.entry && res.entry.err) || res.err || "").slice(0, 80) : "Falló: " + String((res.entry && res.entry.err) || res.err || "").slice(0, 80) };
-        return { state: patch };
-      } catch (e) {
-        return null; // un tic nunca debe fallar: 3 fallos y Kino apaga el temporizador
-      }
     }
 
     // ----- archivos del aparato -----
@@ -983,6 +827,18 @@ export async function screenEvent(ctx) {
 
 // ---------- apertura ----------
 
+/** La descarga de capítulos se retiró en 2.2.0: borra cualquier resto viejo para liberar la cuota. */
+function purgeDl() {
+  try {
+    const ks = kino.storage.keys() || [];
+    for (const k of ks) {
+      if (k === "descargas" || k === "dlbatch" || k.indexOf("dl:") === 0 || k.indexOf("dlMeta:") === 0) {
+        try { kino.storage.remove(k); } catch { /* sigue */ }
+      }
+    }
+  } catch { /* sin keys(): nada que purgar */ }
+}
+
 async function handleOpen(ctx) {
   const { route } = ctx;
   const args = (route && (route.args || route.params)) || null;
@@ -998,18 +854,17 @@ async function handleOpen(ctx) {
     try {
       const detail = await loadDetail(args.r);
       const prog = await readProgress(args.r);
-      const dlBatch = Number(kino.storage.get("dlbatch")) || 10;
-      return { route: { push: "detalle", params: { r: args.r } }, state: { detail, detailRef: args.r, prog, dlBatch, dl: dl.dlState(), error: null } };
+      return { route: { push: "detalle", params: { r: args.r } }, state: { detail, detailRef: args.r, prog, error: null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
   }
+  purgeDl();
   const [rows, seguir] = await Promise.allSettled([fetchRows(), progressEntries()]);
   const out = [];
   if (seguir.status === "fulfilled" && seguir.value && seguir.value.length) out.push(seguir.value[0]);
   if (rows.status === "fulfilled") out.push(...rows.value);
-  const dlBatch = Number(kino.storage.get("dlbatch")) || 10;
-  return { state: { rows: out, done: true, dlBatch, dl: dl.dlState(), error: null } };
+  return { state: { rows: out, done: true, error: null } };
 }
 
 // ---------- lectura sin conexión ----------

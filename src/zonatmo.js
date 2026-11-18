@@ -9,7 +9,7 @@
 // Las imágenes de página viven en https://cdn.zonatmo.to/manga/{jit}/{archivo} y NO piden Referer.
 // Las portadas viven en {base}/wp-content/uploads{ruta}.
 
-import { fetchJson, fetchText, join, toItem, netError, UA, ztToken, timeoutFor } from "./env.js";
+import { fetchJson, fetchText, join, toItem, netError, UA, ztToken, timeoutFor, PAGO_TEXT_RE } from "./env.js";
 
 const api = (src, path, params) => {
   const qs = params ? "?" + new URLSearchParams(params).toString() : "";
@@ -145,6 +145,7 @@ export async function chapters(src, slug, { page = 1, postsPerPage = 50, order =
     title: c.title || ("Capítulo " + c.chapter_number),
     date: c.release_date ? String(c.release_date).slice(0, 10) : undefined,
     group: c.group && c.group.name ? String(c.group.name) : undefined,
+    pago: PAGO_TEXT_RE.test(String(c.title || "") + " " + String(c.slug || "")),
   }));
   const pag = d.pagination || {};
   return { items, next: pag.has_next ? String(Number(pag.current_page || 1) + 1) : null, total: pag.total };

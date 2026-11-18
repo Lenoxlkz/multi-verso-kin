@@ -13,6 +13,11 @@ export const SOURCES = {
 // Fuentes que arman las filas del Home (las gemelas se dejan para la búsqueda y el selector de fuentes).
 export const HOME_SOURCES = ["zt", "ms"];
 
+// Marcas de capítulo de pago en las fuentes: texto del título o clases de la fila. Mejor esfuerzo:
+// hoy ninguna fuente lo publica de forma fiable; si un día lo marcan, el candado aparece solo.
+export const PAGO_TEXT_RE = /premium|\bvip\b|\bde pago\b|🔒|\bloqueado\b|\bpaid\b|\bunlock\b|\boro\b|\bcoin\b/i;
+export const PAGO_CLASS_RE = /premium|\block|\bpaid|\bvip/i;
+
 const ID_RE = /^[A-Za-z0-9._~-]{1,120}$/;
 
 /** Ref opaco de un manga: "<fuente>|m|<slug>". Es la única llave que viaja entre Kino y el plugin. */

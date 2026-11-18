@@ -9,7 +9,7 @@
 // Las imágenes NO piden Referer. La sesión vive en cookies (la ventana visible las recolecta).
 // El sitio es webtoon (vertical): el lector usa desplazamiento con zoom, no páginas volteadas.
 
-import { fetchText, fetchJson, join, toItem, netError, UA, msCookie, timeoutFor } from "./env.js";
+import { fetchText, fetchJson, join, toItem, netError, UA, msCookie, timeoutFor , PAGO_TEXT_RE, PAGO_CLASS_RE } from "./env.js";
 
 function heads() {
   const c = msCookie();
@@ -137,7 +137,7 @@ export async function detail(src, slug) {
       const m = /^\/manga\/[a-z0-9-]+\/([^/"]+)\/?$/.exec((a.attrs && a.attrs.href) || "");
       if (!m) continue;
       const label = (a.text || "").replace(/\s+/g, " ").trim();
-      chapters.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: label || ("Capítulo " + m[1].replace(/^capitulo-/, "")) });
+      chapters.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: label || ("Capítulo " + m[1].replace(/^capitulo-/, "")), pago: PAGO_TEXT_RE.test(label) || PAGO_CLASS_RE.test(String((a.attrs && a.attrs.class) || "")) });
       if (chapters.length >= 500) break;
     }
   } else {
