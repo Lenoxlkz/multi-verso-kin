@@ -197,7 +197,10 @@ export function cfCookieHead(url) {
 // viejo de DevilNovels pedía rutas inexistentes, recibía 403 y dejó el host marcado 24 h en
 // kino.storage (que sobrevive a la actualización); al cambiar la clave, Kino arranca con el
 // estado Cloudflare en blanco y el adaptador nuevo sí corre
-const CFSEEN_KEY = "cfseen2";
+// clave nueva otra vez (v2.14.0): mismo truco tras el incidente de la v2.13.0 (la extracción
+// estricta dejó el home vacío y el estado del host pudo quedar marcado en el dispositivo);
+// al actualizar, la marca vieja se ignora y la fuente arranca limpia
+const CFSEEN_KEY = "cfseen3";
 const CFSEEN_TTL = 24 * 3600 * 1000;
 
 function cfSeenLoad() {

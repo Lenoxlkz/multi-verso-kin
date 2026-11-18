@@ -92,52 +92,73 @@ function urlDeImg(tag) {
   return "";
 }
 
-/** Tarjetas de novela: el enlace COMPLETO («/<slug>» con su contenido dentro), título y portada
- *  desde el propio enlace. Nada de ventanas grandes hacia atrás: en una malla de tarjetas
- *  alcanzaban la tarjeta ANTERIOR y mezclaban títulos y portadas entre novelas (RCA 2026-11). */
+/** Tarjetas de novela. BUSCADOR = el de v2.12.1, demostrado contra el HTML real del sitio:
+ *  cualquier href raíz con sus atributos y el primer texto del elemento, SIN exigir el cierre
+ *  «</a>» (la v2.13.0 lo exigía junto al <a de apertura y con el HTML de verdad se quedaba
+ *  sin tarjetas → home vacío → «la fuente no respondió»). ENCIMA va la extracción rica de
+ *  v2.13.0: título desde el propio elemento (nada de ventanas grandes hacia atrás, que eran
+ *  lo que mezclaba títulos y portadas entre tarjetas) y portada con data-src primero,
+ *  sustitutos fuera y URLs absolutas. La unión garantiza todo lo que veía la 2.12.1 y no
+ *  vuelve a producir los tres defectos del RCA. */
 function novelCards(html, limit) {
   const out = [], seen = {};
-  const re = /<a\b([^>]*?)href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"([^>]*)>([\s\S]{0,4000}?)<\/a>/gi;
+  const re = /href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"([^>]*)>([^<]{0,200})</gi;
   let m;
   while ((m = re.exec(html)) !== null) {
     if (limit && out.length >= limit) break;
-    const slug = m[2];
+    const slug = m[1];
     if (seen[slug] || !esNovelaSlug(slug)) continue;
-    const attrs = m[1] + " " + m[3];
-    const inner = m[4];
-    // título: attr del propio enlace → encabezado dentro del enlace → texto del enlace →
-    // encabezado JUSTO debajo (temas que separan portada y título) → alt de la portada → slug
+    const attrs = m[2]; // atributos PROPIOS del elemento (tras el href): sin contaminación
+    const texto = clean(m[3]);
+    // contenido COMPLETO del elemento («</a>» o «</a >», hasta 4600) SOLO si es de fiar:
+    // una tarjeta real nunca contiene OTRO enlace, así que si el tramo hasta el cierre lleva
+    // un <a es HTML roto (ancla sin cerrar o anidadas) y el tramo alcanza a la tarjeta
+    // siguiente — se descarta y se sigue como la 2.12.1, con el primer texto y la portada de arriba
+    let inner = "";
+    const cierre = html.slice(m.index, m.index + 4600).search(/<\/a[\s>]/i);
+    const gt = m.index + m[0].length - m[3].length - 2; // el «>» que abre el contenido
+    if (cierre >= 0 && gt > m.index) {
+      const cand = html.slice(gt + 1, m.index + cierre);
+      if (!/<a[\s/>]/i.test(cand)) inner = cand;
+    }
+    // título: attr del propio elemento → primer texto (v2.12.1) → encabezado/texto DENTRO del
+    // elemento (de fiar) → encabezado JUSTO debajo (solo hacia DELANTE; atrás mezclaba
+    // tarjetas) → alt del propio elemento o de su portada → slug
     let title = "";
     const tA = /(?:^|\s)title="([^"]{3,200})"/i.exec(attrs);
     if (tA) title = clean(tA[1]);
-    if (title.length < 3) {
+    if (title.length < 3 && texto.length >= 3) title = texto.slice(0, 200);
+    if (title.length < 3 && inner) {
       const hi = inner.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
       if (hi) title = clean(hi[1]);
     }
-    if (title.length < 3) {
+    if (title.length < 3 && inner) {
       const tx = clean(inner);
       if (tx.length >= 3) title = tx.slice(0, 200);
     }
     if (title.length < 3) {
-      const win = html.slice(m.index + m[0].length, m.index + m[0].length + 700);
-      const h2 = win.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
+      const h2 = html.slice(m.index, m.index + 700).match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
       if (h2) title = clean(h2[1]);
     }
     if (title.length < 3) {
       const al = /(?:^|\s)alt="([^"]{3,200})"/i.exec(attrs);
       if (al) title = clean(al[1]);
     }
+    if (title.length < 3 && inner) {
+      const im = inner.match(/<img\b[^>]*>/i);
+      const al2 = im ? /(?:^|\s)alt="([^"]{3,200})"/i.exec(im[0]) : null;
+      if (al2) title = clean(al2[1]);
+    }
     if (title.length < 3) title = slug.replace(/-/g, " ");
     // las páginas de finalizadas firman «Título - Finalizada»: el título propio es limpio
     title = title.replace(/\s*[-–]\s*finalizada\s*$/i, "").trim() || title;
     if (esAuthText(title)) continue;
-    // portada: la imagen DENTRO del enlace; si no hay, la más CERCANA por encima — de la más
-    // cercana a la más lejana, la primera que dé una URL de verdad (el sustituto del lazy-loader
-    // se descarta y sigue mirando; antes una sustituto dejaba la tarjeta sin portada)
+    // portada: imagen DENTRO del elemento; si no hay, la más CERCANA por encima — de cerca a
+    // lejos, la primera que dé una URL de verdad (el sustituto del lazy-loader se descarta
+    // y sigue mirando; antes un sustituto dejaba la tarjeta sin portada)
     let poster = "";
-    const imgs = inner.match(/<img\b[^>]*>/gi) || [];
-    const encima = html.slice(Math.max(0, m.index - 1000), m.index);
-    const encimaArr = encima.match(/<img\b[^>]*>/gi) || [];
+    const imgs = inner ? (inner.match(/<img\b[^>]*>/gi) || []) : [];
+    const encimaArr = html.slice(Math.max(0, m.index - 1000), m.index).match(/<img\b[^>]*>/gi) || [];
     for (const tag of imgs.concat(encimaArr.reverse())) {
       poster = urlDeImg(tag);
       if (poster) break;

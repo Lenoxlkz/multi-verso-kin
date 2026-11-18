@@ -140,7 +140,7 @@ function cfCookieHead(url) {
     return void 0;
   }
 }
-var CFSEEN_KEY = "cfseen2";
+var CFSEEN_KEY = "cfseen3";
 var CFSEEN_TTL = 24 * 3600 * 1e3;
 function cfSeenLoad() {
   try {
@@ -842,41 +842,52 @@ function urlDeImg(tag) {
 }
 function novelCards(html, limit) {
   const out = [], seen = {};
-  const re = /<a\b([^>]*?)href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"([^>]*)>([\s\S]{0,4000}?)<\/a>/gi;
+  const re = /href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"([^>]*)>([^<]{0,200})</gi;
   let m;
   while ((m = re.exec(html)) !== null) {
     if (limit && out.length >= limit) break;
-    const slug = m[2];
+    const slug = m[1];
     if (seen[slug] || !esNovelaSlug(slug)) continue;
-    const attrs = m[1] + " " + m[3];
-    const inner = m[4];
+    const attrs = m[2];
+    const texto = clean(m[3]);
+    let inner = "";
+    const cierre = html.slice(m.index, m.index + 4600).search(/<\/a[\s>]/i);
+    const gt = m.index + m[0].length - m[3].length - 2;
+    if (cierre >= 0 && gt > m.index) {
+      const cand = html.slice(gt + 1, m.index + cierre);
+      if (!/<a[\s/>]/i.test(cand)) inner = cand;
+    }
     let title = "";
     const tA = /(?:^|\s)title="([^"]{3,200})"/i.exec(attrs);
     if (tA) title = clean(tA[1]);
-    if (title.length < 3) {
+    if (title.length < 3 && texto.length >= 3) title = texto.slice(0, 200);
+    if (title.length < 3 && inner) {
       const hi = inner.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
       if (hi) title = clean(hi[1]);
     }
-    if (title.length < 3) {
+    if (title.length < 3 && inner) {
       const tx = clean(inner);
       if (tx.length >= 3) title = tx.slice(0, 200);
     }
     if (title.length < 3) {
-      const win = html.slice(m.index + m[0].length, m.index + m[0].length + 700);
-      const h2 = win.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
+      const h2 = html.slice(m.index, m.index + 700).match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
       if (h2) title = clean(h2[1]);
     }
     if (title.length < 3) {
       const al = /(?:^|\s)alt="([^"]{3,200})"/i.exec(attrs);
       if (al) title = clean(al[1]);
     }
+    if (title.length < 3 && inner) {
+      const im = inner.match(/<img\b[^>]*>/i);
+      const al2 = im ? /(?:^|\s)alt="([^"]{3,200})"/i.exec(im[0]) : null;
+      if (al2) title = clean(al2[1]);
+    }
     if (title.length < 3) title = slug.replace(/-/g, " ");
     title = title.replace(/\s*[-–]\s*finalizada\s*$/i, "").trim() || title;
     if (esAuthText(title)) continue;
     let poster = "";
-    const imgs = inner.match(/<img\b[^>]*>/gi) || [];
-    const encima = html.slice(Math.max(0, m.index - 1e3), m.index);
-    const encimaArr = encima.match(/<img\b[^>]*>/gi) || [];
+    const imgs = inner ? inner.match(/<img\b[^>]*>/gi) || [] : [];
+    const encimaArr = html.slice(Math.max(0, m.index - 1e3), m.index).match(/<img\b[^>]*>/gi) || [];
     for (const tag of imgs.concat(encimaArr.reverse())) {
       poster = urlDeImg(tag);
       if (poster) break;

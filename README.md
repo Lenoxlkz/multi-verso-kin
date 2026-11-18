@@ -30,6 +30,16 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.14
+
+**La v2.13.0 dejó la fuente DevilNovels muerta («no respondió»)** y esta versión lo arregla conservando TODO lo bueno de la 2.13.0, unificando las dos:
+
+- **Qué pasó**: el nuevo extractor de la 2.13.0 exigía la ancla completa «`<a …>…</a>`» (apertura + cierre en ≤ 4000 caracteres) para cada tarjeta. El HTML real de DevilNovels tiene anclas sin cerrar, cerradas con espacios («`</a >`»), en mayúsculas («`</A>`»), anidadas y elementos enormes — con él, la extracción se quedaba SIN tarjetas, el home llegaba vacío y la pantalla mostraba el error genérico «la fuente no respondió». La 2.12.1 funcionaba (con malos datos) porque su buscador toleraba ese HTML roto.
+- **La unión (v2.14.0)**: el BUSCADOR vuelve a ser el de la 2.12.1 — cualquier href raíz con sus atributos y el primer texto, **sin exigir el cierre** — garantizando todo lo que la fuente mostraba antes. ENCIMA va la extracción rica de la 2.13.0: título desde el propio elemento (attr `title` → primer texto → encabezado dentro → encabezado justo debajo → `alt`), portada con `data-src` primero, sustitutos fuera, URLs absolutizadas, filtros de acciones de cuenta y el seguro anti-portadas-repetidas.
+- **Contenido interno de fiar**: el tramo hasta el `</a>` solo se usa si no contiene OTRO enlace — una tarjeta real nunca anida enlaces; si el HTML está roto (ancla sin cerrar o anidadas), ese tramo alcanza a la tarjeta siguiente y se descarta, evitando mezclar títulos y portadas entre novelas (el defecto original que la 2.13.0 quería arreglar).
+- **Marca Cloudflare renovada** (`cfseen2` → `cfseen3`): mismo truco que la 2.12.1 — al actualizar, cualquier marca que la 2.13.0 fallida hubiera dejado en el dispositivo se ignora y la fuente arranca limpia.
+- Tests: 94 (nuevos casos de HTML roto real: ancla sin cerrar, «`</a >`», «`</A>`», anidadas, elemento de 5659 caracteres — todos con título propio y portada correcta).
+
 ## Novedades v2.13
 
 RCA de las tres incidencias del home de DevilNovels (2026-11), con la estructura real del sitio verificada contra el índice de Google (el menú es Inicio · Lista de Novelas · Iniciar sesión · Registrarse; el tema usa un lazy-loader «dflazy»; las páginas de finalizadas firman «Título - Finalizada»):
