@@ -1118,8 +1118,8 @@ async function madaraChapter(src, slug, capId) {
   };
 }
 var SK_API = "https://api.skynovels.net";
-function skPoster(n) {
-  return n.image ? SK_API + "/img/" + n.image : void 0;
+function skPoster(n, thumb) {
+  return n && n.image ? SK_API + "/v1/media/novels/" + (thumb ? "thumbs/" : "") + encodeURIComponent(String(n.image)) : void 0;
 }
 async function skSearch(src, q) {
   const r = await fetchJson(SK_API + "/v1/novels?q=" + encodeURIComponent(q) + "&limit=40", { heads: heads2(), timeoutMs: timeoutFor2(src) });
@@ -1142,11 +1142,13 @@ async function skHome(src) {
   if (!r.ok || !r.body) return [];
   const b = r.body;
   const secs = [
+    { id: "featured", t: "Destacada", te: "Featured", k: "featured" },
     { id: "updated", t: "Actualizadas hoy", te: "Updated today", k: "updated" },
-    { id: "trending", t: "Tendencias de hoy", te: "Trending today", k: "trendingViews" },
-    { id: "week", t: "Lo más leído de la semana", te: "Most read this week", k: "weeklyViews" },
-    { id: "month", t: "Lo más leído del mes", te: "Most read this month", k: "monthlyViews" },
-    { id: "views", t: "Lo más leído de siempre", te: "Most read of all time", k: "views" },
+    { id: "trending", t: "Tendencias de hoy", te: "Trending today", k: "trending" },
+    { id: "week", t: "Lo más leído de la semana", te: "Most read this week", k: "weekly_views" },
+    { id: "month", t: "Lo más leído del mes", te: "Most read this month", k: "monthly_views" },
+    { id: "views", t: "Lo más leído de siempre", te: "Most read of all time", k: "most_viewed" },
+    { id: "rising", t: "En ascenso", te: "Rising", k: "rising" },
     { id: "top", t: "Mejor valoradas", te: "Top rated", k: "top_rated" },
     { id: "recent", t: "Recientes", te: "Recent", k: "recent" },
     { id: "finished", t: "Finalizadas", te: "Finished", k: "finished" }
@@ -1154,13 +1156,13 @@ async function skHome(src) {
   const out = [];
   for (const s of secs) {
     const raw = b[s.k];
-    const list3 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : [];
+    const list3 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
     if (!Array.isArray(list3) || !list3.length) continue;
     const items = asItems2(src, list3.slice(0, 14).map((n) => ({
       slug: String(n.id),
       title: n.title || n.nvl_title,
       overview: void 0,
-      poster: skPoster(n)
+      poster: skPoster(n, true)
     }))).filter(Boolean);
     if (items.length) out.push({ id: src + "-" + s.id, title: s.t, titleEn: s.te, items });
   }

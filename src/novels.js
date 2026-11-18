@@ -290,11 +290,14 @@ async function madaraChapter(src, slug, capId) {
 }
 
 // ---------- skynovels ----------
-
+// La API es api.skynovels.net (JSON): home /v1/home, detalle /v1/novels/{id},
+// capítulos /v1/novels/{id}/chapters y capítulo /v1/chapters/{id} con content.paragraphs.
+// Las imágenes ya NO están en /img/{archivo} (404): la web las sirve en
+// /v1/media/novels/thumbs/{archivo} (tarjetas, ~10 KB) y /v1/media/novels/{archivo} (full).
 const SK_API = "https://api.skynovels.net";
 
-function skPoster(n) {
-  return n.image ? SK_API + "/img/" + n.image : undefined;
+function skPoster(n, thumb) {
+  return n && n.image ? SK_API + "/v1/media/novels/" + (thumb ? "thumbs/" : "") + encodeURIComponent(String(n.image)) : undefined;
 }
 
 async function skSearch(src, q) {
@@ -319,11 +322,13 @@ async function skHome(src) {
   if (!r.ok || !r.body) return [];
   const b = r.body;
   const secs = [
+    { id: "featured", t: "Destacada", te: "Featured", k: "featured" },
     { id: "updated", t: "Actualizadas hoy", te: "Updated today", k: "updated" },
-    { id: "trending", t: "Tendencias de hoy", te: "Trending today", k: "trendingViews" },
-    { id: "week", t: "Lo más leído de la semana", te: "Most read this week", k: "weeklyViews" },
-    { id: "month", t: "Lo más leído del mes", te: "Most read this month", k: "monthlyViews" },
-    { id: "views", t: "Lo más leído de siempre", te: "Most read of all time", k: "views" },
+    { id: "trending", t: "Tendencias de hoy", te: "Trending today", k: "trending" },
+    { id: "week", t: "Lo más leído de la semana", te: "Most read this week", k: "weekly_views" },
+    { id: "month", t: "Lo más leído del mes", te: "Most read this month", k: "monthly_views" },
+    { id: "views", t: "Lo más leído de siempre", te: "Most read of all time", k: "most_viewed" },
+    { id: "rising", t: "En ascenso", te: "Rising", k: "rising" },
     { id: "top", t: "Mejor valoradas", te: "Top rated", k: "top_rated" },
     { id: "recent", t: "Recientes", te: "Recent", k: "recent" },
     { id: "finished", t: "Finalizadas", te: "Finished", k: "finished" },
@@ -335,13 +340,14 @@ async function skHome(src) {
       : raw && Array.isArray(raw.novels) ? raw.novels
       : raw && Array.isArray(raw.items) ? raw.items
       : raw && raw.novel ? [raw.novel]
+      : raw && raw.id && raw.title ? [raw] // la destacada llega como dict suelto
       : [];
     if (!Array.isArray(list) || !list.length) continue;
     const items = asItems(src, list.slice(0, 14).map((n) => ({
       slug: String(n.id),
       title: n.title || n.nvl_title,
       overview: undefined,
-      poster: skPoster(n),
+      poster: skPoster(n, true),
     }))).filter(Boolean);
     if (items.length) out.push({ id: src + "-" + s.id, title: s.t, titleEn: s.te, items });
   }

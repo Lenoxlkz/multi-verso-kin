@@ -15,7 +15,7 @@ const manifest = JSON.parse(readFileSync(join(root, "kino-plugin.json"), "utf8")
 
 test("el manifiesto declara las nueve fuentes y sus hosts", () => {
   assert.equal(Object.keys(SOURCES).length, 9, "deben existir 9 fuentes (LegnNovels eliminada)");
-  assert.equal(manifest.version, "2.7.0");
+  assert.equal(manifest.version, "2.8.0");
   for (const h of ["skynovels.net", "matchanovels.com", "anslid.com", "devilnovels.com", "public-api.wordpress.com", "astralnovelstranslations.wordpress.com"]) {
     assert.ok(manifest.hosts.includes(h) || manifest.hosts.includes("*." + h), "falta el host " + h);
   }
@@ -66,7 +66,7 @@ test("cada fuente muestra sus secciones nativas", () => {
     assert.ok(nv.includes('m_orderby=' + ob) || nv.includes('ob: "' + ob + '"'), "falta m_orderby " + ob);
   }
   // Skynovels: /v1/home con sus listas reales
-  for (const k of ["trendingViews", "weeklyViews", "top_rated", "finished"]) {
+  for (const k of ["trending", "weekly_views", "most_viewed", "rising", "top_rated", "finished", "featured"]) {
     assert.ok(nv.includes('"' + k + '"'), "falta la sección de Skynovels " + k);
   }
 });
