@@ -21,7 +21,7 @@ const envSrc = readFileSync(root + "src/env.js", "utf8");
 const manifest = JSON.parse(readFileSync(root + "kino-plugin.json", "utf8"));
 
 test("v2.17.0: manifest y piezas nuevas", () => {
-  assert.equal(manifest.version, "2.17.0");
+  assert.equal(manifest.version, "2.18.0");
   // (2) higiene de headers: nada que delate WebView/automatización
   assert.ok(!dvSrc.includes('"X-Requested-With"'), "el AJAX sigue mandando X-Requested-With");
   assert.ok(dvSrc.includes('"User-Agent": UA'), "el UA forzado no está en el AJAX");

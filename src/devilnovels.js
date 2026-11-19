@@ -60,6 +60,13 @@ function numDe(slugCap) {
   return m[1].indexOf("-") >= 0 ? m[1].replace(/-/g, ".") : m[1];
 }
 
+/** Último grupo de dígitos del slug: para capítulos que el sitio renombra sin «capitulo-»
+ *  (cap-77, la-novela-77) el número real sigue quedando al final del slug. */
+function lastNumberDe(s) {
+  const m = /(\d+)(?!.*\d)/.exec(String(s || ""));
+  return m ? m[1] : "";
+}
+
 /** ¿Es un enlace de novela raíz? Un solo segmento que no es una ruta fija del sitio. */
 function esNovelaSlug(s) {
   return /^[a-z0-9][a-z0-9-]{1,99}$/.test(s) && !RUTAS_FIJAS.test(s) && !/-capitulo-\d/.test(s);
@@ -100,6 +107,21 @@ function urlDeImg(tag) {
  *  lo que mezclaba títulos y portadas entre tarjetas) y portada con data-src primero,
  *  sustitutos fuera y URLs absolutas. La unión garantiza todo lo que veía la 2.12.1 y no
  *  vuelve a producir los tres defectos del RCA. */
+/** Los contadores del sitio (widgets de ranking: «12.3K vistas», «1,2M lecturas») nunca son
+ *  parte del título delante o detrás: se quitan y un texto que SOLO sea contador no vale. */
+function quitaVistas(t) {
+  let s = String(t || "");
+  s = s.replace(/^\s*\d+(?:[.,]\d+)?\s*[kKmM]?\s*(?:vistas|views|lecturas|reads|visitas)\s*[-–—|:·]?\s*/i, "");
+  s = s.replace(/\s*[-–—|:·]?\s*\d+(?:[.,]\d+)?\s*[kKmM]?\s*(?:vistas|views|lecturas|reads|visitas)\.?\s*$/i, "");
+  return s.trim();
+}
+
+function esContador(t) {
+  const s = String(t || "").trim();
+  if (!s) return true;
+  return /^[\d.,\s]*[kKmM]?\s*(?:vistas|views|lecturas|reads|visitas)?$/i.test(s) && /[\dkKmM]/i.test(s);
+}
+
 function novelCards(html, limit) {
   const out = [], seen = {};
   const re = /href="(?:https?:\/\/(?:www\.)?devilnovels\.com)?\/([a-z0-9][a-z0-9-]{0,99})\/?"([^>]*)>([^<]{0,200})</gi;
@@ -127,14 +149,20 @@ function novelCards(html, limit) {
     let title = "";
     const tA = /(?:^|\s)title="([^"]{3,200})"/i.exec(attrs);
     if (tA) title = clean(tA[1]);
-    if (title.length < 3 && texto.length >= 3) title = texto.slice(0, 200);
+    if (title.length < 3 && texto.length >= 3 && !esContador(texto)) title = texto.slice(0, 200);
     if (title.length < 3 && inner) {
       const hi = inner.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
       if (hi) title = clean(hi[1]);
     }
+    // el tema suele poner el nombre en un span/div con clase de título: antes que el texto plano
+    // (el texto plano del ranking arrastra el contador de vistas — RCA 2026-11, problema #1)
+    if (title.length < 3 && inner) {
+      const sc = inner.match(/<(?:h[1-6]|span|div|p)[^>]*class="[^"]*(?:post-title|entry-title|titulo|title)[^"]*"[^>]*>\s*([^<]{3,200})</i);
+      if (sc) title = clean(sc[1]);
+    }
     if (title.length < 3 && inner) {
       const tx = clean(inner);
-      if (tx.length >= 3) title = tx.slice(0, 200);
+      if (tx.length >= 3 && !esContador(tx)) title = tx.slice(0, 200);
     }
     if (title.length < 3) {
       const h2 = html.slice(m.index, m.index + 700).match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
@@ -149,6 +177,8 @@ function novelCards(html, limit) {
       const al2 = im ? /(?:^|\s)alt="([^"]{3,200})"/i.exec(im[0]) : null;
       if (al2) title = clean(al2[1]);
     }
+    if (title.length < 3) title = slug.replace(/-/g, " ");
+    title = quitaVistas(title);
     if (title.length < 3) title = slug.replace(/-/g, " ");
     // las páginas de finalizadas firman «Título - Finalizada»: el título propio es limpio
     title = title.replace(/\s*[-–]\s*finalizada\s*$/i, "").trim() || title;
@@ -226,7 +256,9 @@ function enumDe(slug) {
 
 function filaDe(capSlug, id, pago) {
   const cs = String(capSlug);
-  return { capSlug: cs, id: String(id), number: numDe(cs) || String(id), pago: Boolean(pago) };
+  // el número REAL del capítulo (RCA 2026-11, problema #3): el patrón del sitio, y si el tema
+  // renombró los slugs, el último número del slug — el id de post solo como último recurso
+  return { capSlug: cs, id: String(id), number: numDe(cs) || lastNumberDe(cs) || String(id), pago: Boolean(pago) };
 }
 
 /** Añade una fila por id; la primera versión manda (la de la ficha trae la marca de pago),
@@ -661,8 +693,12 @@ function capRows(html, slug) {
       "\\/([a-z0-9-]+)\\/(\\d{2,10})\\/?\"", "gi");
     let m2;
     while ((m2 = re2.exec(html)) !== null && map.size < MAX_CAPS) {
+      const cs2 = m2[1];
+      // sin ruido (RCA 2026-11, problema #3): rutas fijas y paginación («page/2», «pagina-3»)
+      // NO son capítulos; un capítulo renombrado SIEMPRE lleva un número en su slug
+      if (RUTAS_FIJAS.test(cs2) || /^(?:page|pagina|pag|amp|feed|print|comment|comentarios)(?:[-_].*)?$/i.test(cs2) || !/\d/.test(cs2)) continue;
       if (map.has(m2[2])) continue;
-      map.set(m2[2], { capSlug: m2[1], id: m2[2], number: numDe(m2[1]) || m2[2], pago: false });
+      map.set(m2[2], { capSlug: cs2, id: m2[2], number: numDe(cs2) || lastNumberDe(cs2) || m2[2], pago: false });
     }
   }
   // la id de post crece con el tiempo: ordenar por id es el orden cronológico real
@@ -688,17 +724,19 @@ export async function search(src, q) {
   return { items: asItems(cards.slice(0, 30)) };
 }
 
-export async function home(src) {
-  // las secciones nativas del sitio: su ranking (home), su listado y sus finalizadas
+export async function home(src, opts = {}) {
+  // las secciones nativas del sitio: su ranking (home), su listado y sus finalizadas;
+  // «full» (pantalla dedicada «Ver más») trae 60 por sección en vez de 18
+  const n0 = opts && opts.full ? 60 : 18;
   const settled = await Promise.allSettled([
     getHtml("/"),
     getHtml("/listado-de-novelas"),
     getHtml("/novelas-finalizadas"),
   ]);
   const secs = [
-    { id: "ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: 18 },
-    { id: "todas", t: "Listado de novelas", te: "All novels", i: 1, n: 18 },
-    { id: "finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: 18 },
+    { id: "ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: n0 },
+    { id: "todas", t: "Listado de novelas", te: "All novels", i: 1, n: n0 },
+    { id: "finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: n0 },
   ];
   const out = [];
   for (const s of secs) {
@@ -781,6 +819,7 @@ export async function chapter(src, slug, capId) {
   // el cuerpo del capítulo: el contenedor que traiga más texto de los habituales (el tema es propio,
   // así que se prueban los marcadores estándar de WordPress y lectores, y si no hay ninguno, todo)
   let seg = "";
+  let marcaUsada = "";
   const marcas = [
     'class="reading-content"', 'id="chapter-content"', 'class="chapter-content"',
     'class="entry-content"', 'class="post-content"', 'class="text-content"',
@@ -788,16 +827,33 @@ export async function chapter(src, slug, capId) {
   ];
   for (const marca of marcas) {
     const i = html.indexOf(marca);
-    if (i >= 0) { seg = html.slice(i, i + 500000); break; }
+    if (i >= 0) { seg = html.slice(i, i + 500000); marcaUsada = marca; break; }
   }
   if (!seg) seg = html.slice(0, 500000);
-  // corta el ruido del pie (comentarios, navegación, aviso del sitio) antes de convertir a párrafos
-  const cortes = ["novelaschinas", "comments-area", "id=\"respond\"", "post-navigation", "related-posts", "manga-discussion", "membership"];
+  // si el corte cayó en <article, la cabecera del post (título, meta, banner) entró en el tramo:
+  // re-corta al contenedor del contenido que venga dentro
+  if (marcaUsada === "<article") {
+    const inner = seg.search(/class="[^"]*(?:entry-content|chapter-content|reading-content|content-read|text-content)/i);
+    if (inner > 0) seg = seg.slice(inner);
+  }
+  // corta el ruido del pie (comentarios, navegación, aviso del sitio) antes de convertir a párrafos;
+  // desde la 2.18 la comparación es insensible a mayúsculas y cubre el pie real del tema (RCA #3b)
+  const cortes = ["novelaschinas", "comments-area", 'id="respond"', "post-navigation", "related-posts",
+    "manga-discussion", "membership", "entry-footer", "site-footer", "footer-site", "post-tags",
+    "tags-links", "cat-links", "jp-relatedposts", "sharedaddy", "author-box", "breadcrumb",
+    "screen-reader-text", "wpp-", "wpdiscuz", "related-novels", "navegacion-capitulos"];
   for (const c of cortes) {
-    const j = seg.indexOf(c);
+    const j = seg.toLowerCase().indexOf(c.toLowerCase());
     if (j > 500) seg = seg.slice(0, j);
   }
   const p = htmlToParagraphs(seg);
+  // las imágenes ANTES del primer párrafo son la cabecera del sitio (banner, logo, portada del
+  // post): nunca son ilustraciones del capítulo — fuera (RCA 2026-11, problema #3a)
+  const corteP = seg.search(/<p[\s>]/i);
+  if (corteP > 0) {
+    const k = (seg.slice(0, corteP).match(/<img\b/gi) || []).length;
+    if (k > 0 && p.imgs.length) p.imgs = p.imgs.slice(Math.min(k, p.imgs.length));
+  }
 
   // vecinos sin bajar la obra entera: caché → REST en descenso → extremos de la ficha
   let prev = null, next = null;
@@ -846,8 +902,10 @@ function htmlToParagraphs(html, maxParas = 900) {
 function filtrar(text) {
   const out = [];
   for (const t of text) {
-    if (/novelaschinas\.org|derechos reservados|pol[ií]tica de privacidad|\bdmca\b|inicia sesi[oó]n|historial de lectura|©\s*20\d\d/i.test(t) && t.length < 300) continue;
+    if (/novelaschinas\.org|devilnovels\.com|derechos reservados|pol[ií]tica de privacidad|\bdmca\b|inicia sesi[oó]n|historial de lectura|©\s*20\d\d/i.test(t) && t.length < 300) continue;
     if (/^(prev\s+next|comments? for|deja una respuesta|tu direcci[oó]n de correo|class=|href=|<|data-|compartir|share)/i.test(t.trim().slice(0, 40)) && t.length < 300) continue;
+    // chrome real del tema (RCA 2026-11, problema #3b): etiquetas, navegación, llamados a la UI
+    if (/^(?:etiquetas?\s*[:.]|categor[ií]as?\s*[:.]|tags?\s*[:.]|comp[aá]rtelo|comparte esto|guardar\b|guarda mi|anterior\s*[:.]|siguiente\s*[:.]|leer ahora|leer m[aá]s|anuncio|publicidad|suscr[ií]bete)/i.test(t.trim()) && t.length < 160) continue;
     if (/está bloqueado|membresía lo lees|desbloqueo|suscr[ií]bete para|membres[ií]a (?:requerida|necesaria)/i.test(t) && t.length < 220 && out.length >= 6) continue;
     out.push(t);
   }

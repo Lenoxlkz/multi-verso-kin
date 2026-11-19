@@ -30,6 +30,17 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.18
+
+**Limpieza del Home y del capítulo de DevilNovels + «Ver más» por fuente (reporte del dispositivo, RCA 2026-11):**
+
+- **#1 Ranking con título y vistas separados**: el widget real del ranking pone el nombre en un span con clase de título y el contador de vistas en otro. El extractor ahora prefiere ese span; un texto que solo es un contador («12.3K vistas») nunca queda como título, y cualquier contador delante o detrás del nombre se quita.
+- **#2 «Ver más» por fuente en el Home**: el Home de la app gana un botón «Ver más de <fuente>» que abre una pantalla dedicada de esa fuente con todo su contenido (60 títulos por fila en vez de 18/12), con un botón claro de **Salir (volver al Home)** arriba y al final — y la barra Atrás de siempre. Consistente para las siete fuentes.
+- **#3a Sin imágenes de cabecera en el lector**: toda imagen que precede al primer párrafo del contenido (banner, logo, portada del post) se descarta; las ilustraciones del cuerpo del capítulo se conservan.
+- **#3b Sin texto del sitio en el capítulo**: cortes de pie ampliados e insensibles a mayúsculas (entry-footer, site-footer, jp-relatedposts, author-box, breadcrumb, etiquetas, relacionados…) y el filtro de párrafos descarta las frases de la interfaz («Etiquetas:», «Anterior:», «Siguiente:», «Comparte», etc.).
+- **#3c Números reales de capítulo**: si el sitio renombra los slugs (sin «capitulo-»), el número sale del último grupo de dígitos del slug; la paginación del listado (page/2, pagina-3) y las rutas sin número ya no cuentan como capítulos, y el id de post solo queda como último recurso.
+- Tests: 116 (ranking limpio, capítulo sin cabecera ni pie, slugs renombrados, pantalla dedicada con Salir).
+
 ## Novedades v2.17
 
 **Ajustes del RCA con navegador real (otra sesión) y el AJAX como contrato del sitio:**

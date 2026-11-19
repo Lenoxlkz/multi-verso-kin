@@ -824,6 +824,10 @@ function numDe(slugCap) {
   if (!m) return "";
   return m[1].indexOf("-") >= 0 ? m[1].replace(/-/g, ".") : m[1];
 }
+function lastNumberDe(s) {
+  const m = /(\d+)(?!.*\d)/.exec(String(s || ""));
+  return m ? m[1] : "";
+}
 function esNovelaSlug(s) {
   return /^[a-z0-9][a-z0-9-]{1,99}$/.test(s) && !RUTAS_FIJAS.test(s) && !/-capitulo-\d/.test(s);
 }
@@ -843,6 +847,17 @@ function urlDeImg(tag) {
     if (/^https?:\/\//i.test(u)) return u;
   }
   return "";
+}
+function quitaVistas(t) {
+  let s = String(t || "");
+  s = s.replace(/^\s*\d+(?:[.,]\d+)?\s*[kKmM]?\s*(?:vistas|views|lecturas|reads|visitas)\s*[-–—|:·]?\s*/i, "");
+  s = s.replace(/\s*[-–—|:·]?\s*\d+(?:[.,]\d+)?\s*[kKmM]?\s*(?:vistas|views|lecturas|reads|visitas)\.?\s*$/i, "");
+  return s.trim();
+}
+function esContador(t) {
+  const s = String(t || "").trim();
+  if (!s) return true;
+  return /^[\d.,\s]*[kKmM]?\s*(?:vistas|views|lecturas|reads|visitas)?$/i.test(s) && /[\dkKmM]/i.test(s);
 }
 function novelCards(html, limit) {
   const out = [], seen = {};
@@ -864,14 +879,18 @@ function novelCards(html, limit) {
     let title = "";
     const tA = /(?:^|\s)title="([^"]{3,200})"/i.exec(attrs);
     if (tA) title = clean(tA[1]);
-    if (title.length < 3 && texto.length >= 3) title = texto.slice(0, 200);
+    if (title.length < 3 && texto.length >= 3 && !esContador(texto)) title = texto.slice(0, 200);
     if (title.length < 3 && inner) {
       const hi = inner.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
       if (hi) title = clean(hi[1]);
     }
     if (title.length < 3 && inner) {
+      const sc = inner.match(/<(?:h[1-6]|span|div|p)[^>]*class="[^"]*(?:post-title|entry-title|titulo|title)[^"]*"[^>]*>\s*([^<]{3,200})</i);
+      if (sc) title = clean(sc[1]);
+    }
+    if (title.length < 3 && inner) {
       const tx = clean(inner);
-      if (tx.length >= 3) title = tx.slice(0, 200);
+      if (tx.length >= 3 && !esContador(tx)) title = tx.slice(0, 200);
     }
     if (title.length < 3) {
       const h2 = html.slice(m.index, m.index + 700).match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
@@ -886,6 +905,8 @@ function novelCards(html, limit) {
       const al2 = im ? /(?:^|\s)alt="([^"]{3,200})"/i.exec(im[0]) : null;
       if (al2) title = clean(al2[1]);
     }
+    if (title.length < 3) title = slug.replace(/-/g, " ");
+    title = quitaVistas(title);
     if (title.length < 3) title = slug.replace(/-/g, " ");
     title = title.replace(/\s*[-–]\s*finalizada\s*$/i, "").trim() || title;
     if (esAuthText(title)) continue;
@@ -932,7 +953,7 @@ function enumDe(slug) {
 }
 function filaDe(capSlug, id, pago) {
   const cs = String(capSlug);
-  return { capSlug: cs, id: String(id), number: numDe(cs) || String(id), pago: Boolean(pago) };
+  return { capSlug: cs, id: String(id), number: numDe(cs) || lastNumberDe(cs) || String(id), pago: Boolean(pago) };
 }
 function enumPon(e, fila) {
   const prev = e.ids.get(fila.id);
@@ -1327,8 +1348,10 @@ function capRows(html, slug) {
     const re2 = new RegExp('href="(?:https?:\\/\\/(?:www\\.)?devilnovels\\.com)?\\/' + slug + '\\/([a-z0-9-]+)\\/(\\d{2,10})\\/?"', "gi");
     let m2;
     while ((m2 = re2.exec(html)) !== null && map.size < MAX_CAPS) {
+      const cs2 = m2[1];
+      if (RUTAS_FIJAS.test(cs2) || /^(?:page|pagina|pag|amp|feed|print|comment|comentarios)(?:[-_].*)?$/i.test(cs2) || !/\d/.test(cs2)) continue;
       if (map.has(m2[2])) continue;
-      map.set(m2[2], { capSlug: m2[1], id: m2[2], number: numDe(m2[1]) || m2[2], pago: false });
+      map.set(m2[2], { capSlug: cs2, id: m2[2], number: numDe(cs2) || lastNumberDe(cs2) || m2[2], pago: false });
     }
   }
   return [...map.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0)).slice(0, MAX_CAPS);
@@ -1348,16 +1371,17 @@ async function search3(src, q) {
   const cards = novelCards(html, 400).filter((c) => norm(c.title).indexOf(qb) >= 0 || norm(c.slug).indexOf(qb) >= 0);
   return { items: asItems2(cards.slice(0, 30)) };
 }
-async function home(src) {
+async function home(src, opts = {}) {
+  const n0 = opts && opts.full ? 60 : 18;
   const settled = await Promise.allSettled([
     getHtml("/"),
     getHtml("/listado-de-novelas"),
     getHtml("/novelas-finalizadas")
   ]);
   const secs = [
-    { id: "ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: 18 },
-    { id: "todas", t: "Listado de novelas", te: "All novels", i: 1, n: 18 },
-    { id: "finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: 18 }
+    { id: "ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: n0 },
+    { id: "todas", t: "Listado de novelas", te: "All novels", i: 1, n: n0 },
+    { id: "finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: n0 }
   ];
   const out = [];
   for (const s of secs) {
@@ -1427,6 +1451,7 @@ async function chapter3(src, slug, capId) {
   if (!/^[a-z0-9-]+$/i.test(capSlug) || !/^\d+$/.test(id)) netError({ message: "capítulo desconocido" }, "el capítulo");
   const html = await getHtml("/" + slug + "/" + capSlug + "/" + id + "/", { what: "el capítulo en DevilNovels" });
   let seg = "";
+  let marcaUsada = "";
   const marcas = [
     'class="reading-content"',
     'id="chapter-content"',
@@ -1443,16 +1468,49 @@ async function chapter3(src, slug, capId) {
     const i = html.indexOf(marca);
     if (i >= 0) {
       seg = html.slice(i, i + 5e5);
+      marcaUsada = marca;
       break;
     }
   }
   if (!seg) seg = html.slice(0, 5e5);
-  const cortes = ["novelaschinas", "comments-area", 'id="respond"', "post-navigation", "related-posts", "manga-discussion", "membership"];
+  if (marcaUsada === "<article") {
+    const inner = seg.search(/class="[^"]*(?:entry-content|chapter-content|reading-content|content-read|text-content)/i);
+    if (inner > 0) seg = seg.slice(inner);
+  }
+  const cortes = [
+    "novelaschinas",
+    "comments-area",
+    'id="respond"',
+    "post-navigation",
+    "related-posts",
+    "manga-discussion",
+    "membership",
+    "entry-footer",
+    "site-footer",
+    "footer-site",
+    "post-tags",
+    "tags-links",
+    "cat-links",
+    "jp-relatedposts",
+    "sharedaddy",
+    "author-box",
+    "breadcrumb",
+    "screen-reader-text",
+    "wpp-",
+    "wpdiscuz",
+    "related-novels",
+    "navegacion-capitulos"
+  ];
   for (const c of cortes) {
-    const j = seg.indexOf(c);
+    const j = seg.toLowerCase().indexOf(c.toLowerCase());
     if (j > 500) seg = seg.slice(0, j);
   }
   const p = htmlToParagraphs(seg);
+  const corteP = seg.search(/<p[\s>]/i);
+  if (corteP > 0) {
+    const k = (seg.slice(0, corteP).match(/<img\b/gi) || []).length;
+    if (k > 0 && p.imgs.length) p.imgs = p.imgs.slice(Math.min(k, p.imgs.length));
+  }
   let prev = null, next = null;
   try {
     const v = await vecinosDe(slug, id);
@@ -1494,8 +1552,9 @@ function htmlToParagraphs(html, maxParas = 900) {
 function filtrar(text) {
   const out = [];
   for (const t of text) {
-    if (/novelaschinas\.org|derechos reservados|pol[ií]tica de privacidad|\bdmca\b|inicia sesi[oó]n|historial de lectura|©\s*20\d\d/i.test(t) && t.length < 300) continue;
+    if (/novelaschinas\.org|devilnovels\.com|derechos reservados|pol[ií]tica de privacidad|\bdmca\b|inicia sesi[oó]n|historial de lectura|©\s*20\d\d/i.test(t) && t.length < 300) continue;
     if (/^(prev\s+next|comments? for|deja una respuesta|tu direcci[oó]n de correo|class=|href=|<|data-|compartir|share)/i.test(t.trim().slice(0, 40)) && t.length < 300) continue;
+    if (/^(?:etiquetas?\s*[:.]|categor[ií]as?\s*[:.]|tags?\s*[:.]|comp[aá]rtelo|comparte esto|guardar\b|guarda mi|anterior\s*[:.]|siguiente\s*[:.]|leer ahora|leer m[aá]s|anuncio|publicidad|suscr[ií]bete)/i.test(t.trim()) && t.length < 160) continue;
     if (/está bloqueado|membresía lo lees|desbloqueo|suscr[ií]bete para|membres[ií]a (?:requerida|necesaria)/i.test(t) && t.length < 220 && out.length >= 6) continue;
     out.push(t);
   }
@@ -2060,12 +2119,12 @@ async function novelSearch(src, q) {
   if (k === "devilnovels") return search3(src, q);
   return madaraSearch(src, q);
 }
-async function novelHome(src) {
+async function novelHome(src, opts = {}) {
   const k = KIND_OF[src];
   if (k === "sk") return skHome(src);
   if (k === "mk") return mkHome(src);
   if (k === "as") return asHome(src);
-  if (k === "devilnovels") return home(src);
+  if (k === "devilnovels") return home(src, opts);
   return madaraHome(src);
 }
 async function novelDetail(src, slug) {
@@ -3016,6 +3075,7 @@ function viewMain(ctx) {
   } else {
     kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
+  kids.push({ type: "TextButton", icon: "menu_book", labelText: "Ver más de " + SOURCES[src].name, labelTextEn: "More from " + SOURCES[src].name, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } }, padding: { x: 16, y: 6 } });
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
   const capsula = { type: "Row", padding: { x: 16, y: 8 }, children: [
     {
@@ -3064,6 +3124,67 @@ function viewMain(ctx) {
   const root = scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, body, opts);
   root.every = [{ ms: 1e3, event: "capsTick" }];
   return root;
+}
+async function loadFuenteAll(src, en) {
+  try {
+    const ck = cacheKey("fuente", src);
+    const cached = cacheGet(ck, TTL.rows);
+    if (cached && cached.length) return { shelves: cached, err: null, cf: false, cfKind: null };
+    let shelves = [];
+    if (isNovel(src)) {
+      const raw = await novelHome(src, { full: true });
+      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
+    } else {
+      const specs = tabSpecs(src).map((sp) => ({ ...sp, params: { ...sp.params || {}, postsPerPage: 60 } }));
+      const settled = await Promise.allSettled(specs.map(fetchOneRow));
+      for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
+    }
+    if (shelves.length) cacheSet(ck, shelves);
+    if (!shelves.length) return probeCf(src, en, shelves);
+    return { shelves, err: null, cf: false, cfKind: null };
+  } catch (e) {
+    return probeCf(src, en, [], SOURCES[src].name + ": " + String(e && e.userMessage || e && e.message || "la fuente no respondió").slice(0, 140));
+  }
+}
+function viewFuente(ctx) {
+  const { state, lang } = ctx;
+  const en = lang === "en";
+  const args = ctx.route && (ctx.route.args || ctx.route.params) || null;
+  const src = state.fuente && state.fuente.src || args && args.s || state.hsrc || "zt";
+  const nombre = SOURCES[src] ? SOURCES[src].name : String(src);
+  const f = state.fuente || null;
+  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 6 } });
+  const kids = [salir()];
+  if (!f) {
+    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+      { type: "Skeleton", shape: "card", height: 200 },
+      { type: "Skeleton", shape: "card", height: 200 },
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } }
+    ] });
+  } else if (f.cf && ctx.device !== "tv") {
+    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+      {
+        type: "errorState",
+        icon: "security",
+        title: f.cfKind === "blocked" ? "La fuente está bloqueada" : "Desafío de Cloudflare",
+        titleEn: f.cfKind === "blocked" ? "The source is blocked" : "Cloudflare challenge",
+        text: nombre + " está tras Cloudflare: resuélvelo desde el Home o prueba más tarde.",
+        textEn: nombre + " is behind Cloudflare: solve it from the Home or try later."
+      },
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } }
+    ] });
+  } else if (f.err) {
+    kids.push(errorBox(f.err, "reintentar"));
+  } else if (!(f.shelves || []).length) {
+    kids.push(empty("Sin datos de " + nombre + " por ahora", "No data from " + nombre + " yet"));
+  } else {
+    for (const row of f.shelves) {
+      const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
+    }
+    kids.push({ type: "TextButton", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, padding: { x: 16, y: 8 } });
+  }
+  return scaffold(nombre + " · Todo", nombre + " · Everything", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home" });
 }
 var BIB_TAGS = [
   { k: "leyendo", t: "Leyendo", te: "Reading" },
@@ -3376,6 +3497,8 @@ async function screen(ctx) {
       return viewLeer(ctx);
     case "ajustes":
       return viewAjustes(ctx);
+    case "fuente":
+      return viewFuente(ctx);
     case "main":
     default:
       return viewMain(ctx);
@@ -3729,6 +3852,10 @@ async function runSearch(q, soloSrc) {
 async function handleOpen(ctx) {
   const { route } = ctx;
   const args = route && (route.args || route.params) || null;
+  if (args && args.s && SOURCES[args.s]) {
+    const f = await loadFuenteAll(args.s, ctx.lang === "en");
+    return { state: { fuente: { src: args.s, shelves: f.shelves, err: f.err, cf: f.cf, cfKind: f.cfKind }, herr: null, error: null, note: null } };
+  }
   if (args && args.r && args.m) {
     try {
       const detail5 = await loadDetail(args.m);

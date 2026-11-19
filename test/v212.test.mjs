@@ -53,7 +53,7 @@ test("el texto del capítulo descarta el chrome del sitio", () => {
   assert.ok(src.includes('class="reading-content"'), "falta el marcador madara heredado");
   assert.ok(src.includes('class="entry-content"'), "falta el marcador estándar de WordPress");
   assert.ok(src.includes('"novelaschinas"'), "el aviso del pie no se corta");
-  assert.ok(src.includes("novelaschinas\\.org|derechos reservados"), "el filtro de ruido no cubre el pie");
+  assert.ok(src.includes("novelaschinas\\.org|devilnovels\\.com|derechos reservados"), "el filtro de ruido no cubre el pie");
 });
 
 test("la búsqueda global de Kino alcanza las novelas (antes caían en manhwa)", () => {
@@ -65,7 +65,7 @@ test("«Abrir en el navegador» apunta a la raíz del dominio", () => {
 });
 
 test("la versión avanza y el build lleva el adaptador nuevo", () => {
-  assert.equal(manifest.version, "2.17.0");
+  assert.equal(manifest.version, "2.18.0");
   assert.ok(built.includes('"/" + slug + "/" + capSlug + "/" + id + "/"'), "el build no lleva el adaptador dv");
   assert.ok(built.includes("esNovela(s) ? novelSearch(s, q)"), "el build no lleva la búsqueda de novelas");
 });

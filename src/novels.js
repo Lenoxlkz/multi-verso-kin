@@ -654,12 +654,12 @@ export async function novelSearch(src, q) {
   return madaraSearch(src, q);
 }
 
-export async function novelHome(src) {
+export async function novelHome(src, opts = {}) {
   const k = KIND_OF[src];
   if (k === "sk") return skHome(src);
   if (k === "mk") return mkHome(src);
   if (k === "as") return asHome(src);
-  if (k === "devilnovels") return dvA.home(src);
+  if (k === "devilnovels") return dvA.home(src, opts);
   return madaraHome(src);
 }
 

@@ -520,6 +520,8 @@ function viewMain(ctx) {
   } else {
     kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
+  // «Ver más» de la fuente (RCA 2026-11, #2): abre la pantalla dedicada con TODO el contenido
+  kids.push({ type: "TextButton", icon: "menu_book", labelText: "Ver más de " + SOURCES[src].name, labelTextEn: "More from " + SOURCES[src].name, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } }, padding: { x: 16, y: 6 } });
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
   // ---- cápsula fijada arriba + panel desplegable (overlay con scrim) ----
   const capsula = { type: "Row", padding: { x: 16, y: 8 }, children: [
@@ -552,6 +554,70 @@ function viewMain(ctx) {
   // temporizador de raíz: cada segundo revisa si al panel le toca cerrarse (5 s sin interacción)
   root.every = [{ ms: 1000, event: "capsTick" }];
   return root;
+}
+
+// ---------- fuente: la pantalla dedicada del «Ver más» ----------
+
+/** Contenido COMPLETO de una fuente para su pantalla dedicada: las mismas filas que el Home
+ *  pero con muchos más títulos por fila (60). Caché propia y sonda CF igual que el Home. */
+async function loadFuenteAll(src, en) {
+  try {
+    const ck = cacheKey("fuente", src);
+    const cached = cacheGet(ck, TTL.rows);
+    if (cached && cached.length) return { shelves: cached, err: null, cf: false, cfKind: null };
+    let shelves = [];
+    if (isNovel(src)) {
+      const raw = await nv.novelHome(src, { full: true });
+      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
+    } else {
+      const specs = tabSpecs(src).map((sp) => ({ ...sp, params: { ...(sp.params || {}), postsPerPage: 60 } }));
+      const settled = await Promise.allSettled(specs.map(fetchOneRow));
+      for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
+    }
+    if (shelves.length) cacheSet(ck, shelves);
+    if (!shelves.length) return probeCf(src, en, shelves);
+    return { shelves, err: null, cf: false, cfKind: null };
+  } catch (e) {
+    // los adaptadores lanzan con HTTP 403/503: la sonda decide si fue un desafío de Cloudflare
+    return probeCf(src, en, [], SOURCES[src].name + ": " + String((e && e.userMessage) || (e && e.message) || "la fuente no respondió").slice(0, 140));
+  }
+}
+
+/** Vista «fuente»: TODO el contenido de la fuente elegida (el destino del «Ver más» del Home),
+ *  con un botón de Salir claro arriba y al final (la barra también da Atrás). */
+function viewFuente(ctx) {
+  const { state, lang } = ctx;
+  const en = lang === "en";
+  const args = (ctx.route && (ctx.route.args || ctx.route.params)) || null;
+  const src = (state.fuente && state.fuente.src) || (args && args.s) || state.hsrc || "zt";
+  const nombre = SOURCES[src] ? SOURCES[src].name : String(src);
+  const f = state.fuente || null;
+  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 6 } });
+  const kids = [salir()];
+  if (!f) {
+    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+      { type: "Skeleton", shape: "card", height: 200 },
+      { type: "Skeleton", shape: "card", height: 200 },
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } },
+    ] });
+  } else if (f.cf && ctx.device !== "tv") {
+    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+      { type: "errorState", icon: "security", title: f.cfKind === "blocked" ? "La fuente está bloqueada" : "Desafío de Cloudflare", titleEn: f.cfKind === "blocked" ? "The source is blocked" : "Cloudflare challenge",
+        text: nombre + " está tras Cloudflare: resuélvelo desde el Home o prueba más tarde.", textEn: nombre + " is behind Cloudflare: solve it from the Home or try later." },
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } },
+    ] });
+  } else if (f.err) {
+    kids.push(errorBox(f.err, "reintentar"));
+  } else if (!(f.shelves || []).length) {
+    kids.push(empty("Sin datos de " + nombre + " por ahora", "No data from " + nombre + " yet"));
+  } else {
+    for (const row of f.shelves) {
+      const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
+    }
+    kids.push({ type: "TextButton", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, padding: { x: 16, y: 8 } });
+  }
+  return scaffold(nombre + " · Todo", nombre + " · Everything", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home" });
 }
 
 // ---------- biblioteca: Me Gustas y etiquetas ----------
@@ -872,6 +938,7 @@ export async function screen(ctx) {
     case "detalle": return viewDetalle(ctx);
     case "leer": return viewLeer(ctx);
     case "ajustes": return viewAjustes(ctx);
+    case "fuente": return viewFuente(ctx);
     case "main":
     default: return viewMain(ctx);
   }
@@ -1251,6 +1318,11 @@ async function runSearch(q, soloSrc) {
 async function handleOpen(ctx) {
   const { route } = ctx;
   const args = (route && (route.args || route.params)) || null;
+  // la pantalla dedicada de una fuente («Ver más» del Home): carga TODO el contenido de esa fuente
+  if (args && args.s && SOURCES[args.s]) {
+    const f = await loadFuenteAll(args.s, ctx.lang === "en");
+    return { state: { fuente: { src: args.s, shelves: f.shelves, err: f.err, cf: f.cf, cfKind: f.cfKind }, herr: null, error: null, note: null } };
+  }
   if (args && args.r && args.m) {
     // Un enlace profundo con capítulo («Seguir leyendo») abre el DETALLE del manga: de ahí sale
     // el lector, así que regresar desde el lector siempre cae al detalle, nunca al Home.
