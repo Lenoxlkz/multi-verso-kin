@@ -697,7 +697,11 @@ function capsLoader(src, slug) {
  *  caché compartida con el detalle — sin segundas descargas. Así la pantalla de detalle
  *  pinta el primer lote rápido y «Cargar más» solo pide lo siguiente. */
 export async function novelChapters(src, slug, opts = {}) {
-  if (KIND_OF[src] === "devilnovels") return dvA.capsPage(src, slug, opts);
+  if (KIND_OF[src] === "devilnovels") {
+    // búsqueda de capítulos (RCA 2026-11): el AJAX del sitio busca en TODA la obra
+    if (String(opts.search || "").trim()) return dvA.capsSearch(src, slug, opts.search, opts.page);
+    return dvA.capsPage(src, slug, opts);
+  }
   const page = Math.max(1, Math.floor(Number(opts.page) || 1));
   const per = Math.min(100, Math.max(10, Math.floor(Number(opts.postsPerPage) || 50)));
   const caps = await capsOf(src, slug, () => capsLoader(src, slug));

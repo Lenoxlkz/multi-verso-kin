@@ -94,7 +94,15 @@ export async function fetchText(url, { heads = {}, timeoutMs = 12000, method = "
     const cf = cfCookieHead(url);
     if (cf) hs.Cookie = cf;
   }
-  const r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
+  let r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
+  // La reputación de Cloudflare cambia con el tiempo (el RCA 2026-11 de DevilNovels lo confirma:
+  // el 1020/403 a veces es pasajero). UN reintento corto ante 403/429/503 recupera los cortes de
+  // mala suerte sin doblar la espera cuando el bloqueo es definitivo (los planes de respaldo
+  // siguen cubriendo ese caso).
+  if (!r.ok && (r.status === 403 || r.status === 429 || r.status === 503)) {
+    await new Promise((res) => setTimeout(res, 1200));
+    r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
+  }
   const text = r.text ? r.text() : "";
   noteHttp(url, r.status, text);
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };

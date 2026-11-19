@@ -756,7 +756,9 @@ function viewDetalle(ctx) {
       { type: "Button", variant: orden === "asc" ? "primary" : "secondary", icon: "arrow_upward", labelText: "Antiguos primero", labelTextEn: "Oldest first", onPressed: { event: "capsOrder", arg: "asc" }, span: 6, fill: true },
       { type: "Button", variant: orden === "desc" ? "primary" : "secondary", icon: "arrow_downward", labelText: "Recientes primero", labelTextEn: "Newest first", onPressed: { event: "capsOrder", arg: "desc" }, span: 6, fill: true },
     ] } : null,
-    d.chapters.length ? { type: "Column", children: chList } : empty("Sin capítulos listados", "No chapters listed"),
+    // búsqueda de capítulos (dv: el AJAX del sitio busca en TODA la obra, RCA 2026-11)
+    d.src === "dv" ? { type: "TextField", key: "capq", kind: "search", labelText: "Buscar capítulo por número o título", labelTextEn: "Search chapter by number or title", value: d.capsQ || "", onSubmitted: "capq", onTrailingTap: "capq", trailingIcon: "search", trailingLabel: "Buscar" } : null,
+    d.chapters.length ? { type: "Column", children: chList } : empty(d.capsQ ? "Sin resultados para «" + d.capsQ + "»" : "Sin capítulos listados", d.capsQ ? "No results for \"" + d.capsQ + "\"" : "No chapters listed"),
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
     d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente" + (d.total ? " (" + d.chapters.length + " de " + d.total + ")" : ""), labelTextEn: "Load more from source" + (d.total ? " (" + d.chapters.length + " of " + d.total + ")" : ""), onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null,
   ].filter(Boolean);
@@ -1084,6 +1086,22 @@ export async function screenEvent(ctx) {
       return { state: { q, results: hecho, busy: false } };
     }
 
+    case "capq": {
+      // búsqueda de capítulos en DevilNovels (el AJAX busca en TODA la obra, no solo lo cargado)
+      const d = state && state.detail;
+      if (!d) return null;
+      const q = String(value || "").trim();
+      try {
+        const c = q
+          ? await nv.novelChapters(d.src, d.slug, { page: 1, postsPerPage: 50, search: q })
+          : await nv.novelChapters(d.src, d.slug, { page: 1, postsPerPage: 50, order: "asc" });
+        const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title, pago: Boolean(x.pago) }));
+        return { state: { detail: { ...d, capsQ: q, chapters: more, next: c.next, total: c.total } } };
+      } catch (e) {
+        return { toast: en ? "Could not search chapters." : "No se pudo buscar capítulos." };
+      }
+    }
+
     case "caps": {
       const d = state && state.detail;
       if (!d || !d.next) return null;
@@ -1091,7 +1109,7 @@ export async function screenEvent(ctx) {
         // novelas: lotes por novels.js (DevilNovels trae páginas REST de verdad; las API de una
         // respuesta cortan su caché) — manga: el cursor propio de su adaptador
         const c = isNovel(d.src)
-          ? await nv.novelChapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" })
+          ? await nv.novelChapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc", search: d.capsQ || undefined })
           : await adapter(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
         const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title, pago: Boolean(x.pago) }));
         return { state: { detail: { ...d, chapters: d.chapters.concat(more).slice(0, 4000), next: c.next } } };

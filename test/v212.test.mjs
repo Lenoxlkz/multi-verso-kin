@@ -24,8 +24,8 @@ test("dv tiene adaptador propio de raspaje HTML (kind devilnovels)", () => {
   assert.ok(novels.includes('if (k === "devilnovels") return dvA.detail'), "el detalle de dv no va por el adaptador nuevo");
   assert.ok(novels.includes('if (k === "devilnovels") return dvA.chapter'), "el lector de dv no va por el adaptador nuevo");
   // v2.15.0: el detalle de dv ya NO incrusta la lista (la ficha solo trae los extremos);
-  // los capítulos llegan POR LOTES vía novelChapters → capsPage (REST de WordPress)
-  assert.ok(novels.includes("if (KIND_OF[src] === \"devilnovels\") return dvA.capsPage"), "novelChapters no despacha dv por lotes");
+  // los capítulos llegan POR LOTES vía novelChapters → capsPage (desde v2.17, con búsqueda)
+  assert.ok(novels.includes("return dvA.capsPage(src, slug, opts);"), "novelChapters no despacha dv por lotes");
   assert.ok(!novels.includes("d.chapters = await dvA.capsList"), "el detalle de dv sigue bajando TODA la obra al abrirlo");
 });
 
@@ -65,7 +65,7 @@ test("«Abrir en el navegador» apunta a la raíz del dominio", () => {
 });
 
 test("la versión avanza y el build lleva el adaptador nuevo", () => {
-  assert.equal(manifest.version, "2.16.0");
+  assert.equal(manifest.version, "2.17.0");
   assert.ok(built.includes('"/" + slug + "/" + capSlug + "/" + id + "/"'), "el build no lleva el adaptador dv");
   assert.ok(built.includes("esNovela(s) ? novelSearch(s, q)"), "el build no lleva la búsqueda de novelas");
 });

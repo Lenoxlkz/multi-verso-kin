@@ -218,7 +218,7 @@ const ENUMS = new Map();
 function enumDe(slug) {
   const e = ENUMS.get(slug);
   if (e && Date.now() - e.ts < ENUM_TTL) return e;
-  const n = { ids: new Map(), ajax: null, ajaxPendiente: null, ajaxIntentada: false, ajTraidas: 0, ajFin: false, rest: null, locked: null, paginas: new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
+  const n = { ids: new Map(), ajax: null, ajaxPendiente: null, ajaxIntentada: false, ajTraidas: 0, ajFin: false, rest: null, pageId: null, locked: null, paginas: new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
   if (ENUMS.size > 8) ENUMS.delete(ENUMS.keys().next().value);
   ENUMS.set(slug, n);
   return n;
@@ -272,6 +272,21 @@ function catIdDe(html) {
   return null;
 }
 
+/** El id de la PÁGINA de WordPress de la novela (el tema lo expone junto al CAT_ID — el RCA
+ *  2026-11 vio las variables CAT_ID, PAGE_ID y PER_PAGE en el JS del sitio). Con él, el plan B
+ *  (REST de hijos) va directa con parent=<PAGE_ID> sin la búsqueda por slug. */
+function pageIdDe(html) {
+  for (const re of [
+    /PAGE_ID["']?\s*[:=]\s*["']?(\d{2,10})/i,
+    /data-(?:page|post)[_-]?id=["'](\d{2,10})["']/i,
+    /page[_-]?id["']?\s*[:=]\s*["']?(\d{2,10})/i,
+  ]) {
+    const m = re.exec(html);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 /** Los capítulos con candado: el tema guarda una lista de ids bloqueados en la página. */
 function lockedIdsDe(html) {
   const m = /LOCKED[_A-Z]*\s*=\s*\[([0-9,\s]{1,4000})\]/.exec(html);
@@ -305,17 +320,19 @@ function filaAjax(item, locked) {
   return filaDe(cs, id, pago);
 }
 
-async function ajaxCaps(catId, page) {
+async function ajaxCaps(catId, page, search = "") {
+  // Cabeceras minimalistas y creíbles (consejo del RCA 2026-11): el UA forzado y lo que un XHR
+  // real lleva — SIN X-Requested-With ni nada que delate WebView o automatización.
   const r = await fetchText(AJAX_URL, {
     heads: {
       Accept: "application/json, text/javascript, */*; q=0.01",
       "Content-Type": "application/x-www-form-urlencoded",
-      "X-Requested-With": "XMLHttpRequest",
       Referer: "https://devilnovels.com/",
       "User-Agent": UA,
     },
     method: "POST",
-    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page + "&search=",
+    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page +
+      "&search=" + encodeURIComponent(String(search || "").trim()),
     timeoutMs: AJAX_TIMEOUT,
   });
   if (!r.ok) return null;
@@ -438,6 +455,7 @@ async function enumCaps(slug) {
       enumVuelca(e, html, slug);
       e.locked = lockedIdsDe(html);
       e.ajaxPendiente = catIdDe(html);
+      e.pageId = pageIdDe(html);
     } catch { /* sin ficha: solo el id que ya se conozca */ }
   }
   // plan A: el mismo XHR que hace la página (dv_load_chapters); el total real llega en la
@@ -458,23 +476,44 @@ async function enumCaps(slug) {
     }
   }
   if (e.ajax && e.ajFin) e.completa = true;
-  // plan B: la REST de WordPress (una sola vez por obra: si está cerrada, no se re-intenta)
+  // plan B: la REST de WordPress (una sola vez por obra). El PAGE_ID de la ficha, si existe,
+  // evita la búsqueda por slug — pero se VALIDA con su primera página: un marcador equivocado
+  // no trae capítulos (un falso «completa» devolvería solo los extremos, el bug original).
   if (!e.ajax && !e.restIntentada) {
     e.restIntentada = true;
-    let padre = null;
-    try { padre = await restPadre(slug); } catch { padre = null; }
-    e.rest = padre ? { id: padre.id, total: padre.total } : { id: 0, total: undefined };
-    if (e.rest.id) {
+    e.rest = { id: 0, total: undefined };
+    if (e.pageId) {
       try {
-        const r1 = await restPagina(e.rest.id, 1, "asc");
+        const r1 = await restPagina(Number(e.pageId), 1, "asc");
         if (r1.ok && Array.isArray(r1.body)) {
-          e.ascTraidas = 1;
-          e.paginas.add("asc1");
+          const antes = e.ids.size;
           restVuelca(e, r1.body, slug);
-          if (r1.body.length < REST_PER) { e.restFin = true; e.completa = true; }
-          if (!e.rest.total) e.rest.total = totalRest(r1.headers);
-        } else e.rest.id = 0;
-      } catch { e.rest.id = 0; }
+          if (r1.body.length && e.ids.size > antes) {
+            e.rest.id = Number(e.pageId);
+            e.ascTraidas = 1;
+            e.paginas.add("asc1");
+            if (!e.rest.total) e.rest.total = totalRest(r1.headers);
+            if (r1.body.length < REST_PER) { e.restFin = true; e.completa = true; }
+          }
+        }
+      } catch { /* PAGE_ID malo o REST cerrada: búsqueda por slug */ }
+    }
+    if (!e.rest.id) {
+      let padre = null;
+      try { padre = await restPadre(slug); } catch { padre = null; }
+      e.rest = padre ? { id: padre.id, total: padre.total } : { id: 0, total: undefined };
+      if (e.rest.id) {
+        try {
+          const r1 = await restPagina(e.rest.id, 1, "asc");
+          if (r1.ok && Array.isArray(r1.body)) {
+            e.ascTraidas = 1;
+            e.paginas.add("asc1");
+            restVuelca(e, r1.body, slug);
+            if (r1.body.length < REST_PER) { e.restFin = true; e.completa = true; }
+            if (!e.rest.total) e.rest.total = totalRest(r1.headers);
+          } else e.rest.id = 0;
+        } catch { e.rest.id = 0; }
+      }
     }
   }
   if (!e.ajax && e.rest && e.rest.id && e.restFin) e.completa = true;
@@ -514,6 +553,29 @@ export async function capsList(src, slug) {
   const rows = enumLista(e);
   if (rows.length) capsCachePut(slug, rows);
   return rows.map(filaACap);
+}
+
+/** Búsqueda de capítulos por el AJAX del sitio (search=, límite #3 del RCA 2026-11): busca en
+ *  TODA la obra — incluso en los capítulos que la carga progresiva todavía no trajo. NO toca la
+ *  enumeración (mezclar resultados filtrados en e.ids corrompería la lista completa); trae su
+ *  propia paginación con el total filtrado. */
+export async function capsSearch(src, slug, query, page) {
+  const q = String(query || "").trim();
+  const p = Math.max(1, Math.floor(Number(page) || 1));
+  if (!q) return capsPage(src, slug, { page: p });
+  const html = await fichaDe(slug);
+  const catId = catIdDe(html);
+  if (!catId) return { items: [], next: null, total: 0 }; // sin cat_id no hay búsqueda
+  const locked = lockedIdsDe(html);
+  const r = await ajaxCaps(catId, p, q);
+  if (!r) return { items: [], next: null, total: undefined };
+  const rows = [];
+  for (const item of r.caps || []) {
+    const f = filaAjax(item, locked);
+    if (f) rows.push(f);
+  }
+  rows.sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+  return { items: rows.map(filaACap), next: p < (r.pages || 1) ? p + 1 : null, total: r.total };
 }
 
 /** Vecinos del lector (prev/next) sin bajar la obra entera: la lista en caché primero; si no,

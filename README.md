@@ -30,6 +30,16 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.17
+
+**Ajustes del RCA con navegador real (otra sesión) y el AJAX como contrato del sitio:**
+
+- **Headers que no delatan**: el AJAX ya no manda `X-Requested-With` ni nada que huela a WebView o automatización — solo el UA forzado, Accept, Content-Type y Referer, lo que un XHR real lleva. El User-Agent sigue forzado en TODAS las peticiones de la fuente (fichas, AJAX, REST, lector).
+- **`PAGE_ID` de la ficha**: el tema expone `CAT_ID`, `PAGE_ID` y `PER_PAGE` en su JS. El plugin extrae el `PAGE_ID` y alimenta la REST de WordPress (plan B) directamente por `parent=<PAGE_ID>`, sin la búsqueda por slug — y valida su primera página: un marcador equivocado no trae capítulos y cae a la búsqueda por slug (evita el falso «lista completa» con solo los extremos, el bug original del #19).
+- **Reintento ante bloqueos temporales**: la reputación de Cloudflare cambia con el tiempo (el RCA lo confirma: el 1020/403 a veces pasa y a veces no). `fetchText` reintenta UNA vez tras 1,2 s ante 403/429/503 — recupera los cortes de mala suerte sin doblar la espera cuando el bloqueo es firme.
+- **Búsqueda de capítulos**: el AJAX trae `search=` y busca en TODA la obra, incluso en los capítulos que la carga progresiva aún no trajo. El detalle de DevilNovels gana una caja «Buscar capítulo por número o título»; los resultados tienen su propia paginación con el total filtrado y NO contaminan la enumeración completa de la obra.
+- Tests: 111 (reintento, PAGE_ID válido/equivocado, búsqueda con y sin contaminación, higiene de headers).
+
 ## Novedades v2.16
 
 **El motor de capítulos de DevilNovels pasa al AJAX REAL del sitio** (RCA con captura de DevTools del problema #19):

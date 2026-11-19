@@ -71,7 +71,11 @@ async function fetchText(url, { heads: heads3 = {}, timeoutMs = 12e3, method = "
     const cf = cfCookieHead(url);
     if (cf) hs.Cookie = cf;
   }
-  const r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
+  let r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
+  if (!r.ok && (r.status === 403 || r.status === 429 || r.status === 503)) {
+    await new Promise((res) => setTimeout(res, 1200));
+    r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
+  }
   const text = r.text ? r.text() : "";
   noteHttp(url, r.status, text);
   return { status: r.status, ok: r.ok, text, headers: r.headers || {} };
@@ -921,7 +925,7 @@ var ENUMS = /* @__PURE__ */ new Map();
 function enumDe(slug) {
   const e = ENUMS.get(slug);
   if (e && Date.now() - e.ts < ENUM_TTL) return e;
-  const n = { ids: /* @__PURE__ */ new Map(), ajax: null, ajaxPendiente: null, ajaxIntentada: false, ajTraidas: 0, ajFin: false, rest: null, locked: null, paginas: /* @__PURE__ */ new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
+  const n = { ids: /* @__PURE__ */ new Map(), ajax: null, ajaxPendiente: null, ajaxIntentada: false, ajTraidas: 0, ajFin: false, rest: null, pageId: null, locked: null, paginas: /* @__PURE__ */ new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
   if (ENUMS.size > 8) ENUMS.delete(ENUMS.keys().next().value);
   ENUMS.set(slug, n);
   return n;
@@ -959,6 +963,17 @@ function catIdDe(html) {
   }
   return null;
 }
+function pageIdDe(html) {
+  for (const re of [
+    /PAGE_ID["']?\s*[:=]\s*["']?(\d{2,10})/i,
+    /data-(?:page|post)[_-]?id=["'](\d{2,10})["']/i,
+    /page[_-]?id["']?\s*[:=]\s*["']?(\d{2,10})/i
+  ]) {
+    const m = re.exec(html);
+    if (m) return m[1];
+  }
+  return null;
+}
 function lockedIdsDe(html) {
   const m = /LOCKED[_A-Z]*\s*=\s*\[([0-9,\s]{1,4000})\]/.exec(html);
   if (!m) return null;
@@ -987,17 +1002,16 @@ function filaAjax(item, locked) {
   const pago = Boolean(item.locked || item.is_locked || item.pago) || (locked ? locked.has(id) : false);
   return filaDe(cs, id, pago);
 }
-async function ajaxCaps(catId, page) {
+async function ajaxCaps(catId, page, search6 = "") {
   const r = await fetchText(AJAX_URL, {
     heads: {
       Accept: "application/json, text/javascript, */*; q=0.01",
       "Content-Type": "application/x-www-form-urlencoded",
-      "X-Requested-With": "XMLHttpRequest",
       Referer: "https://devilnovels.com/",
       "User-Agent": UA
     },
     method: "POST",
-    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page + "&search=",
+    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page + "&search=" + encodeURIComponent(String(search6 || "").trim()),
     timeoutMs: AJAX_TIMEOUT
   });
   if (!r.ok) return null;
@@ -1116,6 +1130,7 @@ async function enumCaps(slug) {
       enumVuelca(e, html, slug);
       e.locked = lockedIdsDe(html);
       e.ajaxPendiente = catIdDe(html);
+      e.pageId = pageIdDe(html);
     } catch {
     }
   }
@@ -1141,28 +1156,51 @@ async function enumCaps(slug) {
   if (e.ajax && e.ajFin) e.completa = true;
   if (!e.ajax && !e.restIntentada) {
     e.restIntentada = true;
-    let padre = null;
-    try {
-      padre = await restPadre(slug);
-    } catch {
-      padre = null;
-    }
-    e.rest = padre ? { id: padre.id, total: padre.total } : { id: 0, total: void 0 };
-    if (e.rest.id) {
+    e.rest = { id: 0, total: void 0 };
+    if (e.pageId) {
       try {
-        const r1 = await restPagina(e.rest.id, 1, "asc");
+        const r1 = await restPagina(Number(e.pageId), 1, "asc");
         if (r1.ok && Array.isArray(r1.body)) {
-          e.ascTraidas = 1;
-          e.paginas.add("asc1");
+          const antes = e.ids.size;
           restVuelca(e, r1.body, slug);
-          if (r1.body.length < REST_PER) {
-            e.restFin = true;
-            e.completa = true;
+          if (r1.body.length && e.ids.size > antes) {
+            e.rest.id = Number(e.pageId);
+            e.ascTraidas = 1;
+            e.paginas.add("asc1");
+            if (!e.rest.total) e.rest.total = totalRest(r1.headers);
+            if (r1.body.length < REST_PER) {
+              e.restFin = true;
+              e.completa = true;
+            }
           }
-          if (!e.rest.total) e.rest.total = totalRest(r1.headers);
-        } else e.rest.id = 0;
+        }
       } catch {
-        e.rest.id = 0;
+      }
+    }
+    if (!e.rest.id) {
+      let padre = null;
+      try {
+        padre = await restPadre(slug);
+      } catch {
+        padre = null;
+      }
+      e.rest = padre ? { id: padre.id, total: padre.total } : { id: 0, total: void 0 };
+      if (e.rest.id) {
+        try {
+          const r1 = await restPagina(e.rest.id, 1, "asc");
+          if (r1.ok && Array.isArray(r1.body)) {
+            e.ascTraidas = 1;
+            e.paginas.add("asc1");
+            restVuelca(e, r1.body, slug);
+            if (r1.body.length < REST_PER) {
+              e.restFin = true;
+              e.completa = true;
+            }
+            if (!e.rest.total) e.rest.total = totalRest(r1.headers);
+          } else e.rest.id = 0;
+        } catch {
+          e.rest.id = 0;
+        }
       }
     }
   }
@@ -1190,6 +1228,24 @@ async function capsPage(src, slug, opts = {}) {
     next: desde + per < rows.length ? page + 1 : null,
     total
   };
+}
+async function capsSearch(src, slug, query, page) {
+  const q = String(query || "").trim();
+  const p = Math.max(1, Math.floor(Number(page) || 1));
+  if (!q) return capsPage(src, slug, { page: p });
+  const html = await fichaDe(slug);
+  const catId = catIdDe(html);
+  if (!catId) return { items: [], next: null, total: 0 };
+  const locked = lockedIdsDe(html);
+  const r = await ajaxCaps(catId, p, q);
+  if (!r) return { items: [], next: null, total: void 0 };
+  const rows = [];
+  for (const item of r.caps || []) {
+    const f = filaAjax(item, locked);
+    if (f) rows.push(f);
+  }
+  rows.sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+  return { items: rows.map(filaACap), next: p < (r.pages || 1) ? p + 1 : null, total: r.total };
 }
 async function vecinosDe(slug, id) {
   const enCache = capsCacheGet(slug);
@@ -2036,7 +2092,10 @@ function capsLoader(src, slug) {
   return madaraChapters(src, slug);
 }
 async function novelChapters(src, slug, opts = {}) {
-  if (KIND_OF[src] === "devilnovels") return capsPage(src, slug, opts);
+  if (KIND_OF[src] === "devilnovels") {
+    if (String(opts.search || "").trim()) return capsSearch(src, slug, opts.search, opts.page);
+    return capsPage(src, slug, opts);
+  }
   const page = Math.max(1, Math.floor(Number(opts.page) || 1));
   const per = Math.min(100, Math.max(10, Math.floor(Number(opts.postsPerPage) || 50)));
   const caps = await capsOf(src, slug, () => capsLoader(src, slug));
@@ -3200,7 +3259,9 @@ function viewDetalle(ctx) {
       { type: "Button", variant: orden === "asc" ? "primary" : "secondary", icon: "arrow_upward", labelText: "Antiguos primero", labelTextEn: "Oldest first", onPressed: { event: "capsOrder", arg: "asc" }, span: 6, fill: true },
       { type: "Button", variant: orden === "desc" ? "primary" : "secondary", icon: "arrow_downward", labelText: "Recientes primero", labelTextEn: "Newest first", onPressed: { event: "capsOrder", arg: "desc" }, span: 6, fill: true }
     ] } : null,
-    d.chapters.length ? { type: "Column", children: chList } : empty("Sin capítulos listados", "No chapters listed"),
+    // búsqueda de capítulos (dv: el AJAX del sitio busca en TODA la obra, RCA 2026-11)
+    d.src === "dv" ? { type: "TextField", key: "capq", kind: "search", labelText: "Buscar capítulo por número o título", labelTextEn: "Search chapter by number or title", value: d.capsQ || "", onSubmitted: "capq", onTrailingTap: "capq", trailingIcon: "search", trailingLabel: "Buscar" } : null,
+    d.chapters.length ? { type: "Column", children: chList } : empty(d.capsQ ? "Sin resultados para «" + d.capsQ + "»" : "Sin capítulos listados", d.capsQ ? 'No results for "' + d.capsQ + '"' : "No chapters listed"),
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
     d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente" + (d.total ? " (" + d.chapters.length + " de " + d.total + ")" : ""), labelTextEn: "Load more from source" + (d.total ? " (" + d.chapters.length + " of " + d.total + ")" : ""), onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null
   ].filter(Boolean);
@@ -3526,11 +3587,23 @@ async function screenEvent(ctx) {
       const hecho = await runSearch(q, state.busqSrc || "");
       return { state: { q, results: hecho, busy: false } };
     }
+    case "capq": {
+      const d = state && state.detail;
+      if (!d) return null;
+      const q = String(value || "").trim();
+      try {
+        const c = q ? await novelChapters(d.src, d.slug, { page: 1, postsPerPage: 50, search: q }) : await novelChapters(d.src, d.slug, { page: 1, postsPerPage: 50, order: "asc" });
+        const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title, pago: Boolean(x.pago) }));
+        return { state: { detail: { ...d, capsQ: q, chapters: more, next: c.next, total: c.total } } };
+      } catch (e) {
+        return { toast: en ? "Could not search chapters." : "No se pudo buscar capítulos." };
+      }
+    }
     case "caps": {
       const d = state && state.detail;
       if (!d || !d.next) return null;
       try {
-        const c = isNovel(d.src) ? await novelChapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" }) : await adapter2(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
+        const c = isNovel(d.src) ? await novelChapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc", search: d.capsQ || void 0 }) : await adapter2(d.src).chapters(d.src, d.slug, { page: Number(d.next), postsPerPage: 50, order: "asc" });
         const more = c.items.map((x) => ({ r: chapterRef(d.src, d.slug, x.slug), n: x.number, t: x.title, pago: Boolean(x.pago) }));
         return { state: { detail: { ...d, chapters: d.chapters.concat(more).slice(0, 4e3), next: c.next } } };
       } catch (e) {
