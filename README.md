@@ -30,6 +30,17 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
 
+## Novedades v2.16
+
+**El motor de capítulos de DevilNovels pasa al AJAX REAL del sitio** (RCA con captura de DevTools del problema #19):
+
+- **La lista de capítulos nunca estuvo en el HTML de la ficha**: el sitio la trae por POST a `admin-ajax.php` con `action=dv_load_chapters&cat_id=<id>&page=<n>&search=` y responde `{ success, data: { chapters, total, pages } }` de 100 en 100. Por eso las novelas de 3.000+ capítulos mostraban solo 2. Ahora el plugin hace el mismo XHR: el `cat_id` sale de los data-attributes de la propia ficha (con marcadores de respaldo) y los capítulos con candado se marcan con el `LOCKED_IDS` que el tema guarda en la página.
+- **Mapeo tolerante del capítulo**: la fila del AJAX puede traer la URL o el par slug+id — ambas formas dan el mismo slug interno `<cap>.<id>` y el número extraído del slug.
+- **El servidor entrega la lista ASCENDENTE**: la última página AJAX es la de los capítulos más nuevos, y de ahí salen los vecinos Anterior/Siguiente del lector (1-2 peticiones, sin recorrer la obra; si el AJAX cae, la REST de WordPress y los extremos de la ficha siguen de respaldo).
+- **El botón «Cargar más de la fuente» muestra el avance** («50 de 3.249») desde la primera respuesta, que ya trae el total real.
+- La REST de WordPress (`wp-json/wp/v2/pages?parent=`) queda como plan B, y la paginación y las filas de la ficha como planes C/D — cuatro vías para la misma lista.
+- Tests: 106 (envelope real del AJAX con 3.249 capítulos y 33 páginas, formas tolerantes, candados, vecinos por cola y respaldo REST).
+
 ## Novedades v2.15
 
 **Capítulos completos con carga progresiva y filtro de orden de capítulos:**

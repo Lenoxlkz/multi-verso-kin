@@ -758,7 +758,7 @@ function viewDetalle(ctx) {
     ] } : null,
     d.chapters.length ? { type: "Column", children: chList } : empty("Sin capítulos listados", "No chapters listed"),
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
-    d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente", labelTextEn: "Load more from source", onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null,
+    d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente" + (d.total ? " (" + d.chapters.length + " de " + d.total + ")" : ""), labelTextEn: "Load more from source" + (d.total ? " (" + d.chapters.length + " of " + d.total + ")" : ""), onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null,
   ].filter(Boolean);
   return scaffold(String(d.title).slice(0, 30), String(d.title).slice(0, 30), ctx, { type: "SingleChildScrollView", children: kids }, { share: device !== "tv" ? { label: en ? "Share" : "Compartir" } : undefined, navValue: "home", bottomBar: true });
 }

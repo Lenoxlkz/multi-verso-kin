@@ -175,12 +175,13 @@ function asItems(list) {
 
 // ---------- capítulos: enumeración COMPLETA por lotes ----------
 // La ficha del sitio solo lista un par de capítulos (los extremos) y una novela llega a tener
-// 3000+. Los capítulos cuelgan de la novela en WordPress, así que la lista completa sale de la
-// REST del propio sitio (wp-json/wp/v2/pages?parent=<id>, 100 por página, total real en la
-// cabecera X-WP-Total). Planes, en orden:
-//   A — REST de WordPress paginada (la vía buena: TODOS los capítulos)
-//   B — la paginación de la propia ficha (enlaces ?cpage=N / page/N del tema)
-//   C — las filas de la ficha (extremos; siempre hay algo)
+// 3000+. RCA con captura real de DevTools (2026-11): el JS del sitio trae la lista por AJAX.
+// Planes, en orden:
+//   A — el AJAX del sitio: POST admin-ajax action=dv_load_chapters&cat_id=<id>&page=<n> (100
+//       por página, total y pages reales en la respuesta; el cat_id sale de la propia ficha)
+//   B — la REST de WordPress (wp-json/wp/v2/pages?parent=<id>) por si el AJAX cambia
+//   C — la paginación de la propia ficha (enlaces ?cpage=N / page/N del tema)
+//   D — las filas de la ficha (extremos; siempre hay algo)
 // La carga es PROGRESIVA: capsPage entrega un lote y el siguiente solo se pide cuando la
 // pantalla lo pide — nada baja 3000 capítulos de golpe (análisis claro, menos recursos).
 
@@ -217,7 +218,7 @@ const ENUMS = new Map();
 function enumDe(slug) {
   const e = ENUMS.get(slug);
   if (e && Date.now() - e.ts < ENUM_TTL) return e;
-  const n = { ids: new Map(), rest: null, paginas: new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
+  const n = { ids: new Map(), ajax: null, ajaxPendiente: null, ajaxIntentada: false, ajTraidas: 0, ajFin: false, rest: null, locked: null, paginas: new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
   if (ENUMS.size > 8) ENUMS.delete(ENUMS.keys().next().value);
   ENUMS.set(slug, n);
   return n;
@@ -244,7 +245,114 @@ function enumLista(e) {
   return [...e.ids.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
 }
 
-// ---------- plan A: la REST de WordPress ----------
+// ---------- plan A: el AJAX del propio sitio (dv_load_chapters) ----------
+// RCA con captura real de DevTools (2026-11): la lista de capítulos NO está en el HTML de la
+// ficha («Cargando…»); el JS del sitio la trae por POST a admin-ajax:
+//   action=dv_load_chapters&cat_id=<id de la novela>&page=<n>&search=
+// y responde { success: true, data: { chapters: [...], total: 3249, pages: 33 } } con
+// PER_PAGE = 100. El servidor devuelve la lista ASCENDENTE (el cliente la invierte para «desc»),
+// así que la ÚLTIMA página es la de los capítulos más nuevos — la usa el lector.
+
+const AJAX_URL = "https://devilnovels.com/wp-admin/admin-ajax.php";
+const AJAX_PER = 100;
+const AJAX_MAX_PAGINAS = 45; // 45 × 100 = 4500 capítulos de una obra, tope prudente
+const AJAX_TIMEOUT = 20000;
+
+/** El id de la novela para el AJAX sale de la ficha (data-attributes y configuración inline del
+ *  tema; el marcador exacto puede cambiar con el tema, así que se prueban varios). */
+function catIdDe(html) {
+  for (const re of [
+    /data-(?:cat|novel|post)[_-]?id=["'](\d{2,10})["']/i,
+    /cat[_-]?id["']?\s*[:=]\s*["']?(\d{2,10})/i,
+    /"cat_id"\s*:\s*(\d{2,10})/,
+  ]) {
+    const m = re.exec(html);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** Los capítulos con candado: el tema guarda una lista de ids bloqueados en la página. */
+function lockedIdsDe(html) {
+  const m = /LOCKED[_A-Z]*\s*=\s*\[([0-9,\s]{1,4000})\]/.exec(html);
+  if (!m) return null;
+  const set = new Set();
+  for (const t of m[1].split(",")) {
+    const n = Number(t.trim());
+    if (n > 0) set.add(String(n));
+  }
+  return set.size ? set : null;
+}
+
+/** Fila tolerante del AJAX: el campo exacto del tema puede variar, pero la URL del capítulo
+ *  (siempre /<novela>/<cap-slug>/<id>) da el cap-slug y la id — igual que en la ficha. */
+function filaAjax(item, locked) {
+  if (!item || typeof item !== "object") return null;
+  const url = String(item.url || item.permalink || item.link || item.href || "");
+  let id = item.id != null ? String(item.id) : (item.ID != null ? String(item.ID) : "");
+  if (!/^\d+$/.test(id)) {
+    const mu = /\/(\d{2,10})\/?$/.exec(url);
+    id = mu ? mu[1] : "";
+  }
+  if (!/^\d+$/.test(id)) return null;
+  let cs = String(item.slug || "");
+  if (!/^[a-z0-9-]+$/i.test(cs)) {
+    const mu = /\/([a-z0-9-]+)\/\d{2,10}\/?$/.exec(url);
+    cs = mu ? mu[1] : "";
+  }
+  if (!cs) return null;
+  const pago = Boolean(item.locked || item.is_locked || item.pago) || (locked ? locked.has(id) : false);
+  return filaDe(cs, id, pago);
+}
+
+async function ajaxCaps(catId, page) {
+  const r = await fetchText(AJAX_URL, {
+    heads: {
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: "https://devilnovels.com/",
+      "User-Agent": UA,
+    },
+    method: "POST",
+    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page + "&search=",
+    timeoutMs: AJAX_TIMEOUT,
+  });
+  if (!r.ok) return null;
+  let b = null;
+  try { b = JSON.parse(r.text); } catch { return null; }
+  if (!b || b.success !== true || !b.data || !Array.isArray(b.data.chapters)) return null;
+  return {
+    caps: b.data.chapters,
+    total: Number(b.data.total) > 0 ? Number(b.data.total) : undefined,
+    pages: Number(b.data.pages) > 0 ? Number(b.data.pages) : undefined,
+  };
+}
+
+function ajaxVuelca(e, resp, locked) {
+  for (const item of resp.caps || []) {
+    const f = filaAjax(item, locked);
+    if (f) enumPon(e, f);
+  }
+}
+
+/** Trae páginas AJAX ascendentes hasta cubrir el lote pedido o hasta la última página. */
+async function enumAjaxHasta(e, objetivo) {
+  const tope = Math.min(e.ajax.pages || AJAX_MAX_PAGINAS, AJAX_MAX_PAGINAS);
+  for (let k = e.ajTraidas + 1; k <= tope && !e.ajFin; k++) {
+    if (e.ajTraidas * AJAX_PER >= objetivo) break;
+    const r = await ajaxCaps(e.ajax.catId, k);
+    if (!r) { e.ajFin = true; break; }
+    e.ajTraidas = k;
+    e.paginas.add("aj" + k);
+    ajaxVuelca(e, r, e.locked);
+    if (r.total && !e.ajax.total) e.ajax.total = r.total;
+    if ((r.pages && k >= r.pages) || (r.caps || []).length < AJAX_PER) { e.ajFin = true; e.completa = true; }
+  }
+  if (e.ajFin) e.completa = true;
+}
+
+// ---------- plan B: la REST de WordPress ----------
 
 const REST_BASE = "https://devilnovels.com/wp-json/wp/v2/pages";
 const REST_PER = 100;
@@ -318,15 +426,40 @@ async function enumFichaPaginas(e, slug) {
   e.completa = true;
 }
 
-/** Estado de la enumeración de una obra: ficha volcada + primer intento de REST (una vez). */
+/** Estado de la enumeración de una obra: ficha volcada + primer intento de AJAX (plan A) y
+ *  de REST (plan B), cada uno una sola vez. */
 async function enumCaps(slug) {
   const e = enumDe(slug);
   if (e.completa) return e;
   if (!e.fichaHecha) {
     e.fichaHecha = true;
-    try { enumVuelca(e, await fichaDe(slug), slug); } catch { /* sin ficha: solo REST */ }
+    try {
+      const html = await fichaDe(slug);
+      enumVuelca(e, html, slug);
+      e.locked = lockedIdsDe(html);
+      e.ajaxPendiente = catIdDe(html);
+    } catch { /* sin ficha: solo el id que ya se conozca */ }
   }
-  if (!e.restIntentada) {
+  // plan A: el mismo XHR que hace la página (dv_load_chapters); el total real llega en la
+  // primera respuesta. Si no hay cat_id o el endpoint no responde, cae al plan B.
+  if (!e.ajaxIntentada) {
+    e.ajaxIntentada = true;
+    if (e.ajaxPendiente) {
+      try {
+        const r1 = await ajaxCaps(e.ajaxPendiente, 1);
+        if (r1) {
+          e.ajax = { catId: e.ajaxPendiente, total: r1.total, pages: r1.pages };
+          e.ajTraidas = 1;
+          e.paginas.add("aj1");
+          ajaxVuelca(e, r1, e.locked);
+          if ((r1.pages && r1.pages <= 1) || (r1.caps || []).length < AJAX_PER) { e.ajFin = true; e.completa = true; }
+        }
+      } catch { /* plan B */ }
+    }
+  }
+  if (e.ajax && e.ajFin) e.completa = true;
+  // plan B: la REST de WordPress (una sola vez por obra: si está cerrada, no se re-intenta)
+  if (!e.ajax && !e.restIntentada) {
     e.restIntentada = true;
     let padre = null;
     try { padre = await restPadre(slug); } catch { padre = null; }
@@ -344,6 +477,7 @@ async function enumCaps(slug) {
       } catch { e.rest.id = 0; }
     }
   }
+  if (!e.ajax && e.rest && e.rest.id && e.restFin) e.completa = true;
   return e;
 }
 
@@ -356,14 +490,16 @@ export async function capsPage(src, slug, opts = {}) {
   const page = Math.max(1, Math.floor(Number(opts.page) || 1));
   const per = Math.min(100, Math.max(10, Math.floor(Number(opts.postsPerPage) || 50)));
   const e = await enumCaps(slug);
-  if (e.rest && e.rest.id) await enumRestHasta(e, slug, page * per);
+  if (e.ajax) await enumAjaxHasta(e, page * per);
+  else if (e.rest && e.rest.id) await enumRestHasta(e, slug, page * per);
   else if (!e.fichaPaginas) { e.fichaPaginas = true; await enumFichaPaginas(e, slug); }
   const rows = enumLista(e);
   const desde = (page - 1) * per;
+  const total = e.ajax && e.ajax.total ? e.ajax.total : (e.rest && e.rest.total ? e.rest.total : (e.completa ? rows.length : undefined));
   return {
     items: rows.slice(desde, desde + per).map(filaACap),
     next: desde + per < rows.length ? page + 1 : null,
-    total: e.rest && e.rest.total ? e.rest.total : (e.completa ? rows.length : undefined),
+    total,
   };
 }
 
@@ -372,7 +508,8 @@ export async function capsList(src, slug) {
   const enCache = capsCacheGet(slug);
   if (enCache) return enCache.map(filaACap);
   const e = await enumCaps(slug);
-  if (e.rest && e.rest.id) await enumRestHasta(e, slug, Infinity);
+  if (e.ajax) await enumAjaxHasta(e, Infinity);
+  else if (e.rest && e.rest.id) await enumRestHasta(e, slug, Infinity);
   else if (!e.fichaPaginas) { e.fichaPaginas = true; await enumFichaPaginas(e, slug); }
   const rows = enumLista(e);
   if (rows.length) capsCachePut(slug, rows);
@@ -380,8 +517,9 @@ export async function capsList(src, slug) {
 }
 
 /** Vecinos del lector (prev/next) sin bajar la obra entera: la lista en caché primero; si no,
- *  la REST en DESCENSO (la primera página trae los capítulos más nuevos, donde casi siempre
- *  está el lector) hasta dar con el capítulo, y como respaldo los extremos de la ficha. */
+ *  el AJAX por la COLA (el servidor entrega ASCENDENTE: la última página trae los capítulos
+ *  más nuevos, donde casi siempre está el lector) caminando hacia atrás hasta dar con el
+ *  capítulo; sin AJAX, la REST en descenso; y como último respaldo, los extremos de la ficha. */
 export async function vecinosDe(slug, id) {
   const enCache = capsCacheGet(slug);
   if (enCache) {
@@ -390,7 +528,24 @@ export async function vecinosDe(slug, id) {
   }
   const busco = String(id);
   const e = await enumCaps(slug);
-  if (e.rest && e.rest.id) {
+  if (e.ajax) {
+    const tope = Math.min(e.ajax.pages || 1, AJAX_MAX_PAGINAS);
+    for (let m = 0; m < 8 && tope - m >= 1; m++) {
+      const k = tope - m;
+      if (!e.paginas.has("aj" + k)) {
+        const r = await ajaxCaps(e.ajax.catId, k);
+        if (!r) break;
+        e.paginas.add("aj" + k);
+        ajaxVuelca(e, r, e.locked);
+        if ((r.pages && k >= r.pages) || (r.caps || []).length < AJAX_PER) { e.ajFin = true; e.completa = true; }
+      }
+      const rows = enumLista(e);
+      const i = rows.findIndex((c) => c.id === busco);
+      if (i > 0) return vecinosEn(rows, i); // el anterior está a la vista: definitivo
+      if (i === 0 && (k <= 1 || e.completa || m >= 7)) return vecinosEn(rows, i);
+      // está al INICIO del tramo cargado y pueden existir capítulos más viejos: una página atrás
+    }
+  } else if (e.rest && e.rest.id) {
     for (let k = 1; k <= 8 && !e.descFin; k++) {
       if (!e.paginas.has("desc" + k)) {
         const r = await restPagina(e.rest.id, k, "desc");

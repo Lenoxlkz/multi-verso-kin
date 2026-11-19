@@ -1,10 +1,11 @@
-// v2.15.0 — capítulos COMPLETOS por carga progresiva y filtro de orden de capítulos.
+// v2.16.0 — capítulos COMPLETOS por carga progresiva (AJAX real del sitio) y filtro de orden.
 //
-// 1) DevilNovels: la ficha solo lista los extremos y las novelas llegan a 3000+ capítulos. El
-//    motor nuevo enumera TODO por la REST de WordPress (los capítulos son páginas hijas:
-//    wp-json/wp/v2/pages?parent=<id>, 100 por página, total real en X-WP-Total), con la
-//    paginación de la ficha y sus filas como planes de respaldo. capsPage entrega LOTES
-//    (nada baja la obra de golpe); vecinosDe da prev/next al lector con páginas DESC.
+// 1) DevilNovels: RCA con captura real de DevTools (2026-11): la lista NO está en el HTML de la
+//    ficha; el sitio la trae por POST a admin-ajax (action=dv_load_chapters, cat_id, page,
+//    PER_PAGE=100, con total y pages en la respuesta). El motor enumera por ahí (plan A) con
+//    cat_id y LOCKED_IDS extraídos de la ficha; la REST de WordPress queda como plan B y la
+//    paginación/filas de la ficha como planes C/D. capsPage entrega LOTES; vecinosDe da
+//    prev/next al lector por la COLA de páginas AJAX (el servidor entrega ascendente).
 // 2) La misma interfaz de lotes ({items, next, total}) cubre a TODAS las fuentes de novela:
 //    las API de una respuesta (Skynovels…) cortan su caché, sin segundas descargas.
 // 3) El detalle de manga y novelas gana el filtro de orden (antiguos/recientes primero),
@@ -22,20 +23,26 @@ const dvSrc = readFileSync(root + "src/devilnovels.js", "utf8");
 const envSrc = readFileSync(root + "src/env.js", "utf8");
 const manifest = JSON.parse(readFileSync(root + "kino-plugin.json", "utf8"));
 
-test("v2.15.0: manifest y piezas del motor progresivo", () => {
-  assert.equal(manifest.version, "2.15.0");
-  // el motor REST de DevilNovels
-  assert.ok(dvSrc.includes("wp-json/wp/v2/pages"), "falta la REST de WordPress en dv");
+test("v2.16.0: manifest y piezas del motor progresivo", () => {
+  assert.equal(manifest.version, "2.16.0");
+  // el AJAX real del sitio (plan A)
+  assert.ok(dvSrc.includes("dv_load_chapters"), "falta el AJAX dv_load_chapters");
+  assert.ok(dvSrc.includes("wp-admin/admin-ajax.php"), "falta el endpoint admin-ajax");
+  assert.ok(dvSrc.includes("function catIdDe") && dvSrc.includes("function lockedIdsDe"), "faltan cat_id/LOCKED_IDS de la ficha");
+  assert.ok(dvSrc.includes("data-(?:cat|novel|post)[_-]?id"), "el cat_id no sale de los data-attributes");
   assert.ok(dvSrc.includes("export async function capsPage"), "falta capsPage (lotes)");
   assert.ok(dvSrc.includes("export async function vecinosDe"), "falta vecinosDe (lector sin obra entera)");
+  // el plan B (REST de WordPress) queda de respaldo
+  assert.ok(dvSrc.includes("wp-json/wp/v2/pages"), "falta la REST de WordPress en dv");
   assert.ok(dvSrc.includes('"x-wp-total"'), "el total real de la REST no se lee");
-  assert.ok(dvSrc.includes("enumFichaPaginas"), "falta el plan B (paginación de la ficha)");
+  assert.ok(dvSrc.includes("enumFichaPaginas"), "falta el plan C (paginación de la ficha)");
   // la interfaz uniforme para TODAS las fuentes de novela
   assert.ok(novelsSrc.includes("export async function novelChapters"), "falta novelChapters");
   assert.ok(novelsSrc.includes("async function skCaps") && novelsSrc.includes("async function mkCaps"), "faltan los loaders únicos");
-  // la pantalla pide el primer lote y sabe pedir el siguiente
+  // la pantalla pide el primer lote y sabe pedir el siguiente (con contador del total)
   assert.ok(screen.includes("nv.novelChapters(p.src, p.a, { page: 1"), "loadDetail no pide el lote de novelas");
   assert.ok(screen.includes(".concat(more).slice(0, 4000)"), "el estado del detalle sigue cortado en 500");
+  assert.ok(screen.includes('" (" + d.chapters.length + " de " + d.total + ")"'), "el botón no muestra el avance");
   // el filtro de orden en el detalle
   assert.ok(screen.includes('event: "capsOrder"'), "falta el evento capsOrder");
   assert.ok(screen.includes('"capsOrden"'), "el orden no se guarda para las próximas visitas");
@@ -48,7 +55,13 @@ test("v2.15.0: manifest y piezas del motor progresivo", () => {
 
 const store = new Map();
 globalThis.kino = {
-  fetch: async (url) => {
+  fetch: async (url, opts) => {
+    // el AJAX real del sitio (plan A): dv_load_chapters, cat_id=133 = Esclavo de las Sombras
+    if (url.includes("wp-admin/admin-ajax.php")) {
+      const pm = /&page=(\d+)/.exec(String((opts && opts.body) || ""));
+      const p = pm ? Number(pm[1]) : 1;
+      return { status: 200, ok: true, headers: {}, text: () => JSON.stringify(paginaAjax(p)) };
+    }
     const cab = { status: 200, ok: true, headers: { "x-wp-total": "150" } };
     // REST de WordPress: búsqueda de la página madre y páginas de hijos (asc y desc).
     // «&page=N&» con los & para no confundir con «per_page=100»
@@ -75,6 +88,12 @@ globalThis.kino = {
       };
     }
     // ficha con los extremos (el capítulo del lector va antes: su URL contiene la de la ficha)
+    if (url.includes("devilnovels.com/esclavo-de-las-sombras/esclavo-de-las-sombras-capitulo-3249/53249/")) {
+      return { status: 200, ok: true, headers: {}, text: () => F("dv/capitulo.html") };
+    }
+    if (url.includes("devilnovels.com/esclavo-de-las-sombras/")) {
+      return { status: 200, ok: true, headers: {}, text: () => F("dv/esclavo.html") };
+    }
     if (url.includes("devilnovels.com/la-obra/la-obra-capitulo-150/1150/")) {
       return { status: 200, ok: true, headers: {}, text: () => F("dv/capitulo.html") };
     }
@@ -98,6 +117,21 @@ function paginaRest(desde, cuantos) {
   const out = [];
   for (let n = desde; n < desde + cuantos; n++) out.push({ id: 1000 + n, slug: "la-obra-capitulo-" + n });
   return out;
+}
+
+/** El envelope real del AJAX (RCA con captura de DevTools): 100 por página, total y pages.
+ *  La página 2 va SIN url a propósito, para probar el mapeo tolerante (slug + id). */
+function paginaAjax(p) {
+  const desde = (p - 1) * 100 + 1;
+  const hasta = Math.min(p * 100, 3249);
+  const chapters = [];
+  for (let n = desde; n <= hasta; n++) {
+    const id = 50000 + n;
+    chapters.push(p === 2
+      ? { id, slug: "esclavo-de-las-sombras-capitulo-" + n }
+      : { id, title: "Capítulo " + n, url: "https://devilnovels.com/esclavo-de-las-sombras/esclavo-de-las-sombras-capitulo-" + n + "/" + id });
+  }
+  return { success: true, data: { chapters, total: 3249, pages: 33 } };
 }
 
 const { novelDetail, novelChapter, novelChapters } = await import("../src/novels.js");
@@ -167,4 +201,53 @@ test("Primero/Último quedan cronológicos aunque la lista esté en desc", () =>
   // el orden de muestra no decide qué es primero: el número del capítulo sí
   assert.ok(screen.includes("const cronologica = ordenarCaps(d.chapters, \"asc\")"), "Primero/Último no son cronológicos");
   assert.ok(screen.includes("return orden === \"desc\" ? asc.slice().reverse() : asc"), "el orden desc no invierte");
+});
+
+// ---------- plan A: el AJAX real del sitio (dv_load_chapters, RCA con captura 2026-11) ----------
+
+test("dv AJAX: 3249 capítulos por lotes con el total real desde la página 1", async () => {
+  const l1 = await novelChapters("dv", "esclavo-de-las-sombras", { page: 1, postsPerPage: 50 });
+  assert.equal(l1.items.length, 50, "primer lote AJAX: " + l1.items.length);
+  assert.equal(l1.items[0].number, "1");
+  assert.equal(l1.items[49].number, "50");
+  assert.equal(l1.next, 2);
+  assert.equal(l1.total, 3249, "el total real del AJAX: " + l1.total);
+  // el lote 65 (fondo de la obra): 64×50 = 3200 → caps 3201..3249, y se acabaron los lotes
+  const l65 = await novelChapters("dv", "esclavo-de-las-sombras", { page: 65, postsPerPage: 50 });
+  assert.equal(l65.items.length, 49, "último lote: " + l65.items.length);
+  assert.equal(l65.items[0].number, "3201");
+  assert.equal(l65.items[48].number, "3249");
+  assert.equal(l65.next, null);
+});
+
+test("dv AJAX: mapeo tolerante (página 2 sin url, solo slug + id) y candados de LOCKED_IDS", async () => {
+  const l2 = await novelChapters("dv", "esclavo-de-las-sombras", { page: 2, postsPerPage: 50 });
+  assert.equal(l2.items[0].number, "51", "items sin url pero con slug: " + l2.items[0].number);
+  assert.equal(l2.items[0].slug, "esclavo-de-las-sombras-capitulo-51.50051", "el slug interno mantiene <cap>.<id>");
+  // lote 5 = caps 201..300; LOCKED_IDS = [50205] marca el capítulo 205
+  const l5 = await novelChapters("dv", "esclavo-de-las-sombras", { page: 5, postsPerPage: 50 });
+  const pagado = l5.items.find((c) => c.number === "205");
+  const libre = l5.items.find((c) => c.number === "206");
+  assert.equal(pagado.pago, true, "el id de LOCKED_IDS no quedó marcado");
+  assert.equal(libre.pago, false, "un capítulo libre quedó marcado");
+});
+
+test("dv AJAX: vecinos desde la COLA (el servidor entrega ascendente)", async () => {
+  // el ÚLTIMO capítulo: la cola basta y no hay next
+  const v = await dvA.vecinosDe("esclavo-de-las-sombras", "53249");
+  assert.deepEqual(v, { prev: "esclavo-de-las-sombras-capitulo-3248.53248", next: null });
+});
+
+test("dv AJAX: el lector toma prev/next del motor nuevo", async () => {
+  const c = await novelChapter("dv", "esclavo-de-las-sombras", "esclavo-de-las-sombras-capitulo-3249.53249");
+  assert.ok(c.text.length >= 2, "párrafos: " + c.text.length);
+  assert.equal(c.prev, "esclavo-de-las-sombras-capitulo-3248.53248", "prev: " + c.prev);
+  assert.equal(c.next, null, "next: " + c.next);
+});
+
+test("dv AJAX caído: la REST de WordPress sigue siendo el respaldo", async () => {
+  // la-obra no trae cat_id en su ficha: la enumeración pasa al plan B (wp-json) y funciona
+  const l1 = await novelChapters("dv", "la-obra", { page: 1, postsPerPage: 50 });
+  assert.equal(l1.items.length, 50, "el respaldo REST sigue entregando lotes");
+  assert.equal(l1.total, 150, "total por X-WP-Total: " + l1.total);
 });

@@ -921,7 +921,7 @@ var ENUMS = /* @__PURE__ */ new Map();
 function enumDe(slug) {
   const e = ENUMS.get(slug);
   if (e && Date.now() - e.ts < ENUM_TTL) return e;
-  const n = { ids: /* @__PURE__ */ new Map(), rest: null, paginas: /* @__PURE__ */ new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
+  const n = { ids: /* @__PURE__ */ new Map(), ajax: null, ajaxPendiente: null, ajaxIntentada: false, ajTraidas: 0, ajFin: false, rest: null, locked: null, paginas: /* @__PURE__ */ new Set(), ascTraidas: 0, completa: false, fichaHecha: false, fichaPaginas: false, restIntentada: false, restFin: false, descFin: false, ts: Date.now() };
   if (ENUMS.size > 8) ENUMS.delete(ENUMS.keys().next().value);
   ENUMS.set(slug, n);
   return n;
@@ -943,6 +943,102 @@ function enumVuelca(e, html, slug) {
 }
 function enumLista(e) {
   return [...e.ids.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+}
+var AJAX_URL = "https://devilnovels.com/wp-admin/admin-ajax.php";
+var AJAX_PER = 100;
+var AJAX_MAX_PAGINAS = 45;
+var AJAX_TIMEOUT = 2e4;
+function catIdDe(html) {
+  for (const re of [
+    /data-(?:cat|novel|post)[_-]?id=["'](\d{2,10})["']/i,
+    /cat[_-]?id["']?\s*[:=]\s*["']?(\d{2,10})/i,
+    /"cat_id"\s*:\s*(\d{2,10})/
+  ]) {
+    const m = re.exec(html);
+    if (m) return m[1];
+  }
+  return null;
+}
+function lockedIdsDe(html) {
+  const m = /LOCKED[_A-Z]*\s*=\s*\[([0-9,\s]{1,4000})\]/.exec(html);
+  if (!m) return null;
+  const set = /* @__PURE__ */ new Set();
+  for (const t of m[1].split(",")) {
+    const n = Number(t.trim());
+    if (n > 0) set.add(String(n));
+  }
+  return set.size ? set : null;
+}
+function filaAjax(item, locked) {
+  if (!item || typeof item !== "object") return null;
+  const url = String(item.url || item.permalink || item.link || item.href || "");
+  let id = item.id != null ? String(item.id) : item.ID != null ? String(item.ID) : "";
+  if (!/^\d+$/.test(id)) {
+    const mu = /\/(\d{2,10})\/?$/.exec(url);
+    id = mu ? mu[1] : "";
+  }
+  if (!/^\d+$/.test(id)) return null;
+  let cs = String(item.slug || "");
+  if (!/^[a-z0-9-]+$/i.test(cs)) {
+    const mu = /\/([a-z0-9-]+)\/\d{2,10}\/?$/.exec(url);
+    cs = mu ? mu[1] : "";
+  }
+  if (!cs) return null;
+  const pago = Boolean(item.locked || item.is_locked || item.pago) || (locked ? locked.has(id) : false);
+  return filaDe(cs, id, pago);
+}
+async function ajaxCaps(catId, page) {
+  const r = await fetchText(AJAX_URL, {
+    heads: {
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: "https://devilnovels.com/",
+      "User-Agent": UA
+    },
+    method: "POST",
+    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page + "&search=",
+    timeoutMs: AJAX_TIMEOUT
+  });
+  if (!r.ok) return null;
+  let b = null;
+  try {
+    b = JSON.parse(r.text);
+  } catch {
+    return null;
+  }
+  if (!b || b.success !== true || !b.data || !Array.isArray(b.data.chapters)) return null;
+  return {
+    caps: b.data.chapters,
+    total: Number(b.data.total) > 0 ? Number(b.data.total) : void 0,
+    pages: Number(b.data.pages) > 0 ? Number(b.data.pages) : void 0
+  };
+}
+function ajaxVuelca(e, resp, locked) {
+  for (const item of resp.caps || []) {
+    const f = filaAjax(item, locked);
+    if (f) enumPon(e, f);
+  }
+}
+async function enumAjaxHasta(e, objetivo) {
+  const tope = Math.min(e.ajax.pages || AJAX_MAX_PAGINAS, AJAX_MAX_PAGINAS);
+  for (let k = e.ajTraidas + 1; k <= tope && !e.ajFin; k++) {
+    if (e.ajTraidas * AJAX_PER >= objetivo) break;
+    const r = await ajaxCaps(e.ajax.catId, k);
+    if (!r) {
+      e.ajFin = true;
+      break;
+    }
+    e.ajTraidas = k;
+    e.paginas.add("aj" + k);
+    ajaxVuelca(e, r, e.locked);
+    if (r.total && !e.ajax.total) e.ajax.total = r.total;
+    if (r.pages && k >= r.pages || (r.caps || []).length < AJAX_PER) {
+      e.ajFin = true;
+      e.completa = true;
+    }
+  }
+  if (e.ajFin) e.completa = true;
 }
 var REST_BASE = "https://devilnovels.com/wp-json/wp/v2/pages";
 var REST_PER = 100;
@@ -1016,11 +1112,34 @@ async function enumCaps(slug) {
   if (!e.fichaHecha) {
     e.fichaHecha = true;
     try {
-      enumVuelca(e, await fichaDe(slug), slug);
+      const html = await fichaDe(slug);
+      enumVuelca(e, html, slug);
+      e.locked = lockedIdsDe(html);
+      e.ajaxPendiente = catIdDe(html);
     } catch {
     }
   }
-  if (!e.restIntentada) {
+  if (!e.ajaxIntentada) {
+    e.ajaxIntentada = true;
+    if (e.ajaxPendiente) {
+      try {
+        const r1 = await ajaxCaps(e.ajaxPendiente, 1);
+        if (r1) {
+          e.ajax = { catId: e.ajaxPendiente, total: r1.total, pages: r1.pages };
+          e.ajTraidas = 1;
+          e.paginas.add("aj1");
+          ajaxVuelca(e, r1, e.locked);
+          if (r1.pages && r1.pages <= 1 || (r1.caps || []).length < AJAX_PER) {
+            e.ajFin = true;
+            e.completa = true;
+          }
+        }
+      } catch {
+      }
+    }
+  }
+  if (e.ajax && e.ajFin) e.completa = true;
+  if (!e.ajax && !e.restIntentada) {
     e.restIntentada = true;
     let padre = null;
     try {
@@ -1047,6 +1166,7 @@ async function enumCaps(slug) {
       }
     }
   }
+  if (!e.ajax && e.rest && e.rest.id && e.restFin) e.completa = true;
   return e;
 }
 function filaACap(r) {
@@ -1056,17 +1176,19 @@ async function capsPage(src, slug, opts = {}) {
   const page = Math.max(1, Math.floor(Number(opts.page) || 1));
   const per = Math.min(100, Math.max(10, Math.floor(Number(opts.postsPerPage) || 50)));
   const e = await enumCaps(slug);
-  if (e.rest && e.rest.id) await enumRestHasta(e, slug, page * per);
+  if (e.ajax) await enumAjaxHasta(e, page * per);
+  else if (e.rest && e.rest.id) await enumRestHasta(e, slug, page * per);
   else if (!e.fichaPaginas) {
     e.fichaPaginas = true;
     await enumFichaPaginas(e, slug);
   }
   const rows = enumLista(e);
   const desde = (page - 1) * per;
+  const total = e.ajax && e.ajax.total ? e.ajax.total : e.rest && e.rest.total ? e.rest.total : e.completa ? rows.length : void 0;
   return {
     items: rows.slice(desde, desde + per).map(filaACap),
     next: desde + per < rows.length ? page + 1 : null,
-    total: e.rest && e.rest.total ? e.rest.total : e.completa ? rows.length : void 0
+    total
   };
 }
 async function vecinosDe(slug, id) {
@@ -1077,7 +1199,26 @@ async function vecinosDe(slug, id) {
   }
   const busco = String(id);
   const e = await enumCaps(slug);
-  if (e.rest && e.rest.id) {
+  if (e.ajax) {
+    const tope = Math.min(e.ajax.pages || 1, AJAX_MAX_PAGINAS);
+    for (let m = 0; m < 8 && tope - m >= 1; m++) {
+      const k = tope - m;
+      if (!e.paginas.has("aj" + k)) {
+        const r = await ajaxCaps(e.ajax.catId, k);
+        if (!r) break;
+        e.paginas.add("aj" + k);
+        ajaxVuelca(e, r, e.locked);
+        if (r.pages && k >= r.pages || (r.caps || []).length < AJAX_PER) {
+          e.ajFin = true;
+          e.completa = true;
+        }
+      }
+      const rows2 = enumLista(e);
+      const i2 = rows2.findIndex((c) => c.id === busco);
+      if (i2 > 0) return vecinosEn(rows2, i2);
+      if (i2 === 0 && (k <= 1 || e.completa || m >= 7)) return vecinosEn(rows2, i2);
+    }
+  } else if (e.rest && e.rest.id) {
     for (let k = 1; k <= 8 && !e.descFin; k++) {
       if (!e.paginas.has("desc" + k)) {
         const r = await restPagina(e.rest.id, k, "desc");
@@ -3061,7 +3202,7 @@ function viewDetalle(ctx) {
     ] } : null,
     d.chapters.length ? { type: "Column", children: chList } : empty("Sin capítulos listados", "No chapters listed"),
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
-    d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente", labelTextEn: "Load more from source", onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null
+    d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente" + (d.total ? " (" + d.chapters.length + " de " + d.total + ")" : ""), labelTextEn: "Load more from source" + (d.total ? " (" + d.chapters.length + " of " + d.total + ")" : ""), onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null
   ].filter(Boolean);
   return scaffold(String(d.title).slice(0, 30), String(d.title).slice(0, 30), ctx, { type: "SingleChildScrollView", children: kids }, { share: device !== "tv" ? { label: en ? "Share" : "Compartir" } : void 0, navValue: "home", bottomBar: true });
 }
