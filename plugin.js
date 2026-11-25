@@ -2368,8 +2368,8 @@ async function getHtml2(path, timeoutMs) {
   }
   return r.text;
 }
-async function libHtml(page, order, q) {
-  const url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") + "&filter_by=title&order_item=" + (order || "likes_count") + "&order_dir=desc&_pg=1&page=" + page);
+async function libHtml(page, order, q, dir) {
+  const url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") + "&filter_by=title&order_item=" + (order || "likes_count") + "&order_dir=" + (dir === "asc" ? "asc" : "desc") + "&_pg=1&page=" + page);
   const r = await fetchText(url, {
     heads: {
       Accept: "application/json, text/javascript, */*; q=0.01",
@@ -2484,6 +2484,7 @@ function chapterList(html) {
   return arr.slice(0, MAX_CAPS2);
 }
 var SERIE_CACHE = /* @__PURE__ */ new Map();
+var INFLIGHT_SERIE = /* @__PURE__ */ new Map();
 var SERIE_TTL = 6e5;
 function serieCachePut(slug, chapters3) {
   SERIE_CACHE.set(slug, { chapters: chapters3, ts: Date.now() });
@@ -2492,10 +2493,20 @@ function serieCachePut(slug, chapters3) {
     SERIE_CACHE.delete(first);
   }
 }
+async function fetchSeriesHtml(slug) {
+  let p = INFLIGHT_SERIE.get(slug);
+  if (!p) {
+    p = getHtml2("/library/" + deSlug(slug) + "/").finally(() => {
+      if (INFLIGHT_SERIE.get(slug) === p) INFLIGHT_SERIE.delete(slug);
+    });
+    INFLIGHT_SERIE.set(slug, p);
+  }
+  return p;
+}
 async function chaptersDe(slug, html0) {
   const c = SERIE_CACHE.get(slug);
   if (c && Date.now() - c.ts < SERIE_TTL) return c.chapters;
-  const html = html0 || await getHtml2("/library/" + deSlug(slug) + "/");
+  const html = html0 || await fetchSeriesHtml(slug);
   const chapters3 = chapterList(html);
   if (chapters3.length) serieCachePut(slug, chapters3);
   return chapters3;
@@ -2560,7 +2571,7 @@ var ORDEN = { new: "created_at", score: "likes_count", az: "title", old: "create
 async function list3(src, { page = 1, order = "new", search: search6, postsPerPage = 24 } = {}) {
   const item = ORDEN[order] || "likes_count";
   const dir = order === "az" || order === "old" ? "asc" : "desc";
-  const html = await libHtml(page, item, search6 || "");
+  const html = await libHtml(page, item, search6 || "", dir);
   const cards = seriesCards(html, postsPerPage || 24);
   return { items: cardsToItems(src, cards), next: cards.length >= (postsPerPage || 24) && page < 30 ? String(page + 1) : null };
 }
@@ -2574,7 +2585,7 @@ async function search5(src, q, { page = 1, postsPerPage = 24 } = {}) {
   return list3(src, { page, order: "likes_count", search: q, postsPerPage });
 }
 async function detail4(src, slug) {
-  const html = await getHtml2("/library/" + deSlug(slug) + "/");
+  const html = await fetchSeriesHtml(slug);
   const meta = seriesMeta(html, slug);
   const chapters3 = await chaptersDe(slug, html);
   return { ...meta, totalChapters: chapters3.length };
@@ -2774,7 +2785,7 @@ async function loadHomeShelves(src, en) {
   try {
     const ck = cacheKey("home", src);
     const cached = cacheGet(ck, TTL.rows);
-    if (cached && cached.length) return cached;
+    if (cached && cached.length) return { shelves: cached, cf: false, cfKind: null, err: null };
     let shelves;
     if (isNovel(src)) {
       const raw = await novelHome(src);
@@ -2969,8 +2980,7 @@ function scaffold(title, titleEn, ctx, body, opts) {
     type: "navigationBar",
     items: [
       { key: "home", icon: "home", label: "Inicio", labelEn: "Home" },
-      { key: "biblioteca", icon: "bookmark", label: "Biblioteca", labelEn: "Library" },
-      { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" }
+      { key: "biblioteca", icon: "bookmark", label: "Biblioteca", labelEn: "Library" }
     ],
     value: o.navValue || "home",
     onChanged: "navBar"
@@ -3255,6 +3265,7 @@ function siteUrlOf(src, slug) {
   if (kind === "astral") return "https://astralnovelstranslations.wordpress.com/category/" + e + "/";
   if (kind === "madara") return SOURCES[src].host + "/novela/" + e + "/";
   if (kind === "devilnovels") return "https://devilnovels.com/" + e;
+  if (kind === "zonatmoorg") return SOURCES[src].host + "/library/" + String(slug || "").split(".").map(encodeURIComponent).join("/") + "/";
   return SOURCES[src].host + "/manga/" + e + "/";
 }
 function deviceCols(ctx) {

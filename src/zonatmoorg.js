@@ -33,10 +33,10 @@ async function getHtml(path, timeoutMs) {
 }
 
 /** La rejilla de /biblioteca llega como JSON { html: fragmento } (como pide la web con XHR). */
-async function libHtml(page, order, q) {
+async function libHtml(page, order, q, dir) {
   const url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") +
     "&filter_by=title&order_item=" + (order || "likes_count") +
-    "&order_dir=desc&_pg=1&page=" + page);
+    "&order_dir=" + (dir === "asc" ? "asc" : "desc") + "&_pg=1&page=" + page);
   const r = await fetchText(url, {
     heads: {
       Accept: "application/json, text/javascript, */*; q=0.01",
@@ -167,8 +167,10 @@ function chapterList(html) {
   return arr.slice(0, MAX_CAPS);
 }
 
-// Caché de listas de capítulos por obra (los vecinos del lector salen de aquí sin re-raspar).
+// Caché de listas de capítulos por obra (los vecinos del lector salen de aquí sin re-raspar)
+// y deduplicación en vuelo cuando detail() y chapters() arrancan en paralelo.
 const SERIE_CACHE = new Map();
+const INFLIGHT_SERIE = new Map();
 const SERIE_TTL = 600000;
 function serieCachePut(slug, chapters) {
   SERIE_CACHE.set(slug, { chapters, ts: Date.now() });
@@ -177,10 +179,20 @@ function serieCachePut(slug, chapters) {
     SERIE_CACHE.delete(first);
   }
 }
+async function fetchSeriesHtml(slug) {
+  let p = INFLIGHT_SERIE.get(slug);
+  if (!p) {
+    p = getHtml("/library/" + deSlug(slug) + "/").finally(() => {
+      if (INFLIGHT_SERIE.get(slug) === p) INFLIGHT_SERIE.delete(slug);
+    });
+    INFLIGHT_SERIE.set(slug, p);
+  }
+  return p;
+}
 async function chaptersDe(slug, html0) {
   const c = SERIE_CACHE.get(slug);
   if (c && Date.now() - c.ts < SERIE_TTL) return c.chapters;
-  const html = html0 || await getHtml("/library/" + deSlug(slug) + "/");
+  const html = html0 || await fetchSeriesHtml(slug);
   const chapters = chapterList(html);
   if (chapters.length) serieCachePut(slug, chapters);
   return chapters;
@@ -257,7 +269,7 @@ const ORDEN = { new: "created_at", score: "likes_count", az: "title", old: "crea
 export async function list(src, { page = 1, order = "new", search, postsPerPage = 24 } = {}) {
   const item = ORDEN[order] || "likes_count";
   const dir = order === "az" || order === "old" ? "asc" : "desc";
-  const html = await libHtml(page, item, search || "");
+  const html = await libHtml(page, item, search || "", dir);
   const cards = seriesCards(html, postsPerPage || 24);
   return { items: cardsToItems(src, cards), next: cards.length >= (postsPerPage || 24) && page < 30 ? String(page + 1) : null };
 }
@@ -275,7 +287,7 @@ export async function search(src, q, { page = 1, postsPerPage = 24 } = {}) {
 }
 
 export async function detail(src, slug) {
-  const html = await getHtml("/library/" + deSlug(slug) + "/");
+  const html = await fetchSeriesHtml(slug);
   const meta = seriesMeta(html, slug);
   const chapters = await chaptersDe(slug, html);
   return { ...meta, totalChapters: chapters.length };

@@ -186,7 +186,7 @@ async function loadHomeShelves(src, en) {
   try {
     const ck = cacheKey("home", src);
     const cached = cacheGet(ck, TTL.rows);
-    if (cached && cached.length) return cached;
+    if (cached && cached.length) return { shelves: cached, cf: false, cfKind: null, err: null };
     let shelves;
     if (isNovel(src)) {
       const raw = await nv.novelHome(src);
@@ -399,7 +399,6 @@ function scaffold(title, titleEn, ctx, body, opts) {
     items: [
       { key: "home", icon: "home", label: "Inicio", labelEn: "Home" },
       { key: "biblioteca", icon: "bookmark", label: "Biblioteca", labelEn: "Library" },
-      { key: "ajustes", icon: "settings", label: "Ajustes", labelEn: "Settings" },
     ],
     value: o.navValue || "home",
     onChanged: "navBar",
@@ -699,6 +698,7 @@ function siteUrlOf(src, slug) {
   if (kind === "astral") return "https://astralnovelstranslations.wordpress.com/category/" + e + "/";
   if (kind === "madara") return SOURCES[src].host + "/novela/" + e + "/";
   if (kind === "devilnovels") return "https://devilnovels.com/" + e; // las novelas viven en la raíz del dominio
+  if (kind === "zonatmoorg") return SOURCES[src].host + "/library/" + String(slug || "").split(".").map(encodeURIComponent).join("/") + "/";
   return SOURCES[src].host + "/manga/" + e + "/";
 }
 
@@ -847,13 +847,18 @@ function viewLeer(ctx) {
   const kids = [];
   if (c.text && c.text.length) {
     // Modo novela: ListView (el nodo perezoso de la lista; solo se construye lo visible),
-    // ilustraciones y título al inicio, progreso por fracción de scroll vía «scr».
+    // ilustraciones y título editorial al inicio, progreso por fracción de scroll vía «scr».
     const bloques = [];
-    if (c.imgs && c.imgs.length) {
-      for (const u of c.imgs) bloques.push({ type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 4 } });
+    if (c.mTitle) {
+      bloques.push({ type: "Text", text: String(c.mTitle), style: "caption", color: "muted", padding: { x: 16, y: 4 } });
     }
-    bloques.push({ type: "Text", text: c.title || ("Capítulo " + c.number), style: "h4", padding: { x: 16, y: 8 } });
-    for (const par of c.text.slice(0, 600)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 4 } });
+    bloques.push({ type: "Text", text: c.title || ("Capítulo " + c.number), style: "h2", padding: { x: 16, y: 8 } });
+    bloques.push({ type: "Divider" });
+    if (c.imgs && c.imgs.length) {
+      for (const u of c.imgs) bloques.push({ type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 8 } });
+    }
+    for (const par of c.text.slice(0, 600)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 8 } });
+    bloques.push({ type: "Divider" });
     kids.push({ type: "ListView", key: "novela-" + (c.tk || 0), items: bloques, flex: 1 });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= (pagesDisponible() ? 250 : 8)) {
@@ -874,13 +879,13 @@ function viewLeer(ctx) {
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   } else {
     // tira vertical (webtoon): clave por apertura = siempre página 1 al cambiar de capítulo;
-    // el ListView del contrato no acepta posición inicial, así que retomar se marca con nota
+    // costura continua (padding y: 0) para lectura sin cortes negros entre viñetas
     if (c.resumePage > 1 && c.total) {
       kids.push({ type: "Text", text: "Estabas por la página " + c.resumePage + " de " + c.total, textEn: "You were around page " + c.resumePage + " of " + c.total, style: "caption", color: "muted", padding: { x: 16, y: 4 } });
     }
     kids.push({
       type: "SingleChildScrollView", key: "tira-" + (c.tk || 0), zoom: true, onScroll: "scr",
-      children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, headers: imgHeads(u), aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 4 } })) }],
+      children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, headers: imgHeads(u), aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 0 } })) }],
     });
     kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
   }

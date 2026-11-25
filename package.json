@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
     "build": "node scripts/build.mjs",
     "check:built": "node scripts/build.mjs --check",
     "test": "node --test test/*.test.mjs",
@@ -10,5 +12,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.21.0"
+  },
+  "dependencies": {
+    "crawlee": "^3.18.2"
   }
 }
