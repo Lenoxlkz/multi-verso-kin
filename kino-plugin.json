@@ -450,9 +450,5 @@
         "progress"
       ]
     }
-  },
-  "signature": {
-    "authorKey": "b0bc4e128df02f948d02cd452328983c10a7834a4b824cd6dfb9276b52330544",
-    "value": "1422046be3bd6035d538e3ce95b4b40c211eaab85cf91ef5b17997f8b85ad85d30517482382a401e0b14031879ba3d7fb0df97e99dc529f065eb32c2c64ca002"
   }
 }
