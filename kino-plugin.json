@@ -45,7 +45,14 @@
     "manga",
     "novela"
   ],
-  "color": "#7C5CFF",
+  "color": "#E2B96F",
+  "theme": {
+    "accent": "#E2B96F",
+    "onAccent": "#141008",
+    "background": "#08080C",
+    "surface": "#111117",
+    "highlight": "#F4F1EA"
+  },
   "icon": "icon.png",
   "screen": {
     "label": "Multi-verso",
@@ -168,17 +175,55 @@
   ],
   "appThemes": [
     {
-      "id": "zonatmo-naranja",
+      "id": "atelier-obsidiana",
       "name": {
-        "es": "ZonaTMO Naranja",
-        "en": "ZonaTMO Orange"
+        "es": "Atelier Obsidiana",
+        "en": "Obsidian Atelier"
       },
       "colors": {
-        "accent": "#FF8A3D",
-        "onAccent": "#1A0E05",
-        "background": "#13100C",
-        "surface": "#1E1913",
-        "surfaceHigh": "#2A231B"
+        "accent": "#E2B96F",
+        "onAccent": "#141008",
+        "background": "#08080C",
+        "surface": "#111117",
+        "surfaceHigh": "#1B1B25",
+        "textPrimary": "#F4F1EA",
+        "textSecondary": "#B0A9BE",
+        "outline": "#38334A",
+        "border": "#4A4130",
+        "railPanel": "#101016",
+        "focus": "#F0CF8E",
+        "onFocus": "#141008"
+      },
+      "background": {
+        "type": "gradient",
+        "colors": ["#08080C", "#12101B", "#0A0A0F"],
+        "angle": 160
+      },
+      "shape": {
+        "cardRadius": 16,
+        "buttonRadius": 12,
+        "chipRadius": 10,
+        "dialogRadius": 20,
+        "inputRadius": 12,
+        "cardBorder": 1,
+        "dialogBorder": 1,
+        "headerBorder": 1,
+        "panelBorder": 1
+      },
+      "elevation": {
+        "cardShadow": 0.45,
+        "heroScrim": 0.78,
+        "dialogShadow": 0.65
+      },
+      "motion": {
+        "focusZoom": 1.06,
+        "crossfadeMs": 280,
+        "heroDrift": "on"
+      },
+      "adjustable": {
+        "colors.accent": { "swatches": ["#E2B96F", "#F2C97D", "#D4A359", "#A78BFA"] },
+        "shape.cardRadius": { "min": 6, "max": 24 },
+        "shape.cardBorder": { "min": 0, "max": 3 }
       }
     },
     {
@@ -190,10 +235,65 @@
       "colors": {
         "accent": "#A78BFA",
         "onAccent": "#140F24",
-        "background": "#100E17",
-        "surface": "#181526",
-        "surfaceHigh": "#221E33"
-      }
+        "background": "#0C0A14",
+        "surface": "#161324",
+        "surfaceHigh": "#211C35",
+        "textPrimary": "#F3F0FF",
+        "textSecondary": "#B3ACC8",
+        "outline": "#3B3359",
+        "border": "#4C3E7A",
+        "railPanel": "#13101F",
+        "focus": "#C4B5FD",
+        "onFocus": "#140F24"
+      },
+      "background": {
+        "type": "gradient",
+        "colors": ["#0C0A14", "#18132B", "#0D0B16"],
+        "angle": 155
+      },
+      "shape": {
+        "cardRadius": 16,
+        "buttonRadius": 12,
+        "chipRadius": 10,
+        "dialogRadius": 20,
+        "cardBorder": 1,
+        "dialogBorder": 1,
+        "panelBorder": 1
+      },
+      "elevation": { "cardShadow": 0.4, "heroScrim": 0.75, "dialogShadow": 0.6 },
+      "motion": { "focusZoom": 1.06, "crossfadeMs": 260, "heroDrift": "on" }
+    },
+    {
+      "id": "zonatmo-naranja",
+      "name": {
+        "es": "ZonaTMO Naranja",
+        "en": "ZonaTMO Orange"
+      },
+      "colors": {
+        "accent": "#FF8A3D",
+        "onAccent": "#1A0E05",
+        "background": "#100D0A",
+        "surface": "#1B1611",
+        "surfaceHigh": "#272018",
+        "textPrimary": "#FAF3EC",
+        "textSecondary": "#BEB1A4",
+        "border": "#523824",
+        "railPanel": "#16120E"
+      },
+      "background": {
+        "type": "gradient",
+        "colors": ["#100D0A", "#1C140E", "#100D0A"],
+        "angle": 165
+      },
+      "shape": {
+        "cardRadius": 14,
+        "buttonRadius": 10,
+        "dialogRadius": 18,
+        "cardBorder": 1,
+        "dialogBorder": 1
+      },
+      "elevation": { "cardShadow": 0.4, "heroScrim": 0.75, "dialogShadow": 0.6 },
+      "motion": { "focusZoom": 1.05, "crossfadeMs": 240, "heroDrift": "on" }
     },
     {
       "id": "manhwa-esmeralda",
@@ -204,10 +304,27 @@
       "colors": {
         "accent": "#4ADE80",
         "onAccent": "#07160C",
-        "background": "#0C1310",
-        "surface": "#14201B",
-        "surfaceHigh": "#1D2C25"
-      }
+        "background": "#09110E",
+        "surface": "#121E19",
+        "surfaceHigh": "#1B2B24",
+        "textPrimary": "#EEFBF3",
+        "textSecondary": "#A8BFB2",
+        "border": "#264736",
+        "railPanel": "#0F1915"
+      },
+      "background": {
+        "type": "gradient",
+        "colors": ["#09110E", "#0F2119", "#09110E"],
+        "angle": 160
+      },
+      "shape": {
+        "cardRadius": 14,
+        "buttonRadius": 10,
+        "dialogRadius": 18,
+        "cardBorder": 1,
+        "dialogBorder": 1
+      },
+      "elevation": { "cardShadow": 0.35, "heroScrim": 0.75, "dialogShadow": 0.55 }
     },
     {
       "id": "indigo-electrico",
@@ -218,9 +335,25 @@
       "colors": {
         "accent": "#818CF8",
         "onAccent": "#0D0F26",
-        "background": "#0C0D18",
-        "surface": "#141627",
-        "surfaceHigh": "#1D2035"
+        "background": "#0A0B16",
+        "surface": "#131526",
+        "surfaceHigh": "#1C1F36",
+        "textPrimary": "#EEF0FF",
+        "textSecondary": "#A8AECB",
+        "border": "#303666",
+        "railPanel": "#101221"
+      },
+      "background": {
+        "type": "gradient",
+        "colors": ["#0A0B16", "#141733", "#0A0B16"],
+        "angle": 160
+      },
+      "shape": {
+        "cardRadius": 14,
+        "buttonRadius": 10,
+        "dialogRadius": 18,
+        "cardBorder": 1,
+        "dialogBorder": 1
       }
     },
     {
@@ -232,9 +365,25 @@
       "colors": {
         "accent": "#38BDF8",
         "onAccent": "#05121C",
-        "background": "#0A1218",
-        "surface": "#121E26",
-        "surfaceHigh": "#1A2A34"
+        "background": "#081016",
+        "surface": "#101C24",
+        "surfaceHigh": "#182834",
+        "textPrimary": "#ECF7FE",
+        "textSecondary": "#A3BAC8",
+        "border": "#22465C",
+        "railPanel": "#0D171E"
+      },
+      "background": {
+        "type": "gradient",
+        "colors": ["#081016", "#0D202D", "#081016"],
+        "angle": 160
+      },
+      "shape": {
+        "cardRadius": 14,
+        "buttonRadius": 10,
+        "dialogRadius": 18,
+        "cardBorder": 1,
+        "dialogBorder": 1
       }
     },
     {
@@ -246,23 +395,25 @@
       "colors": {
         "accent": "#F472B6",
         "onAccent": "#1F0A16",
-        "background": "#14090F",
-        "surface": "#1E1118",
-        "surfaceHigh": "#2A1922"
-      }
-    },
-    {
-      "id": "lima-solar",
-      "name": {
-        "es": "Lima Solar",
-        "en": "Solar Lime"
+        "background": "#12080E",
+        "surface": "#1C1017",
+        "surfaceHigh": "#281721",
+        "textPrimary": "#FDF0F7",
+        "textSecondary": "#C4A6B6",
+        "border": "#572642",
+        "railPanel": "#170C13"
       },
-      "colors": {
-        "accent": "#A3E635",
-        "onAccent": "#131A05",
-        "background": "#10140A",
-        "surface": "#171D10",
-        "surfaceHigh": "#202917"
+      "background": {
+        "type": "gradient",
+        "colors": ["#12080E", "#210E1A", "#12080E"],
+        "angle": 160
+      },
+      "shape": {
+        "cardRadius": 16,
+        "buttonRadius": 12,
+        "dialogRadius": 20,
+        "cardBorder": 1,
+        "dialogBorder": 1
       }
     },
     {
@@ -272,12 +423,25 @@
         "en": "AMOLED Black"
       },
       "colors": {
-        "accent": "#7C4DFF",
-        "onAccent": "#FFFFFF",
+        "accent": "#C084FC",
+        "onAccent": "#160726",
         "background": "#000000",
-        "surface": "#000000",
-        "surfaceHigh": "#0A0A0A"
-      }
+        "surface": "#08080B",
+        "surfaceHigh": "#121218",
+        "textPrimary": "#F5F3FA",
+        "textSecondary": "#A6A1B5",
+        "border": "#2C243D",
+        "railPanel": "#050508"
+      },
+      "shape": {
+        "cardRadius": 16,
+        "buttonRadius": 12,
+        "dialogRadius": 20,
+        "cardBorder": 1,
+        "dialogBorder": 1,
+        "panelBorder": 1
+      },
+      "elevation": { "cardShadow": 0, "heroScrim": 0.85, "dialogShadow": 0.4 }
     }
   ],
   "enhancements": {

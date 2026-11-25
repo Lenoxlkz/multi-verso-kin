@@ -100,7 +100,7 @@ export async function fetchText(url, { heads = {}, timeoutMs = 12000, method = "
   // mala suerte sin doblar la espera cuando el bloqueo es definitivo (los planes de respaldo
   // siguen cubriendo ese caso).
   if (!r.ok && (r.status === 403 || r.status === 429 || r.status === 503)) {
-    await new Promise((res) => setTimeout(res, 1200));
+    if (typeof kino.sleep === "function") await kino.sleep(1200);
     r = await kino.fetch(url, { headers: hs, timeoutMs, method, body });
   }
   const text = r.text ? r.text() : "";

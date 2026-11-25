@@ -26,6 +26,43 @@ const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : SOURCES[src].ki
 const isNovel = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
 const hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 
+const RPREF_KEY = "rprefs";
+const DEFAULT_RPREFS = {
+  mangaMode: "auto",       // "auto" | "pages" | "strip"
+  mangaDir: "auto",        // "auto" | "rtl" | "ltr"
+  mangaFrame: "edge",      // "edge" | "framed"
+  novelSurface: "surface", // "surface" | "surfaceVariant" | "primaryContainer"
+  novelSize: "h5",         // "p" | "h5" | "h4"
+  novelWidth: 24,          // 16 (wide) | 24 (editorial) | 32 (narrow)
+  novelGap: 8,             // 4 | 8 | 12
+  novelAlign: "start",     // "start" | "justify"
+};
+
+function readRPrefs() {
+  try {
+    const raw = kino.storage.get(RPREF_KEY);
+    if (!raw) return { ...DEFAULT_RPREFS };
+    const p = JSON.parse(raw);
+    return p && typeof p === "object" ? { ...DEFAULT_RPREFS, ...p } : { ...DEFAULT_RPREFS };
+  } catch { return { ...DEFAULT_RPREFS }; }
+}
+
+function saveRPrefs(patch) {
+  const next = { ...readRPrefs(), ...(patch || {}) };
+  try { kino.storage.set(RPREF_KEY, JSON.stringify(next)); } catch { /* optativa */ }
+  return next;
+}
+
+/** Limpia marcas de Markdown en párrafos de novela para que se lean nítidos en Kino. */
+function parseNovelParagraph(raw) {
+  const s = String(raw || "").replace(/\\([*_~`])/g, "$1").trim();
+  if (!s) return null;
+  if (/^(\*\s*){3,}$|^(-+\s*){3,}$|^(_\s*){3,}$|^—+$/.test(s)) return { kind: "break" };
+  const headingMatch = /^\*\*([^*]{1,120})\*\*$/.exec(s) || /^#{1,4}\s+(.{1,120})$/.exec(s);
+  if (headingMatch) return { kind: "heading", text: headingMatch[1].trim() };
+  return { kind: "body", text: s.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_]+)__/g, "$1") };
+}
+
 
 // ---------- utilidades de estado compacto ----------
 
@@ -385,9 +422,9 @@ function appBar(title, titleEn, ctx, opts) {
   const leading = onMain
     ? { type: "IconButton", icon: "close", labelText: "Cerrar", labelTextEn: "Close", onPressed: { close: true } }
     : { type: "IconButton", icon: "arrow_back", labelText: "Atrás", labelTextEn: "Back", onPressed: { event: "atras" } };
-  const actions = [];
-  if (o.share) actions.push({ type: "IconButton", icon: "share", labelText: "Compartir", labelTextEn: "Share", onPressed: "share" });
-  return { type: "AppBar", mergeWithKinoBar: true, dense: true, title, titleEn, leading, actions };
+  const actions = Array.isArray(o.actions) ? o.actions.slice(0, 3) : [];
+  if (o.share && actions.length < 4) actions.push({ type: "IconButton", icon: "share", labelText: "Compartir", labelTextEn: "Share", onPressed: "share" });
+  return { type: "AppBar", mergeWithKinoBar: true, dense: true, divider: false, title, titleEn, leading, actions };
 }
 
 function scaffold(title, titleEn, ctx, body, opts) {
@@ -417,7 +454,7 @@ function detailErrorBox(msg, ref) {
     { type: "errorState", icon: "error", title: "Algo falló", titleEn: "Something failed", text: String(msg).slice(0, 300) },
     { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar", arg: ref } },
   ];
-  if (cf) kids.splice(1, 0, { type: "Button", variant: "primary", icon: "security", labelText: "Resolver desafío de Cloudflare", labelTextEn: "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: ref } });
+  if (cf) kids.splice(1, 0, { type: "Button", variant: "primary", icon: "lock", labelText: "Resolver desafío de Cloudflare", labelTextEn: "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: ref } });
   return { type: "Column", gap: 12, padding: 16, children: kids };
 }
 
@@ -433,6 +470,34 @@ function floatFab() {
   return { type: "FloatingActionButton", icon: "search", labelText: "Buscar en todas las fuentes", labelTextEn: "Search all sources", onPressed: { go: { screen: { route: "buscar" } } }, fabPosition: "end" };
 }
 
+/** BottomSheet del Atelier de Temas (apiVersion 18 go.useTheme desde la propia pantalla). */
+function themeAtelierSheet(ctx) {
+  const active = ctx.activeTheme || null;
+  return {
+    type: "BottomSheet",
+    key: "themeSheet",
+    title: "Atelier de Temas",
+    titleEn: "Theme Atelier",
+    children: [
+      { type: "Column", gap: 12, padding: 16, children: [
+        { type: "Text", text: "Elige una paleta premium para todo Kino y el lector. «Atelier Obsidiana» ofrece oro champagne sobre obsidiana con bordes esculpidos.", textEn: "Pick a premium palette for all of Kino and the reader. Obsidian Atelier pairs champagne gold with sculpted obsidian surfaces.", style: "body", color: "muted" },
+        { type: "Row", wrap: true, gap: 8, children: THEMES.map((t) => ({
+          type: "Button",
+          variant: active === t.id ? "primary" : "secondary",
+          icon: active === t.id ? "check" : "magic",
+          selected: active === t.id,
+          labelText: t.name.es,
+          labelTextEn: t.name.en,
+          onPressed: { go: { useTheme: { theme: t.id } } },
+          span: 6,
+          fill: true,
+        })) },
+        { type: "TextButton", icon: "refresh", labelText: "Usar tema base de Kino", labelTextEn: "Reset to Kino default", onPressed: { go: { useTheme: { theme: null } } }, fill: true },
+      ] },
+    ],
+  };
+}
+
 // ---------- vista: portada ----------
 
 /** Las fuentes del panel de la cápsula, en dos por fila, con su tipo a la vista. */
@@ -440,24 +505,87 @@ function panelSources(src, en) {
   const rows = [];
   for (let i = 0; i < HOME_TABS.length; i += 2) {
     rows.push({ type: "Row", gap: 8, children: HOME_TABS.slice(i, i + 2).map((k) => ({
-      type: "Button", variant: "secondary", icon: k === src ? "check" : undefined, selected: k === src,
+      type: "Button",
+      variant: k === src ? "primary" : "secondary",
+      icon: k === src ? "check" : (isNovel(k) ? "list" : "magic"),
+      selected: k === src,
       labelText: SOURCES[k].name + (isNovel(k) ? (en ? " · novel" : " · novela") : ""),
       labelTextEn: SOURCES[k].name + (isNovel(k) ? " · novel" : ""),
-      onPressed: { event: "tabSrc", arg: k }, flex: 1, fill: true,
+      onPressed: { event: "tabSrc", arg: k },
+      flex: 1,
+      fill: true,
     })) });
   }
   return rows;
 }
 
+/** Construye una tarjeta hero editorial para el carrusel de portada (PageView + heroCard). */
+function buildHeroSlide(item, shelfTitle, src, en, tv) {
+  const nombre = SOURCES[src].name;
+  const sub = (shelfTitle ? shelfTitle + " · " : "") + (isNovel(src) ? (en ? "Light Novel" : "Novela Ligera") : "Manga · Manhwa");
+  const hasHttps = typeof item.p === "string" && item.p.indexOf("https://") === 0;
+  return {
+    type: "heroCard",
+    title: String(item.t || nombre).slice(0, 80),
+    text: sub.slice(0, 120),
+    image: hasHttps ? item.p : undefined,
+    headers: hasHttps ? imgHeads(item.p) : undefined,
+    canRequestFocus: tv ? true : undefined,
+    buttons: [
+      { type: "ElevatedButton", icon: "play", labelText: "Abrir obra", labelTextEn: "Open title", onPressed: { go: { screen: { args: { r: item.s, t: item.t } } } } },
+      { type: "Button", variant: "secondary", icon: "list", labelText: "Ver " + nombre, labelTextEn: "Browse " + nombre, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } } },
+    ],
+  };
+}
+
 function viewMain(ctx) {
-  const { state, lang } = ctx;
+  const { state, lang, device } = ctx;
   const en = lang === "en";
+  const tv = device === "tv";
   const src = state.hsrc || "zt";
-  // ---- contenido desplazable: lecturas recientes + estantes nativos de la fuente elegida ----
+  // ---- contenido desplazable: carrusel editorial + lecturas recientes + estantes nativos ----
   const kids = [];
+  let shelves = state.hrows;
+  let loading = false;
+  if (!shelves) {
+    shelves = cacheGet(cacheKey("home", src), TTL.rows) || [];
+    loading = !state.done && !shelves.length;
+  }
+
+  // Escaparate Hero (PageView de hasta 4 obras destacadas con portada https)
+  if (!loading && shelves.length) {
+    const firstShelf = shelves[0];
+    const heroItems = [];
+    const seenHero = new Set();
+    for (const sh of shelves) {
+      for (const it of sh.items || []) {
+        if (!it || !it.s || !it.p || it.p.indexOf("https://") !== 0 || seenHero.has(it.s)) continue;
+        seenHero.add(it.s);
+        heroItems.push({ it, shTitle: sh.title || firstShelf.title || "" });
+        if (heroItems.length >= 4) break;
+      }
+      if (heroItems.length >= 4) break;
+    }
+    if (heroItems.length >= 2) {
+      kids.push({
+        type: "PageView",
+        viewportFraction: { compact: 0.94, medium: 0.88, expanded: 0.72 },
+        padEnds: false,
+        autoPlayMs: 6500,
+        margin: { x: 8, y: 4 },
+        children: heroItems.map((h) => buildHeroSlide(h.it, h.shTitle, src, en, tv)),
+      });
+    } else if (heroItems.length === 1) {
+      kids.push({
+        type: "Column",
+        padding: { x: 16, y: 4 },
+        children: [buildHeroSlide(heroItems[0].it, heroItems[0].shTitle, src, en, tv)],
+      });
+    }
+  }
+
   const seguir = (state.rows || []).find((r) => r.id === "seguir-screen");
   if (seguir && seguir.items && seguir.items.length) {
-    kids.push({ type: "SizedBox", height: 12 });
     kids.push({
       type: "titleRail",
       headers: imgHeads(seguir.items.find((x) => x.p && x.p.indexOf("http") === 0)?.p, false) || undefined,
@@ -473,43 +601,39 @@ function viewMain(ctx) {
         lang: "es",
         open: { screen: { args: { r: x.r, m: x.m, t: x.t, p: x.p } } },
       })).filter(Boolean),
-      size: "small",
+      size: "medium",
     });
     // opción técnica: borrar el historial de lectura (respaldo en storage y elementos de kino.progress)
-    kids.push({ type: "Row", mainAxisAlignment: "end", children: [
-      { type: "TextButton", icon: "delete", labelText: "Borrar historial de lectura", labelTextEn: "Clear reading history", onPressed: { event: "borrarHistorial" }, padding: { x: 16, y: 0 } },
+    kids.push({ type: "Row", mainAxisAlignment: "end", padding: { x: 16, y: 4 }, children: [
+      { type: "TextButton", icon: "delete", labelText: "Borrar historial de lectura", labelTextEn: "Clear reading history", onPressed: { event: "borrarHistorial" } },
     ] });
-    kids.push({ type: "SizedBox", height: 4 });
   }
-  let shelves = state.hrows;
-  let loading = false;
-  if (!shelves) {
-    shelves = cacheGet(cacheKey("home", src), TTL.rows) || [];
-    loading = !state.done && !shelves.length;
-  }
+
   if (loading) {
     kids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "Skeleton", shape: "card", height: 200 },
       { type: "Skeleton", shape: "card", height: 200 },
     ] });
   } else if (shelves.length) {
-    for (const row of shelves) {
+    shelves.forEach((row, idx) => {
       const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
-      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
-    }
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
+    });
   } else if (state.herr) {
     if (state.cf && ctx.device !== "tv") {
       const blocked = state.cfKind === "blocked";
-      kids.push({ type: "Column", gap: 12, padding: 16, children: [
-        { type: "errorState", icon: "security", title: blocked ? "La fuente está bloqueada" : "Desafío de Cloudflare", titleEn: blocked ? "The source is blocked" : "Cloudflare challenge",
-          text: blocked
-            ? SOURCES[src].name + " responde con una regla de Cloudflare (acceso denegado por IP o firma del navegador). Puedes intentar el pre-clearance, pero puede no bastar: prueba también otra red (Wi-Fi o datos móviles) o más tarde."
-            : SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y las siguientes peticiones pasarán con la cookie que deja (pre-clearance).",
-          textEn: blocked
-            ? SOURCES[src].name + " answers with a Cloudflare rule (denied by IP or browser signature). Pre-clearance may not be enough: try another network (Wi-Fi or mobile data) or later."
-            : SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and the next requests pass with the cookie it leaves (pre-clearance)." },
-        { type: "Button", variant: "primary", icon: "security", labelText: blocked ? "Intentar pre-clearance" : "Resolver desafío de Cloudflare", labelTextEn: blocked ? "Try pre-clearance" : "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
-        { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "tabSrc", arg: src } },
+      kids.push({ type: "Card", variant: "outlined", border: { width: 1, color: "warning" }, borderRadius: "large", margin: { x: 16, y: 8 }, padding: 16, children: [
+        { type: "Column", gap: 12, children: [
+          { type: "errorState", icon: "lock", title: blocked ? "La fuente está bloqueada" : "Desafío de Cloudflare", titleEn: blocked ? "The source is blocked" : "Cloudflare challenge",
+            text: blocked
+              ? SOURCES[src].name + " responde con una regla de Cloudflare (acceso denegado por IP o firma del navegador). Puedes intentar el pre-clearance, pero puede no bastar: prueba también otra red (Wi-Fi o datos móviles) o más tarde."
+              : SOURCES[src].name + " está detrás de un desafío de Cloudflare. Se abrirá una ventana del sitio: complétalo una vez y las siguientes peticiones pasarán con la cookie que deja (pre-clearance).",
+            textEn: blocked
+              ? SOURCES[src].name + " answers with a Cloudflare rule (denied by IP or browser signature). Pre-clearance may not be enough: try another network (Wi-Fi or mobile data) or later."
+              : SOURCES[src].name + " is behind a Cloudflare challenge. A window of the site will open: complete it once and the next requests pass with the cookie it leaves (pre-clearance)." },
+          { type: "Button", variant: "primary", icon: "lock", labelText: blocked ? "Intentar pre-clearance" : "Resolver desafío de Cloudflare", labelTextEn: blocked ? "Try pre-clearance" : "Solve the Cloudflare challenge", onPressed: { event: "cfAbrir", arg: src }, fill: true },
+          { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "tabSrc", arg: src } },
+        ] },
       ] });
     } else {
       kids.push(errorBox(state.herr, "tabSrc", src));
@@ -519,17 +643,42 @@ function viewMain(ctx) {
   } else {
     kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
-  // «Ver más» de la fuente (RCA 2026-11, #2): abre la pantalla dedicada con TODO el contenido
-  kids.push({ type: "TextButton", icon: "menu_book", labelText: "Ver más de " + SOURCES[src].name, labelTextEn: "More from " + SOURCES[src].name, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } }, padding: { x: 16, y: 6 } });
-  if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16 } });
-  // ---- cápsula fijada arriba + panel desplegable (overlay con scrim) ----
-  const capsula = { type: "Row", padding: { x: 16, y: 8 }, children: [
-    { type: "Button", variant: "secondary", icon: state.capsOpen ? "expand_less" : "expand_more",
-      labelText: "Fuente: " + SOURCES[src].name, labelTextEn: "Source: " + SOURCES[src].name,
-      onPressed: { event: "capsToggle" }, selected: Boolean(state.capsOpen), fill: true },
-  ] };
-  const capStack = { type: "Stack", children: [
+  // «Ver más» de la fuente (RCA 2026-11, #2): tarjeta destacada para abrir TODO el contenido
+  kids.push({
+    type: "Card", variant: "outlined", border: { width: 1, color: "primary" }, background: "surfaceVariant", borderRadius: "large",
+    margin: { x: 16, y: 12 }, padding: { x: 12, y: 8 },
+    children: [
+      { type: "TextButton", icon: "list", labelText: "Ver más de " + SOURCES[src].name, labelTextEn: "More from " + SOURCES[src].name, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } }, fill: true, padding: { x: 16, y: 8 } },
+    ],
+  });
+  if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16, y: 4 } });
+
+  // ---- cápsula editorial fijada arriba + panel desplegable (overlay con scrim) ----
+  const capsula = {
+    type: "Card",
+    variant: "filled",
+    background: "surfaceVariant",
+    border: { width: 1, color: state.capsOpen ? "primary" : "surface" },
+    borderRadius: "large",
+    elevation: 6,
+    margin: { x: 16, y: 4 },
+    padding: { x: 12, y: 8 },
+    children: [
+      { type: "Row", gap: 8, crossAxisAlignment: "center", children: [
+        { type: "CircleAvatar", icon: isNovel(src) ? "list" : "magic", radius: 16, backgroundColor: "primaryContainer", labelText: SOURCES[src].name },
+        { type: "Column", flex: 1, gap: 4, children: [
+          { type: "Text", text: SOURCES[src].name, style: "h4" },
+          { type: "Text", text: isNovel(src) ? (en ? "Light Novels · Active source" : "Novelas Ligeras · Fuente activa") : (en ? "Manga & Manhwa · Active source" : "Manga y Manhwa · Fuente activa"), style: "caption", color: "muted" },
+        ] },
+        { type: "Button", variant: state.capsOpen ? "primary" : "secondary", icon: state.capsOpen ? "expand_less" : "expand_more",
+          labelText: "Fuente: " + SOURCES[src].name, labelTextEn: "Source: " + SOURCES[src].name,
+          onPressed: { event: "capsToggle" }, selected: Boolean(state.capsOpen) },
+      ] },
+    ],
+  };
+  const capStack = { type: "Stack", flex: 1, children: [
     { type: "SingleChildScrollView", onScroll: "scrMain", children: [{ type: "Column", crossAxisAlignment: "stretch", children: kids }] },
+    themeAtelierSheet(ctx),
   ] };
   if (state.capsOpen) {
     capStack.children.push({
@@ -537,19 +686,41 @@ function viewMain(ctx) {
       background: "surface", opacity: 0.62, onTap: { event: "capsClose" },
     });
     capStack.children.push({
-      type: "Column", positioned: { top: 0, left: 10, right: 10 }, background: "surfaceVariant", borderRadius: "large",
-      padding: 12, gap: 8, elevation: 4,
-      children: [
-        { type: "Text", text: "Elegir fuente", textEn: "Pick a source", style: "h4" },
-        ...panelSources(src, en),
-        { type: "Text", text: "El panel se cierra solo a los 5 segundos o al tocar fuera.", textEn: "The panel closes on its own after 5 seconds or on a tap outside.", style: "body", color: "muted" },
-      ],
+      type: "Column", positioned: { top: 0, left: 12, right: 12 },
+      children: [{
+        type: "Card",
+        variant: "filled",
+        background: "surfaceVariant",
+        border: { width: 1, color: "primary" },
+        borderRadius: "large",
+        elevation: 16,
+        padding: 16,
+        animate: { duration: 220, curve: "decelerate" },
+        children: [{
+          type: "Column", gap: 8, children: [
+            { type: "Row", mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [
+              { type: "Text", text: "Elegir fuente", textEn: "Pick a source", style: "h3" },
+              { type: "Badge", text: "9 fuentes", textEn: "9 sources", color: "primary" },
+            ] },
+            ...panelSources(src, en),
+            { type: "Text", text: "El panel se cierra solo a los 5 segundos o al tocar fuera.", textEn: "The panel closes on its own after 5 seconds or on a tap outside.", style: "caption", color: "muted" },
+          ],
+        }],
+      }],
     });
   }
-  const body = { type: "Column", crossAxisAlignment: "stretch", children: [capsula, { type: "SizedBox", height: 16 }, capStack] };
-  const opts = { close: true, navValue: "home" };
+  const body = { type: "Column", crossAxisAlignment: "stretch", gap: 8, children: [capsula, capStack] };
+  const opts = {
+    close: true,
+    navValue: "home",
+    actions: [
+      { type: "IconButton", icon: "magic", labelText: "Temas", labelTextEn: "Themes", onPressed: { ui: [{ open: "themeSheet" }] } },
+      { type: "IconButton", icon: "search", labelText: "Buscar", labelTextEn: "Search", onPressed: { go: { screen: { route: "buscar" } } } },
+    ],
+  };
   if (!state.hideBar) { opts.bottomBar = true; if (!state.capsOpen) opts.fab = floatFab(); }
   const root = scaffold("Multi-verso Kin", "Multi-verse Kin", ctx, body, opts);
+  root.layout = "fill";
   // temporizador de raíz: cada segundo revisa si al panel le toca cerrarse (5 s sin interacción)
   root.every = [{ ms: 1000, event: "capsTick" }];
   return root;
@@ -591,8 +762,22 @@ function viewFuente(ctx) {
   const src = (state.fuente && state.fuente.src) || (args && args.s) || state.hsrc || "zt";
   const nombre = SOURCES[src] ? SOURCES[src].name : String(src);
   const f = state.fuente || null;
-  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 6 } });
-  const kids = [salir()];
+  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 8 } });
+  const kids = [
+    {
+      type: "Card", variant: "filled", background: "surfaceVariant", border: { width: 1, color: "primary" }, borderRadius: "large",
+      margin: { x: 16, y: 8 }, padding: 12,
+      children: [{
+        type: "Column", gap: 8, children: [
+          { type: "Row", mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [
+            { type: "Text", text: nombre, style: "h3" },
+            { type: "Badge", text: isNovel(src) ? "NOVELA" : "MANGA", color: "primary" },
+          ] },
+          salir(),
+        ],
+      }],
+    },
+  ];
   if (!f) {
     kids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "Skeleton", shape: "card", height: 200 },
@@ -601,7 +786,7 @@ function viewFuente(ctx) {
     ] });
   } else if (f.cf && ctx.device !== "tv") {
     kids.push({ type: "Column", gap: 12, padding: 16, children: [
-      { type: "errorState", icon: "security", title: f.cfKind === "blocked" ? "La fuente está bloqueada" : "Desafío de Cloudflare", titleEn: f.cfKind === "blocked" ? "The source is blocked" : "Cloudflare challenge",
+      { type: "errorState", icon: "lock", title: f.cfKind === "blocked" ? "La fuente está bloqueada" : "Desafío de Cloudflare", titleEn: f.cfKind === "blocked" ? "The source is blocked" : "Cloudflare challenge",
         text: nombre + " está tras Cloudflare: resuélvelo desde el Home o prueba más tarde.", textEn: nombre + " is behind Cloudflare: solve it from the Home or try later." },
       { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } },
     ] });
@@ -610,10 +795,10 @@ function viewFuente(ctx) {
   } else if (!(f.shelves || []).length) {
     kids.push(empty("Sin datos de " + nombre + " por ahora", "No data from " + nombre + " yet"));
   } else {
-    for (const row of f.shelves) {
+    f.shelves.forEach((row, idx) => {
       const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
-      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: "small" });
-    }
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
+    });
     kids.push({ type: "TextButton", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, padding: { x: 16, y: 8 } });
   }
   return scaffold(nombre + " · Todo", nombre + " · Everything", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home" });
@@ -674,14 +859,14 @@ function viewBuscar(ctx) {
     { type: "Chips", key: "busqSrc", value: filtro || "todas", options: [{ value: "todas", label: en ? "All sources" : "Todas" }].concat(Object.keys(SOURCES).map((k) => ({ value: k, label: SOURCES[k].name }))), onChanged: "busqSrc", padding: { x: 16, y: 8 } },
   ];
   if (state.busy && !state.results) {
-    kids.push({ type: "Row", wrap: true, gap: 8, padding: 16, children: [1, 2, 3, 4, 5, 6].map(() => ({ type: "Skeleton", shape: "card", width: 120, height: 180 })) });
+    kids.push({ type: "Row", wrap: true, gap: 8, padding: 16, children: [1, 2, 3, 4, 5, 6].map(() => ({ type: "Skeleton", shape: "card", width: 120, height: 160 })) });
   }
   if (state.results) {
     let n = 0;
     for (const g of state.results) {
       if (!g.items.length) continue;
       n += g.items.length;
-      kids.push({ type: "Text", text: SOURCES[g.src].name, style: "h4", color: "accent", padding: { x: 16, y: 8 } });
+      kids.push({ type: "Text", text: SOURCES[g.src].name, style: "h4", color: "primary", padding: { x: 16, y: 8 } });
       kids.push({ type: "titleGrid", items: g.items.map(expandOne).filter(Boolean), columns: deviceCols(ctx) });
     }
     if (!n) kids.push(empty('Sin resultados para "' + q.slice(0, 40) + '"', 'No results for "' + q.slice(0, 40) + '"'));
@@ -751,36 +936,55 @@ function viewDetalle(ctx) {
   const en = lang === "en";
   if (state.busyDetail && !d) {
     return scaffold("Cargando", "Loading", ctx, { type: "Column", padding: 16, gap: 12, children: [
-      { type: "Row", gap: 12, children: [{ type: "Skeleton", shape: "card", width: 120, height: 180 }, { type: "Column", gap: 8, flex: 1, children: [{ type: "Skeleton", shape: "line", height: 24 }, { type: "Skeleton", shape: "line", height: 16 }, { type: "Skeleton", shape: "line", height: 16 }] }] },
+      { type: "Row", gap: 12, children: [{ type: "Skeleton", shape: "card", width: 120, height: 160 }, { type: "Column", gap: 8, flex: 1, children: [{ type: "Skeleton", shape: "line", height: 24 }, { type: "Skeleton", shape: "line", height: 16 }, { type: "Skeleton", shape: "line", height: 16 }] }] },
     ] }, {});
   }
   if (!d) return scaffold("Detalle", "Detail", ctx, errorBox(state.error || "Faltan datos"));
-  const header = {
-    type: "Row", crossAxisAlignment: "start", gap: 16, padding: 16,
+
+  const srcName = SOURCES[d.src] ? SOURCES[d.src].name : "";
+  const posterCard = {
+    type: "Card",
+    flush: true,
+    borderRadius: "medium",
+    elevation: 8,
+    width: 120,
     children: [
       { type: "Image", url: d.poster, headers: imgHeads(d.poster), aspect: "2:3", fit: "cover", width: 120, alt: d.title, altEn: d.title, fallback: { type: "Column", width: 120, height: 160, background: "surfaceVariant", borderRadius: "medium" } },
-      { type: "Column", flex: 1, gap: 8, children: [
-        { type: "Text", text: d.title, style: "h3" },
-        { type: "Text", text: SOURCES[d.src] ? SOURCES[d.src].name : "", style: "body", color: "primary" },
-        d.status ? { type: "Text", text: d.status + (d.demography ? " · " + d.demography : ""), style: "body", color: "muted" } : null,
-        d.score ? { type: "Text", text: "★ " + d.score + (d.total ? "  ·  " + d.total + " caps" : ""), style: "body", color: "muted" } : (d.total ? { type: "Text", text: d.total + " caps", style: "body", color: "muted" } : null),
-        d.genres && d.genres.length ? { type: "Chips", key: "gens", value: d.genres[0], options: d.genres.slice(0, 4).map((g) => ({ value: g, label: g })) } : null,
-      ].filter(Boolean) },
     ],
   };
+
+  const header = {
+    type: "Column", gap: 12, padding: 16,
+    children: [
+      { type: "Row", mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [
+        { type: "Badge", text: srcName || "Fuente", color: "primary" },
+        d.status ? { type: "Badge", text: String(d.status).slice(0, 24), color: "surface" } : null,
+      ].filter(Boolean) },
+      { type: "Row", crossAxisAlignment: "start", gap: 16, children: [
+        posterCard,
+        { type: "Column", flex: 1, gap: 8, children: [
+          { type: "Text", text: d.title, style: "h2", canRequestFocus: device === "tv" ? true : undefined },
+          d.demography ? { type: "Text", text: String(d.demography), style: "caption", color: "primary" } : null,
+          d.score ? { type: "Text", text: "★ " + d.score + (d.total ? "  ·  " + d.total + " caps" : ""), style: "body", color: "muted" } : (d.total ? { type: "Text", text: d.total + " caps", style: "body", color: "muted" } : null),
+          d.genres && d.genres.length ? { type: "Chips", key: "gens", value: d.genres[0], options: d.genres.slice(0, 4).map((g) => ({ value: g, label: g })) } : null,
+        ].filter(Boolean) },
+      ] },
+    ],
+  };
+
   const prog = state.prog || null;
   // orden de la lista: preferencia del usuario (persistente) o cronológico ascendente
   const orden = state.capsOrder || (kino.storage.get("capsOrden") === "desc" ? "desc" : "asc");
   const cronologica = ordenarCaps(d.chapters, "asc");
   const actions = [];
   if (prog && prog.cr) {
-    actions.push({ type: "Button", variant: "primary", icon: "play", labelText: "Seguir: Cap. " + prog.n, labelTextEn: "Continue: Ch. " + prog.n, onPressed: { event: "cap", arg: prog.cr }, span: 12, fill: true });
+    actions.push({ type: "ElevatedButton", variant: "primary", icon: "play", labelText: "Seguir: Cap. " + prog.n, labelTextEn: "Continue: Ch. " + prog.n, onPressed: { event: "cap", arg: prog.cr }, span: 12, fill: true });
   }
   if (d.chapters.length) {
     // primero y último son CRONOLÓGICOS: con la lista en desc no se intercambian
     const first = cronologica[0];
     const last = cronologica[cronologica.length - 1];
-    actions.push({ type: "Button", variant: "secondary", labelText: "Primero (" + first.n + ")", labelTextEn: "First (" + first.n + ")", onPressed: { event: "cap", arg: first.r }, span: 6, fill: true });
+    actions.push({ type: prog && prog.cr ? "Button" : "ElevatedButton", variant: prog && prog.cr ? "secondary" : "primary", labelText: "Primero (" + first.n + ")", labelTextEn: "First (" + first.n + ")", onPressed: { event: "cap", arg: first.r }, span: 6, fill: true });
     actions.push({ type: "Button", variant: "secondary", labelText: "Último (" + last.n + ")", labelTextEn: "Last (" + last.n + ")", onPressed: { event: "cap", arg: last.r }, span: 6, fill: true });
   }
   const siteUrl = siteUrlOf(d.src, d.slug);
@@ -793,37 +997,47 @@ function viewDetalle(ctx) {
   // la lista respeta el orden elegido (se aplica al momento, sobre lo ya cargado)
   const ordenada = ordenarCaps(ocultar ? d.chapters.filter((c) => !c.pago) : d.chapters, orden);
   const visibles = ordenada.slice(0, shown);
-  const chList = visibles.map((c, i) => {
-    return {
-      type: "Row", key: "ch" + i, gap: 4, padding: { x: 12, y: 4 },
-      children: [
-        { type: "Text", text: "Cap. " + c.n + (c.t && c.t !== "Capítulo " + c.n ? " · " + String(c.t).slice(0, 28) : ""), textEn: "Ch. " + c.n, style: "body", flex: 1, onTap: { event: "cap", arg: c.r } },
-        c.pago ? { type: "IconButton", icon: "lock", labelText: en ? "Paid chapter" : "Capítulo de pago", labelTextEn: "Paid chapter", onPressed: { event: "nada" } } : null,
-        { type: "IconButton", icon: "play", labelText: "Leer", labelTextEn: "Read", onPressed: { event: "cap", arg: c.r } },
-      ].filter(Boolean),
-    };
-  });
+  const richTiles = visibles.length <= 90;
+  const chList = visibles.map((c, i) => ({
+    type: "ListTile",
+    key: "ch" + i,
+    dense: true,
+    borderRadius: "medium",
+    background: "surfaceVariant",
+    border: { width: 1, color: "surface" },
+    margin: { x: 16, y: 4 },
+    leading: richTiles ? { type: "CircleAvatar", text: String(c.n).slice(0, 3), radius: 16, backgroundColor: "primaryContainer", labelText: "Cap. " + c.n } : undefined,
+    title: "Cap. " + c.n,
+    titleEn: "Ch. " + c.n,
+    subtitle: c.t && c.t !== "Capítulo " + c.n ? String(c.t).slice(0, 48) : undefined,
+    trailing: c.pago ? { type: "Icon", name: "lock", color: "warning" } : (richTiles ? { type: "Icon", name: "play", color: "primary" } : undefined),
+    onTap: { event: "cap", arg: c.r },
+  }));
+
+  const ov = descNode(d.overview, state, en);
   const kids = [
-    { type: "Card", key: "tarjeta", children: [header] },
+    { type: "Card", key: "tarjeta", variant: "filled", background: "surfaceVariant", border: { width: 1, color: "primary" }, borderRadius: "large", elevation: 12, margin: { x: 16, y: 8 }, children: [header] },
     ...(actions.length ? [{ type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: actions }] : []),
     { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: [
-      { type: "Button", variant: "secondary", icon: "heart", labelText: favOn ? "Te gusta" : "Me Gusta", labelTextEn: favOn ? "Liked" : "Like", onPressed: { event: "fav" }, span: 6, fill: true },
-      { type: "Button", variant: "secondary", icon: "bookmark", labelText: "Agregar a Biblioteca", labelTextEn: "Add to Library", onPressed: { event: "bibOpen" }, span: 6, fill: true },
+      { type: "Button", variant: favOn ? "primary" : "secondary", selected: favOn, icon: "heart", labelText: favOn ? "Te gusta" : "Me Gusta", labelTextEn: favOn ? "Liked" : "Like", onPressed: { event: "fav" }, span: 6, fill: true },
+      { type: "Button", variant: tagCur ? "primary" : "secondary", selected: Boolean(tagCur), icon: "bookmark", labelText: "Agregar a Biblioteca", labelTextEn: "Add to Library", onPressed: { event: "bibOpen" }, span: 6, fill: true },
     ] },
     bibOpen ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: BIB_TAGS.map((t) => ({
       type: "Button", variant: t.k === tagCur ? "primary" : "secondary", icon: t.k === tagCur ? "check" : undefined, labelText: t.t, labelTextEn: t.te, onPressed: { event: "biblio", arg: t.k }, span: 3, fill: true,
     })).concat(tagCur ? [{ type: "TextButton", icon: "close", labelText: "Quitar etiqueta", labelTextEn: "Remove tag", onPressed: { event: "biblio", arg: "quitar" }, span: 12, fill: true }] : []) } : null,
     { type: "Button", variant: "secondary", icon: "language", labelText: "Abrir en el navegador", labelTextEn: "Open in browser", onPressed: { go: { url: { href: siteUrl, title: String(d.title).slice(0, 60) } } }, fill: true, padding: { x: 16, y: 4 } },
-    descNode(d.overview, state, en),
+    ov ? { type: "Card", variant: "outlined", border: { width: 1, color: "surface" }, background: "surfaceVariant", borderRadius: "large", margin: { x: 16, y: 8 }, children: [ov] } : null,
     ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) de pago oculto(s) (ajustable en Ajustes).", textEn: conPago.length + " paid chapter(s) hidden (toggle in Settings).", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
     !ocultar && conPago.length ? { type: "Text", text: conPago.length + " capítulo(s) con candado requieren cuenta premium de la fuente.", textEn: conPago.length + " locked chapter(s) need a premium account on the source.", style: "body", color: "muted", padding: { x: 16, y: 4 } } : null,
     // filtro de orden de capítulos: se aplica al instante y queda guardado para las próximas
-    d.chapters.length > 1 ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 2 }, children: [
-      { type: "Button", variant: orden === "asc" ? "primary" : "secondary", icon: "arrow_upward", labelText: "Antiguos primero", labelTextEn: "Oldest first", onPressed: { event: "capsOrder", arg: "asc" }, span: 6, fill: true },
-      { type: "Button", variant: orden === "desc" ? "primary" : "secondary", icon: "arrow_downward", labelText: "Recientes primero", labelTextEn: "Newest first", onPressed: { event: "capsOrder", arg: "desc" }, span: 6, fill: true },
+    d.chapters.length > 1 ? { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 4 }, children: [
+      { type: "Button", variant: orden === "asc" ? "primary" : "secondary", icon: "expand_less", labelText: "Antiguos primero", labelTextEn: "Oldest first", onPressed: { event: "capsOrder", arg: "asc" }, span: 6, fill: true },
+      { type: "Button", variant: orden === "desc" ? "primary" : "secondary", icon: "expand_more", labelText: "Recientes primero", labelTextEn: "Newest first", onPressed: { event: "capsOrder", arg: "desc" }, span: 6, fill: true },
     ] } : null,
     // búsqueda de capítulos (dv: el AJAX del sitio busca en TODA la obra, RCA 2026-11)
-    d.src === "dv" ? { type: "TextField", key: "capq", kind: "search", labelText: "Buscar capítulo por número o título", labelTextEn: "Search chapter by number or title", value: d.capsQ || "", onSubmitted: "capq", onTrailingTap: "capq", trailingIcon: "search", trailingLabel: "Buscar" } : null,
+    d.src === "dv" ? { type: "Column", padding: { x: 16, y: 4 }, children: [
+      { type: "TextField", key: "capq", kind: "search", labelText: "Buscar capítulo por número o título", labelTextEn: "Search chapter by number or title", value: d.capsQ || "", onSubmitted: "capq", onTrailingTap: "capq", trailingIcon: "search", trailingLabel: "Buscar" },
+    ] } : null,
     d.chapters.length ? { type: "Column", children: chList } : empty(d.capsQ ? "Sin resultados para «" + d.capsQ + "»" : "Sin capítulos listados", d.capsQ ? "No results for \"" + d.capsQ + "\"" : "No chapters listed"),
     d.chapters.length > shown ? { type: "TextButton", labelText: "Ver más capítulos (" + (d.chapters.length - shown) + " más)", labelTextEn: "More chapters", onPressed: { event: "chMas" }, padding: 16 } : null,
     d.chapters.length && d.next ? { type: "TextButton", labelText: "Cargar más de la fuente" + (d.total ? " (" + d.chapters.length + " de " + d.total + ")" : ""), labelTextEn: "Load more from source" + (d.total ? " (" + d.chapters.length + " of " + d.total + ")" : ""), onPressed: { event: "caps" }, padding: { x: 16, y: 4 } } : null,
@@ -833,64 +1047,201 @@ function viewDetalle(ctx) {
 
 // ---------- vista: lector ----------
 
+/** Panel desplegable (BottomSheet) con los ajustes del lector Studio para novela o manga dentro de Kino. */
+function readerConfigSheet(c, rp, en) {
+  const isNov = Boolean(c.text && c.text.length);
+  const children = [];
+  if (isNov) {
+    children.push(
+      { type: "Text", text: "Superficie del papel", textEn: "Paper surface", style: "caption", color: "primary" },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.novelSurface === "surface" ? "primary" : "secondary", labelText: "Obsidiana", labelTextEn: "Obsidian", onPressed: { event: "rpref", arg: "novelSurface:surface" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelSurface === "surfaceVariant" ? "primary" : "secondary", labelText: "Ahumado", labelTextEn: "Smoked", onPressed: { event: "rpref", arg: "novelSurface:surfaceVariant" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelSurface === "primaryContainer" ? "primary" : "secondary", labelText: "Tinte suave", labelTextEn: "Tinted", onPressed: { event: "rpref", arg: "novelSurface:primaryContainer" }, flex: 1, fill: true },
+      ] },
+      { type: "Text", text: "Tamaño tipográfico", textEn: "Text scale", style: "caption", color: "primary" },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.novelSize === "p" ? "primary" : "secondary", labelText: "Compacto", labelTextEn: "Compact", onPressed: { event: "rpref", arg: "novelSize:p" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelSize === "h5" ? "primary" : "secondary", labelText: "Cómodo", labelTextEn: "Comfy", onPressed: { event: "rpref", arg: "novelSize:h5" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelSize === "h4" ? "primary" : "secondary", labelText: "Grande", labelTextEn: "Large", onPressed: { event: "rpref", arg: "novelSize:h4" }, flex: 1, fill: true },
+      ] },
+      { type: "Text", text: "Ancho de columna y espaciado", textEn: "Column width & spacing", style: "caption", color: "primary" },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.novelWidth === 32 ? "primary" : "secondary", labelText: "Estrecho", labelTextEn: "Narrow", onPressed: { event: "rpref", arg: "novelWidth:32" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelWidth === 24 ? "primary" : "secondary", labelText: "Editorial", labelTextEn: "Editorial", onPressed: { event: "rpref", arg: "novelWidth:24" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelWidth === 16 ? "primary" : "secondary", labelText: "Completo", labelTextEn: "Full", onPressed: { event: "rpref", arg: "novelWidth:16" }, flex: 1, fill: true },
+      ] },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.novelAlign === "start" ? "primary" : "secondary", labelText: "Izquierda", labelTextEn: "Left", onPressed: { event: "rpref", arg: "novelAlign:start" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelAlign === "justify" ? "primary" : "secondary", labelText: "Justificado", labelTextEn: "Justify", onPressed: { event: "rpref", arg: "novelAlign:justify" }, flex: 1, fill: true },
+      ] },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.novelGap === 4 ? "primary" : "secondary", labelText: "Párrafo denso", labelTextEn: "Tight", onPressed: { event: "rpref", arg: "novelGap:4" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelGap === 8 ? "primary" : "secondary", labelText: "Balanceado", labelTextEn: "Balanced", onPressed: { event: "rpref", arg: "novelGap:8" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.novelGap === 12 ? "primary" : "secondary", labelText: "Aireado", labelTextEn: "Airy", onPressed: { event: "rpref", arg: "novelGap:12" }, flex: 1, fill: true },
+      ] }
+    );
+  } else {
+    children.push(
+      { type: "Text", text: "Modo de lectura", textEn: "Reading mode", style: "caption", color: "primary" },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.mangaMode === "auto" ? "primary" : "secondary", labelText: "Auto", labelTextEn: "Auto", onPressed: { event: "rpref", arg: "mangaMode:auto" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.mangaMode === "pages" ? "primary" : "secondary", labelText: "Paginado", labelTextEn: "Paged", onPressed: { event: "rpref", arg: "mangaMode:pages" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.mangaMode === "strip" ? "primary" : "secondary", labelText: "Cascada", labelTextEn: "Strip", onPressed: { event: "rpref", arg: "mangaMode:strip" }, flex: 1, fill: true },
+      ] },
+      { type: "Text", text: "Dirección en Paginado", textEn: "Paged direction", style: "caption", color: "primary" },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.mangaDir === "auto" ? "primary" : "secondary", labelText: "Auto", labelTextEn: "Auto", onPressed: { event: "rpref", arg: "mangaDir:auto" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.mangaDir === "rtl" ? "primary" : "secondary", labelText: "Manga (Der→Izq)", labelTextEn: "Manga (RTL)", onPressed: { event: "rpref", arg: "mangaDir:rtl" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.mangaDir === "ltr" ? "primary" : "secondary", labelText: "Cómic (Izq→Der)", labelTextEn: "Comic (LTR)", onPressed: { event: "rpref", arg: "mangaDir:ltr" }, flex: 1, fill: true },
+      ] },
+      { type: "Text", text: "Encuadre de láminas", textEn: "Page framing", style: "caption", color: "primary" },
+      { type: "Row", gap: 8, children: [
+        { type: "Button", variant: rp.mangaFrame === "edge" ? "primary" : "secondary", labelText: "Sin bordes", labelTextEn: "Edge to edge", onPressed: { event: "rpref", arg: "mangaFrame:edge" }, flex: 1, fill: true },
+        { type: "Button", variant: rp.mangaFrame === "framed" ? "primary" : "secondary", labelText: "Enmarcado", labelTextEn: "Framed", onPressed: { event: "rpref", arg: "mangaFrame:framed" }, flex: 1, fill: true },
+      ] }
+    );
+  }
+  return {
+    type: "BottomSheet",
+    key: "readerCfg",
+    title: isNov ? "Estudio Editorial" : "Estudio de Lectura",
+    titleEn: isNov ? "Editorial Studio" : "Reading Studio",
+    children: [{ type: "Column", gap: 12, padding: 16, children }],
+  };
+}
+
 function viewLeer(ctx) {
   const { state } = ctx;
   const c = state.chapter;
-  if (state.busyChapter && !c) return scaffold("Capítulo", "Chapter", ctx, { type: "Column", padding: 16, children: [{ type: "Skeleton", shape: "card", width: 400, height: 300 }] });
+  if (state.busyChapter && !c) return scaffold("Capítulo", "Chapter", ctx, { type: "Column", padding: 16, children: [{ type: "Skeleton", shape: "card", width: 400, height: 320 }] });
   if (!c) return scaffold("Capítulo", "Chapter", ctx, errorBox(state.error || "Faltan datos"));
   const enL = (ctx.lang === "en");
+  const rp = state.rprefs || readRPrefs();
+  const isNov = Boolean(c.text && c.text.length);
+  const curIdx = isNov ? 0 : Math.min(Math.max(0, state.pagIdx != null ? state.pagIdx : ((c.resumePage || 1) - 1)), Math.max(0, (c.pages || []).length - 1));
+  const curFrac = !isNov && c.pages && c.pages.length ? Math.max(0.02, Math.min(1, (curIdx + 1) / c.pages.length)) : undefined;
+
   const nav = [
-    c.prev ? { type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous", onPressed: { event: "nav", arg: c.prev }, span: 4, fill: true } : { type: "SizedBox", width: 16 },
-    { type: "Text", text: c.text ? "Cap. " + c.number + "  ·  novela" : "Cap. " + c.number + "  ·  " + c.total + " pág.", textEn: c.text ? "Ch. " + c.number + "  ·  novel" : "Ch. " + c.number + "  ·  " + c.total + " p.", style: "body", color: "muted", padding: 8 },
-    c.next ? { type: "Button", variant: "secondary", icon: "arrow_forward", labelText: "Siguiente", labelTextEn: "Next", onPressed: { event: "nav", arg: c.next }, span: 4, fill: true } : { type: "SizedBox", width: 16 },
+    c.prev ? { type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Anterior", labelTextEn: "Previous", onPressed: { event: "nav", arg: c.prev }, flex: 1, fill: true } : { type: "SizedBox", width: 16, flex: 1 },
+    { type: "TextButton", icon: "tune", labelText: isNov ? "Cap. " + c.number + " · Ajustes" : "Cap. " + c.number + " · " + (curIdx + 1) + "/" + (c.total || 1), labelTextEn: isNov ? "Ch. " + c.number + " · Style" : "Ch. " + c.number + " · " + (curIdx + 1) + "/" + (c.total || 1), onPressed: { ui: [{ open: "readerCfg" }] }, flex: 2, fill: true },
+    c.next ? { type: "Button", variant: "primary", icon: "arrow_forward", labelText: "Siguiente", labelTextEn: "Next", onPressed: { event: "nav", arg: c.next }, flex: 1, fill: true } : { type: "SizedBox", width: 16, flex: 1 },
   ];
+
+  const footerBar = {
+    type: "Card",
+    variant: "filled",
+    background: "surfaceVariant",
+    border: { width: 1, color: "surface" },
+    padding: { x: 12, y: 8 },
+    children: [
+      { type: "Column", gap: 4, children: [
+        curFrac !== undefined ? { type: "LinearProgressIndicator", value: curFrac } : null,
+        { type: "Row", gap: 8, crossAxisAlignment: "center", children: nav },
+      ].filter(Boolean) },
+    ],
+  };
+
   const kids = [];
   if (c.text && c.text.length) {
     // Modo novela: ListView (el nodo perezoso de la lista; solo se construye lo visible),
-    // ilustraciones y título editorial al inicio, progreso por fracción de scroll vía «scr».
-    const bloques = [];
-    if (c.mTitle) {
-      bloques.push({ type: "Text", text: String(c.mTitle), style: "caption", color: "muted", padding: { x: 16, y: 4 } });
-    }
-    bloques.push({ type: "Text", text: c.title || ("Capítulo " + c.number), style: "h2", padding: { x: 16, y: 8 } });
-    bloques.push({ type: "Divider" });
+    // cabecera editorial, limpieza de Markdown, ilustraciones y progreso por scroll vía «scr».
+    const rawList = c.text.slice(0, 440);
+    const words = rawList.reduce((acc, p) => acc + String(p || "").trim().split(/\s+/).filter(Boolean).length, 0);
+    const readMin = Math.max(1, Math.round(words / 210));
+    const bloques = [
+      {
+        type: "Card",
+        variant: "filled",
+        background: "surfaceVariant",
+        border: { width: 1, color: "primary" },
+        borderRadius: "large",
+        margin: { x: 16, y: 12 },
+        padding: 16,
+        children: [{
+          type: "Column", gap: 8, children: [
+            c.mTitle ? { type: "Text", text: String(c.mTitle).toUpperCase(), style: "caption", color: "primary" } : null,
+            { type: "Text", text: c.title || ("Capítulo " + c.number), style: "h2" },
+            { type: "Text", text: (enL ? "Chapter " : "Capítulo ") + c.number + "  ·  ~" + readMin + (enL ? " min read" : " min de lectura"), style: "caption", color: "muted" },
+          ].filter(Boolean),
+        }],
+      },
+    ];
     if (c.imgs && c.imgs.length) {
-      for (const u of c.imgs) bloques.push({ type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { y: 8 } });
+      for (const u of c.imgs.slice(0, 20)) bloques.push({ type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Ilustración", altEn: "Illustration", padding: { x: 16, y: 8 } });
     }
-    for (const par of c.text.slice(0, 600)) bloques.push({ type: "Text", text: par, style: "body", padding: { x: 16, y: 8 } });
-    bloques.push({ type: "Divider" });
-    kids.push({ type: "ListView", key: "novela-" + (c.tk || 0), items: bloques, flex: 1 });
-    kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
-  } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= (pagesDisponible() ? 250 : 8)) {
+    for (const rawPar of rawList) {
+      const parsed = parseNovelParagraph(rawPar);
+      if (!parsed) continue;
+      if (parsed.kind === "break") {
+        bloques.push({ type: "Text", text: "·   ·   ·", style: "h4", color: "primary", textAlign: "center", padding: { x: rp.novelWidth, y: 12 } });
+      } else if (parsed.kind === "heading") {
+        bloques.push({ type: "Text", text: parsed.text, style: "h4", bold: true, color: "primary", padding: { x: rp.novelWidth, y: 12 } });
+      } else {
+        bloques.push({ type: "Text", text: parsed.text, style: rp.novelSize, textAlign: rp.novelAlign, padding: { x: rp.novelWidth, y: rp.novelGap } });
+      }
+    }
+    bloques.push({
+      type: "Card",
+      variant: "outlined",
+      border: { width: 1, color: "primary" },
+      borderRadius: "large",
+      margin: 16,
+      padding: 16,
+      children: [{
+        type: "Column", gap: 8, children: [
+          { type: "Text", text: (enL ? "End of Chapter " : "Fin del capítulo ") + c.number, style: "h4", textAlign: "center" },
+          c.next ? { type: "ElevatedButton", variant: "primary", icon: "arrow_forward", labelText: "Siguiente capítulo", labelTextEn: "Next chapter", onPressed: { event: "nav", arg: c.next }, fill: true } : null,
+        ].filter(Boolean),
+      }],
+    });
+    kids.push({
+      type: "Column", flex: 1, background: rp.novelSurface,
+      children: [{ type: "ListView", key: "novela-" + (c.tk || 0), items: bloques, flex: 1 }],
+    });
+    kids.push(footerBar);
+  } else if (c.direction === "rtl" && c.pages.length >= 2 && c.pages.length <= (pagesDisponible() ? 250 : 8) && rp.mangaMode !== "strip" || (rp.mangaMode === "pages" && c.pages.length >= 2 && c.pages.length <= (pagesDisponible() ? 250 : 8))) {
     // modo páginas: con la página guardada del capítulo se retoma donde se quedó (initialPage)
+    const rev = rp.mangaDir === "auto" ? c.direction === "rtl" : rp.mangaDir === "rtl";
+    const padX = rp.mangaFrame === "framed" ? 12 : 0;
     kids.push({
       type: "pages",
       key: "manga-pages-" + (c.tk || 0),
-      reverse: true,
+      flex: 1,
+      reverse: rev,
       progress: "bar",
       onPageChanged: "pag",
       initialPage: c.resumePage > 1 ? Math.max(0, Math.min(c.resumePage, c.pages.length) - 1) : 0,
       children: c.pages.map((u, i) => ({
         type: "SingleChildScrollView", key: "pg" + (c.tk || 0) + "-" + i, zoom: true, onScroll: "scr", children: [
-          { type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1) },
+          { type: "Image", url: u, headers: imgHeads(u), aspect: "2:3", fit: "width", padding: { x: padX, y: padX }, alt: "Página " + (i + 1), altEn: "Page " + (i + 1) },
         ],
       })),
     });
-    kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
+    kids.push(footerBar);
   } else {
     // tira vertical (webtoon): clave por apertura = siempre página 1 al cambiar de capítulo;
     // costura continua (padding y: 0) para lectura sin cortes negros entre viñetas
+    const padX = rp.mangaFrame === "framed" ? 12 : 0;
     if (c.resumePage > 1 && c.total) {
-      kids.push({ type: "Text", text: "Estabas por la página " + c.resumePage + " de " + c.total, textEn: "You were around page " + c.resumePage + " of " + c.total, style: "caption", color: "muted", padding: { x: 16, y: 4 } });
+      kids.push({ type: "Text", text: "Estabas por la página " + c.resumePage + " de " + c.total, textEn: "You were around page " + c.resumePage + " of " + c.total, style: "caption", color: "primary", padding: { x: 16, y: 4 } });
     }
     kids.push({
-      type: "SingleChildScrollView", key: "tira-" + (c.tk || 0), zoom: true, onScroll: "scr",
-      children: [{ type: "Column", children: c.pages.map((u, i) => ({ type: "Image", url: u, headers: imgHeads(u), aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { y: 0 } })) }],
+      type: "SingleChildScrollView", key: "tira-" + (c.tk || 0), flex: 1, zoom: true, onScroll: "scr",
+      children: [{ type: "Column", gap: padX, children: c.pages.map((u, i) => ({ type: "Image", url: u, headers: imgHeads(u), aspect: "600:2400", fit: "width", alt: "Página " + (i + 1), altEn: "Page " + (i + 1), padding: { x: padX, y: 0 } })) }],
     });
-    kids.push({ type: "Row", wrap: true, gap: 8, padding: 12, children: nav });
+    kids.push(footerBar);
   }
-  // Inmersión: en el lector no hay barra de navegación; el regreso es el botón de atrás de la AppBar.
-  const root = scaffold(String(c.mTitle || c.title || "Lector").slice(0, 30), "Reader", ctx, { type: "Column", crossAxisAlignment: "stretch", children: kids }, {});
+  kids.push(readerConfigSheet(c, rp, enL));
+  // Inmersión: en el lector no hay barra de navegación; el regreso es el botón de atrás de la AppBar,
+  // junto a «Ajustes de lectura» (BottomSheet) y salto rápido entre capítulos.
+  const barActions = [
+    { type: "IconButton", icon: "tune", labelText: "Estilo de lectura", labelTextEn: "Reader style", onPressed: { ui: [{ open: "readerCfg" }] } },
+  ];
+  if (c.prev) barActions.push({ type: "IconButton", icon: "arrow_back", labelText: "Capítulo anterior", labelTextEn: "Previous chapter", onPressed: { event: "nav", arg: c.prev } });
+  if (c.next) barActions.push({ type: "IconButton", icon: "arrow_forward", labelText: "Siguiente capítulo", labelTextEn: "Next chapter", onPressed: { event: "nav", arg: c.next } });
+  const titleText = (c.mTitle ? String(c.mTitle).slice(0, 20) + " · " : "") + "Cap. " + c.number;
+  const root = scaffold(titleText, "Ch. " + c.number, ctx, { type: "Column", crossAxisAlignment: "stretch", children: kids }, { actions: barActions });
   root.layout = "fill"; // el ListView del texto necesita pantalla completa para desplazarse él solo
   return root;
 }
@@ -918,6 +1269,7 @@ function cfCard(en) {
 
 function viewAjustes(ctx) {
   const en = ctx.lang === "en";
+  const active = ctx.activeTheme || null;
   const kids = [
     { type: "Text", text: "Cuentas y ajustes del plugin. También están en Ajustes ▸ Plugins ▸ Multi-verso Kin.", textEn: "Accounts and plugin settings. Also in Settings ▸ Plugins ▸ Multi-verso Kin.", style: "body", padding: 16 },
     { type: "settings", keys: ["cuentas", "zt_user", "zt_pass", "log_zt", "zt_token", "win_zt", "ms_user", "ms_pass", "log_ms", "ms_cookie", "win_ms", "ocultarPago", "salir"], onSaved: "saved" },
@@ -926,11 +1278,13 @@ function viewAjustes(ctx) {
     { type: "Text", text: "«Resolver» abre el sitio en una ventana del plugin: completa el desafío una vez y Kino guarda su cookie de sesión (cf_clearance) para esa fuente; las siguientes peticiones la llevan solas mientras la cookie valga. Si el sitio bloquea por regla de IP o firma del navegador, la cookie no basta: prueba otra red (Wi-Fi o datos móviles) o más tarde.", textEn: "«Solve» opens the site in a plugin window: complete the challenge once and Kino keeps its session cookie (cf_clearance) for that source; the next requests carry it automatically while it stays valid. If the site blocks by an IP or browser-signature rule, the cookie is not enough: try another network or later.", style: "body", color: "muted", padding: { x: 16, y: 8 } },
     { type: "Text", text: "Temas de la app (8)", textEn: "App themes (8)", style: "h4", padding: { x: 16, y: 8 } },
     { type: "Row", wrap: true, gap: 8, padding: { x: 16, y: 8 }, children: THEMES.map((t) => ({
-      type: "Button", variant: "secondary", labelText: t.name.es, labelTextEn: t.name.en, onPressed: { go: { useTheme: { theme: t.id } } }, span: 6, fill: true,
+      type: "Button", variant: active === t.id ? "primary" : "secondary", icon: active === t.id ? "check" : "magic", selected: active === t.id,
+      labelText: t.name.es, labelTextEn: t.name.en, onPressed: { go: { useTheme: { theme: t.id } } }, span: 6, fill: true,
     })) },
-    { type: "Text", text: "Un tema se aplica a TODA la app, también a estas páginas, mientras lo tengas puesto; se quita en Ajustes ▸ Apariencia. El violeta de Multi-verso es el tema «Manhwa Violeta».", textEn: "A theme applies to the WHOLE app, these pages included, while it is on; remove it in Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 },
+    { type: "TextButton", icon: "refresh", labelText: "Quitar tema personalizado", labelTextEn: "Reset custom theme", onPressed: { go: { useTheme: { theme: null } } }, padding: { x: 16, y: 4 } },
+    { type: "Text", text: "Un tema se aplica a TODA la app, también a estas páginas, mientras lo tengas puesto; también puedes cambiarlo desde el icono de varita en Inicio o en Ajustes ▸ Apariencia.", textEn: "A theme applies to the WHOLE app, these pages included, while it is on; switch it from the wand icon on Home or Settings ▸ Appearance.", style: "body", color: "muted", padding: 16 },
   ];
-  return scaffold("Ajustes", "Settings", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "ajustes", bottomBar: true });
+  return scaffold("Ajustes", "Settings", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home", bottomBar: true });
 }
 
 // ---------- screen(ctx) ----------
@@ -1274,6 +1628,14 @@ export async function screenEvent(ctx) {
 
     case "saved": {
       return { toast: en ? "Settings saved" : "Ajustes guardados" };
+    }
+
+    case "rpref": {
+      const [key, raw] = String(arg || "").split(":");
+      if (!key || !(key in DEFAULT_RPREFS)) return null;
+      const val = (key === "novelWidth" || key === "novelGap") ? Number(raw) : raw;
+      const next = saveRPrefs({ [key]: val });
+      return { state: { rprefs: next } };
     }
 
     default:

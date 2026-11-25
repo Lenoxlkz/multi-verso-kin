@@ -2308,6 +2308,15 @@
 
       async function dispatchAction(action, overrideValue = null, trigger = "tap") {
         if (!action) return;
+        if (Array.isArray(action.ui)) {
+          for (const op of action.ui) {
+            if (op && op.open === "themeSheet") {
+              themeMenuOpen = true;
+              renderOverlay();
+              return;
+            }
+          }
+        }
         if (action.go) {
           await handleGo(action.go);
           return;
@@ -3514,11 +3523,11 @@
           }
           case "row": {
             // Wrap capsule button cleanly inside atelier container
-            const hasCaps = (node.children || []).some((c) => c.onTap?.event?.name === "capsToggle");
-            if (hasCaps) {
+            const capsBtnNode = (node.children || []).find((c) => c.onTap?.event?.name === "capsToggle");
+            if (capsBtnNode) {
               const shell = document.createElement("div");
               shell.className = "source-bar-shell";
-              for (const c of node.children || []) shell.appendChild(renderNode(c));
+              shell.appendChild(renderNode(capsBtnNode));
               return shell;
             }
             const el = document.createElement("div");
@@ -3535,11 +3544,35 @@
             return el;
           }
           case "card": {
+            const capsRow = (node.children || []).find((r) => r.type === "row" && (r.children || []).some((c) => c.onTap?.event?.name === "capsToggle"));
+            if (capsRow) return renderNode(capsRow, ctxMeta);
             const el = document.createElement("div");
             el.className = "kino-card";
             applyStyle(el, node.style);
-            for (const c of node.children || []) el.appendChild(renderNode(c));
+            for (const c of node.children || []) el.appendChild(renderNode(c, ctxMeta));
             return el;
+          }
+          case "popup": {
+            return document.createComment("popup:" + (node.key || ""));
+          }
+          case "avatar": {
+            const el = document.createElement("span");
+            el.style.cssText = "display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:700;flex-shrink:0;";
+            if (node.icon) el.appendChild(svgIcon(node.icon, 16));
+            else el.textContent = decodeEntities(node.text || "");
+            return el;
+          }
+          case "badge": {
+            const el = document.createElement("span");
+            el.style.cssText = "display:inline-flex;align-items:center;padding:3px 9px;border-radius:6px;background:var(--accent-soft);color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;";
+            el.textContent = decodeEntities(node.text || "");
+            return el;
+          }
+          case "icon": {
+            return svgIcon(node.name || node.icon || "magic", 18);
+          }
+          case "pageView": {
+            return document.createComment("pageView");
           }
           case "scroll": {
             const el = document.createElement("div");
@@ -3561,6 +3594,7 @@
                   if (spotlight) colEl.appendChild(spotlight);
                 }
                 for (const childNode of c.children || []) {
+                  if (childNode.type === "pageView") continue;
                   colEl.appendChild(renderNode(childNode));
                 }
                 el.appendChild(colEl);
