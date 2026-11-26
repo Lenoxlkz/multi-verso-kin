@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Multi-verso Kin</title>
-  <meta name="description" content="Manga, manhwa y novelas ligeras: ZonaTMO, ManhwaSS, Skynovels, MatchaNovels, Astral, Anslid y DevilNovels." />
+  <meta name="description" content="Manga, manhwa y novelas ligeras: ZonaTMO, ManhwaSS, Olympus, LeerCapitulo, Skynovels, MatchaNovels, Astral, Anslid y DevilNovels." />
   <link rel="icon" href="/icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -1684,9 +1684,15 @@
       const homeCache = new Map();
       const detailCache = new Map();
 
-      const SOURCE_LIST = [
+      let SOURCE_LIST = [
         { k: "zt", name: "ZonaTMO", novel: false },
         { k: "ms", name: "ManhwaSS", novel: false },
+        { k: "ol", name: "Olympus", novel: false, mixed: true },
+        { k: "lc", name: "LeerCapitulo", novel: false },
+        { k: "ik", name: "Ikigai", novel: false, mixed: true },
+        { k: "lf", name: "LectorFenix", novel: false },
+        { k: "mc", name: "MHScans", novel: false, mixed: true },
+        { k: "mw", name: "ManhwaWeb", novel: false },
         { k: "sk", name: "Skynovels", novel: true },
         { k: "mk", name: "MatchaNovels", novel: true },
         { k: "as", name: "Astral Novels", novel: true },
@@ -1697,6 +1703,11 @@
       ];
       const sourceObj = (k) => SOURCE_LIST.find((s) => s.k === k) || SOURCE_LIST[0];
       const sourceName = (k) => sourceObj(k).name;
+      const sourceTypeLabel = (s, isLong) => {
+        if (s.novel) return isLong ? (lang === "en" ? "Light Novels" : "Novelas Ligeras") : (lang === "en" ? "Novel" : "Novela");
+        if (s.mixed) return lang === "en" ? "Comics & Novels" : "Cómics y Novelas";
+        return "Manga · Manhwa";
+      };
 
       const ICONS = {
         close: '<path d="M18 6L6 18M6 6l12 12"/>',
@@ -1879,7 +1890,7 @@
         capBtn.appendChild(leftGrp);
         const metaTxt = document.createElement("span");
         metaTxt.className = "capsule-meta-hint";
-        metaTxt.textContent = sInfo.novel ? (lang === "en" ? "Light Novels" : "Novelas Ligeras") : "Manga · Manhwa";
+        metaTxt.textContent = sourceTypeLabel(sInfo, true);
         capBtn.appendChild(metaTxt);
         capBtn.appendChild(svgIcon(isOpen ? "expand_less" : "expand_more", 17));
 
@@ -1902,7 +1913,7 @@
           const head = document.createElement("div");
           head.className = "source-atelier-head";
           const h3 = document.createElement("h3");
-          h3.textContent = lang === "en" ? "Select Archive Source" : "Elegir fuente";
+          h3.textContent = (lang === "en" ? "Select Archive Source" : "Elegir fuente") + ` (${SOURCE_LIST.length} ${lang === "en" ? "sources" : "fuentes"})`;
           const hint = document.createElement("span");
           hint.className = "kino-text caption color-muted";
           hint.textContent = lang === "en" ? "Auto-closes after 12s" : "Toca fuera o espera 12 s para cerrar";
@@ -1923,7 +1934,7 @@
             nm.textContent = s.name;
             const tp = document.createElement("div");
             tp.className = "source-tile-type";
-            tp.textContent = s.novel ? (lang === "en" ? "Novel" : "Novela") : "Manga · Manhwa";
+            tp.textContent = sourceTypeLabel(s, false);
             left.appendChild(nm);
             left.appendChild(tp);
             btn.appendChild(left);
@@ -4300,6 +4311,9 @@
         try {
           const res = await fetch("/api/manifest");
           manifest = await res.json();
+          if (Array.isArray(manifest?.sources) && manifest.sources.length) {
+            SOURCE_LIST = manifest.sources;
+          }
           applyTheme(activeThemeId);
         } catch {
           applyTheme(activeThemeId);

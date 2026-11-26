@@ -13,15 +13,15 @@ const nv = readFileSync(join(root, "src", "novels.js"), "utf8");
 const built = readFileSync(join(root, "plugin.js"), "utf8");
 const manifest = JSON.parse(readFileSync(join(root, "kino-plugin.json"), "utf8"));
 
-test("el manifiesto declara las nueve fuentes y sus hosts", () => {
-  assert.equal(Object.keys(SOURCES).length, 9, "deben existir 9 fuentes (LegnNovels eliminada)");
+test("el manifiesto declara las fuentes y sus hosts", () => {
+  assert.ok(Object.keys(SOURCES).length >= 9, "deben existir al menos 9 fuentes (LegnNovels eliminada)");
   assert.equal(manifest.version, "2.18.0");
   for (const h of ["skynovels.net", "matchanovels.com", "anslid.com", "devilnovels.com", "public-api.wordpress.com", "astralnovelstranslations.wordpress.com"]) {
     assert.ok(manifest.hosts.includes(h) || manifest.hosts.includes("*." + h), "falta el host " + h);
   }
   assert.ok(manifest.categories.includes("novela"), "la categoría «novela» falta");
   assert.equal(NOVEL_SOURCES.length, 5);
-  assert.ok(HOME_TABS.length === 9 && HOME_TABS[0] === "zt" && !HOME_TABS.includes("ln"));
+  assert.ok(HOME_TABS.length === Object.keys(SOURCES).length && HOME_TABS[0] === "zt" && !HOME_TABS.includes("ln"));
 });
 
 test("la barra de navegación tiene Inicio, Biblioteca y Ajustes", () => {

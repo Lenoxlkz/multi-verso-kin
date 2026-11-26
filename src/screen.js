@@ -17,14 +17,21 @@ import { cfChallengeSeen, cfClassify, cfStateFor, cfStatus, cfForget, cfClearCha
 import * as zt from "./zonatmo.js";
 import * as zoA from "./zonatmoorg.js";
 import * as ms from "./manhwa.js";
+import * as ol from "./olympus.js";
+import * as lc from "./leercapitulo.js";
+import * as ik from "./ikigai.js";
+import * as lf from "./lectorfenix.js";
+import * as mc from "./mhscans.js";
+import * as mw from "./manhwaweb.js";
 import * as nv from "./novels.js";
 import { browse, SOURCE_CATALOG, catalogEntryFor, parseBrowseRef } from "./catalog.js";
 import { THEMES } from "./themes.js";
 
 // El adaptador de novelas expone la misma interfaz (search/home/detail/chapter) que los de manga.
 const nvAd = { search: nv.novelSearch, list: null, latest: null, detail: nv.novelDetail, chapter: nv.novelChapter };
-const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : SOURCES[src].kind === "zonatmoorg" ? zoA : SOURCES[src].kind === "manhwa" ? ms : nvAd);
+const adapter = (src) => (SOURCES[src].kind === "zonatmo" ? zt : SOURCES[src].kind === "zonatmoorg" ? zoA : SOURCES[src].kind === "manhwa" ? ms : SOURCES[src].kind === "olympus" ? ol : SOURCES[src].kind === "leercapitulo" ? lc : SOURCES[src].kind === "ikigai" ? ik : SOURCES[src].kind === "lectorfenix" ? lf : SOURCES[src].kind === "mhscans" ? mc : SOURCES[src].kind === "manhwaweb" ? mw : nvAd);
 const isNovel = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
+const isMixed = (src) => SOURCES[src] && (SOURCES[src].kind === "olympus" || SOURCES[src].kind === "ikigai" || SOURCES[src].kind === "mhscans");
 const hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 
 const RPREF_KEY = "rprefs";
@@ -109,6 +116,9 @@ const PROG_KEY = "leyendo";
 const FUENTES_URL = {
   zt: "https://zonatmo.net", zo: "https://zonatmo.org",
   ms: "https://manhwass.lat", mh: "https://manhwashot.lat",
+  ol: "https://olympusxyz.com", lc: "https://www.leercapitulo.co",
+  ik: "https://visualikigai.cmpunjabrashancard.pk", lf: "https://lectorfenix.com",
+  mc: "https://mhscans.com", mw: "https://manhwaweb.com",
   sk: "https://api.skynovels.net", mk: "https://matchanovels.com",
   as: "https://astralnovelstranslations.wordpress.com",
   an: "https://anslid.com", dv: "https://devilnovels.com",
@@ -238,6 +248,36 @@ function tabSpecs(src) {
     { id: src + "-emi", src, ref: src + ":on-going", title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
     { id: src + "-end", src, ref: src + ":end", title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } },
   ];
+  if (src === "ol") return [
+    { id: "ol-new", src: "ol", ref: "ol:new", title: SOURCES.ol.name + " · Recientes", titleEn: SOURCES.ol.name + " · Latest", params: { page: 1, order: "new", type: "comic" } },
+    { id: "ol-pop", src: "ol", ref: "ol:pop", title: SOURCES.ol.name + " · Ranking diario", titleEn: SOURCES.ol.name + " · Daily ranking", params: { tops: true, page: 1, kind: "daily" } },
+    { id: "ol-nov", src: "ol", ref: "ol:novels", title: SOURCES.ol.name + " · Novelas ligeras", titleEn: SOURCES.ol.name + " · Light novels", params: { page: 1, order: "new", type: "novel" } },
+  ];
+  if (src === "lc") return [
+    { id: "lc-new", src: "lc", ref: "lc:latest", title: SOURCES.lc.name + " · Últimos mangas", titleEn: SOURCES.lc.name + " · Latest manga", params: { latest: true } },
+    { id: "lc-pop", src: "lc", ref: "lc:pop", title: SOURCES.lc.name + " · Tendencias", titleEn: SOURCES.lc.name + " · Trending", params: { tops: true, page: 1 } },
+    { id: "lc-emi", src: "lc", ref: "lc:ongoing", title: SOURCES.lc.name + " · En emisión", titleEn: SOURCES.lc.name + " · Ongoing", params: { page: 1, estado: "ongoing" } },
+  ];
+  if (src === "ik") return [
+    { id: "ik-new", src: "ik", ref: "ik:new", title: SOURCES.ik.name + " · Actualizados", titleEn: SOURCES.ik.name + " · Updated", params: { page: 1, sort: "last_chapter_date" } },
+    { id: "ik-pop", src: "ik", ref: "ik:pop", title: SOURCES.ik.name + " · Más vistos", titleEn: SOURCES.ik.name + " · Most viewed", params: { tops: true, page: 1 } },
+    { id: "ik-nov", src: "ik", ref: "ik:novels", title: SOURCES.ik.name + " · Novelas ligeras", titleEn: SOURCES.ik.name + " · Light novels", params: { page: 1, sort: "last_chapter_date", type: "novel" } },
+  ];
+  if (src === "lf") return [
+    { id: "lf-new", src: "lf", ref: "lf:latest", title: SOURCES.lf.name + " · Actualizados", titleEn: SOURCES.lf.name + " · Updated", params: { homeKey: "recent" } },
+    { id: "lf-pop", src: "lf", ref: "lf:pop", title: SOURCES.lf.name + " · Populares", titleEn: SOURCES.lf.name + " · Popular", params: { homeKey: "popular" } },
+    { id: "lf-today", src: "lf", ref: "lf:today", title: SOURCES.lf.name + " · Tendencias hoy", titleEn: SOURCES.lf.name + " · Popular today", params: { homeKey: "popularToday" } },
+  ];
+  if (src === "mc") return [
+    { id: "mc-new", src: "mc", ref: "mc:latest", title: SOURCES.mc.name + " · Actualizados", titleEn: SOURCES.mc.name + " · Updated", params: { page: 1, sort: "updated" } },
+    { id: "mc-pop", src: "mc", ref: "mc:pop", title: SOURCES.mc.name + " · Más vistos", titleEn: SOURCES.mc.name + " · Most viewed", params: { tops: true, page: 1 } },
+    { id: "mc-nov", src: "mc", ref: "mc:novels", title: SOURCES.mc.name + " · Novelas", titleEn: SOURCES.mc.name + " · Novels", params: { page: 1, sort: "updated", type: "Novel" } },
+  ];
+  if (src === "mw") return [
+    { id: "mw-new", src: "mw", ref: "mw:latest", title: SOURCES.mw.name + " · Capítulos recientes", titleEn: SOURCES.mw.name + " · Latest chapters", params: { homeKey: "recent" } },
+    { id: "mw-pop", src: "mw", ref: "mw:pop", title: SOURCES.mw.name + " · Populares", titleEn: SOURCES.mw.name + " · Popular", params: { homeKey: "popular" } },
+    { id: "mw-nuevos", src: "mw", ref: "mw:new", title: SOURCES.mw.name + " · Recién agregados", titleEn: SOURCES.mw.name + " · Newly added", params: { homeKey: "fresh" } },
+  ];
   return [];
 }
 
@@ -295,7 +335,10 @@ async function probeCf(src, en, shelves, fallbackErr) {
 async function fetchOneRow(spec) {
   const a = adapter(spec.src);
   let res;
-  if (spec.params.tops) res = await a.tops(spec.src, { page: spec.params.page, postsPerPage: spec.params.postsPerPage });
+  if (spec.params.homeKey && typeof a.homeSections === "function") {
+    const hs = await a.homeSections(spec.src);
+    res = { items: (hs && hs[spec.params.homeKey]) || [] };
+  } else if (spec.params.tops) res = await a.tops(spec.src, { page: spec.params.page, postsPerPage: spec.params.postsPerPage });
   else if (spec.params.latest) res = await a.latest(spec.src);
   else res = await a.list(spec.src, spec.params);
   const items = res.items.slice(0, 12).map(compactCard);
@@ -340,7 +383,8 @@ async function loadDetail(ref, { skipCache = false } = {}) {
   }
   const a = adapter(p.src);
   let d, chapters = [], next = null, totalCaps;
-  if (SOURCES[p.src].kind === "zonatmo" || SOURCES[p.src].kind === "zonatmoorg") {
+  const k = SOURCES[p.src].kind;
+  if (k === "olympus" || k === "leercapitulo" || k === "ikigai" || k === "lectorfenix" || k === "mhscans" || k === "manhwaweb" || SOURCES[p.src].kind === "zonatmo" || SOURCES[p.src].kind === "zonatmoorg") {
     // detalle y capítulos no dependen entre sí: en paralelo
     const [dRes, cRes] = await Promise.allSettled([a.detail(p.src, p.a), a.chapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" })]);
     if (dRes.status === "rejected") throw dRes.reason;
@@ -388,9 +432,11 @@ async function loadChapter(ref, args, { skipCache = false } = {}) {
     if (cached && cached.pages && cached.pages.length) return withChapterMeta(cached, args);
     if (cached && cached.text && cached.text.length) return withChapterMeta(cached, args);
   }
-  if (isNovel(p.src)) {
-    // Novela: el capítulo es TEXTO (párrafos), no imágenes. El progreso se guarda al entrar.
-    const c = await nv.novelChapter(p.src, p.a, p.b);
+  const c = isNovel(p.src)
+    ? await nv.novelChapter(p.src, p.a, p.b)
+    : await adapter(p.src).chapter(p.src, p.a, p.b);
+  if (c.text && c.text.length) {
+    // Novela (fuente de novela o capítulo de novela en fuente mixta como Olympus): el progreso se guarda al entrar.
     const data = {
       ref,
       src: p.src,
@@ -414,8 +460,6 @@ async function loadChapter(ref, args, { skipCache = false } = {}) {
     } catch { /* el progreso es optativo */ }
     return fin;
   }
-  const a = adapter(p.src);
-  const c = await a.chapter(p.src, p.a, p.b);
   const data = {
     ref,
     src: p.src,
@@ -532,8 +576,8 @@ function panelSources(src, en) {
       variant: k === src ? "primary" : "secondary",
       icon: k === src ? "check" : (isNovel(k) ? "list" : "magic"),
       selected: k === src,
-      labelText: SOURCES[k].name + (isNovel(k) ? (en ? " · novel" : " · novela") : ""),
-      labelTextEn: SOURCES[k].name + (isNovel(k) ? " · novel" : ""),
+      labelText: SOURCES[k].name + (isNovel(k) ? (en ? " · novel" : " · novela") : isMixed(k) ? (en ? " · mix" : " · mixta") : ""),
+      labelTextEn: SOURCES[k].name + (isNovel(k) ? " · novel" : isMixed(k) ? " · mix" : ""),
       onPressed: { event: "tabSrc", arg: k },
       flex: 1,
       fill: true,
@@ -545,7 +589,7 @@ function panelSources(src, en) {
 /** Construye una tarjeta hero editorial para el carrusel de portada (PageView + heroCard). */
 function buildHeroSlide(item, shelfTitle, firstRef, src, en, tv) {
   const nombre = SOURCES[src].name;
-  const sub = (shelfTitle ? shelfTitle + " · " : "") + (isNovel(src) ? (en ? "Light Novel" : "Novela Ligera") : "Manga · Manhwa");
+  const sub = (shelfTitle ? shelfTitle + " · " : "") + (isNovel(src) ? (en ? "Light Novel" : "Novela Ligera") : isMixed(src) ? (en ? "Comics & Novels" : "Cómics y Novelas") : "Manga · Manhwa");
   const hasHttps = typeof item.p === "string" && item.p.indexOf("https://") === 0;
   return {
     type: "heroCard",
@@ -685,7 +729,7 @@ function viewMain(ctx) {
         { type: "CircleAvatar", icon: isNovel(src) ? "list" : "magic", radius: 16, backgroundColor: "primaryContainer", labelText: SOURCES[src].name },
         { type: "Column", flex: 1, gap: 4, children: [
           { type: "Text", text: SOURCES[src].name, style: "h4" },
-          { type: "Text", text: isNovel(src) ? (en ? "Light Novels · Active source" : "Novelas Ligeras · Fuente activa") : (en ? "Manga & Manhwa · Active source" : "Manga y Manhwa · Fuente activa"), style: "caption", color: "muted" },
+          { type: "Text", text: isNovel(src) ? (en ? "Light Novels · Active source" : "Novelas Ligeras · Fuente activa") : isMixed(src) ? (en ? "Comics & Novels · Active source" : "Cómics y Novelas · Fuente activa") : (en ? "Manga & Manhwa · Active source" : "Manga y Manhwa · Fuente activa"), style: "caption", color: "muted" },
         ] },
         { type: "Button", variant: state.capsOpen ? "primary" : "secondary", icon: state.capsOpen ? "expand_less" : "expand_more",
           labelText: "Fuente: " + SOURCES[src].name, labelTextEn: "Source: " + SOURCES[src].name,
@@ -717,7 +761,7 @@ function viewMain(ctx) {
           type: "Column", gap: 8, children: [
             { type: "Row", mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [
               { type: "Text", text: "Elegir fuente", textEn: "Pick a source", style: "h3" },
-              { type: "Badge", text: "9 fuentes", textEn: "9 sources", color: "primary" },
+              { type: "Badge", text: Object.keys(SOURCES).length + " fuentes", textEn: Object.keys(SOURCES).length + " sources", color: "primary" },
             ] },
             ...panelSources(src, en),
             { type: "Text", text: "El panel se cierra solo a los 5 segundos o al tocar fuera.", textEn: "The panel closes on its own after 5 seconds or on a tap outside.", style: "caption", color: "muted" },
@@ -1025,6 +1069,19 @@ function siteUrlOf(src, slug) {
   if (kind === "madara") return SOURCES[src].host + "/novela/" + e + "/";
   if (kind === "devilnovels") return "https://devilnovels.com/" + e; // las novelas viven en la raíz del dominio
   if (kind === "zonatmoorg") return SOURCES[src].host + "/library/" + String(slug || "").split(".").map(encodeURIComponent).join("/") + "/";
+  if (kind === "olympus") {
+    const raw = String(slug || "");
+    const pref = raw.startsWith("n.") ? "novela-" : "comic-";
+    return SOURCES[src].host + "/series/" + pref + encodeURIComponent(raw.replace(/^[cn]\./, ""));
+  }
+  if (kind === "leercapitulo") {
+    const d = lc.decodeLcSlug(slug);
+    return SOURCES[src].host + "/manga/" + encodeURIComponent(d.shortId) + "/" + encodeURIComponent(d.tail) + "/";
+  }
+  if (kind === "ikigai") return SOURCES[src].host + "/series/" + e + "/";
+  if (kind === "lectorfenix") return SOURCES[src].host + "/comics/" + e;
+  if (kind === "mhscans") return SOURCES[src].host + "/comics/" + e;
+  if (kind === "manhwaweb") return SOURCES[src].host + "/manhwa/" + e;
   return SOURCES[src].host + "/manga/" + e + "/";
 }
 

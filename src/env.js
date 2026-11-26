@@ -8,6 +8,12 @@ export const SOURCES = {
   zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmoorg" },
   ms: { name: "ManhwaSS", host: "https://manhwass.lat", kind: "manhwa" },
   mh: { name: "ManhwaShot", host: "https://manhwashot.lat", kind: "manhwa" },
+  ol: { name: "Olympus", host: "https://olympusxyz.com", kind: "olympus" },
+  lc: { name: "LeerCapitulo", host: "https://www.leercapitulo.co", kind: "leercapitulo" },
+  ik: { name: "Ikigai", host: "https://visualikigai.cmpunjabrashancard.pk", kind: "ikigai" },
+  lf: { name: "LectorFenix", host: "https://lectorfenix.com", kind: "lectorfenix" },
+  mc: { name: "MHScans", host: "https://mhscans.com", kind: "mhscans" },
+  mw: { name: "ManhwaWeb", host: "https://manhwaweb.com", kind: "manhwaweb" },
   sk: { name: "Skynovels", host: "https://www.skynovels.net", kind: "skynovels" },
   mk: { name: "MatchaNovels", host: "https://matchanovels.com", kind: "matchanovels" },
   as: { name: "Astral Novels", host: "https://astralnovelstranslations.wordpress.com", kind: "astral" },
@@ -19,7 +25,7 @@ export const SOURCES = {
 export const NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv"];
 
 // Orden de las pestañas del Home: una por fuente, con sus secciones nativas.
-export const HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "zo", "mh"];
+export const HOME_TABS = ["zt", "ms", "ol", "lc", "ik", "lf", "mc", "mw", "sk", "mk", "as", "an", "dv", "zo", "mh"];
 
 // Fuentes que arman las filas del Home (las gemelas se dejan para la búsqueda y el selector de fuentes).
 export const HOME_SOURCES = ["zt", "ms"];
@@ -140,7 +146,16 @@ export const BASE_HEADS = {
 // Hosts que exigen Referer propio en sus imágenes (solo con evidencia; añadir por fuente).
 // devilnovels.com: WordPress con hotlink-check; sin Referer las portadas fallan y Kino
 // reintenta — el «tarda demasiado» del RCA 2026-11.
-const IMG_REFERER = { "astralnovelstranslations.wordpress.com": true, "devilnovels.com": true, "www.devilnovels.com": true };
+const IMG_REFERER = {
+  "astralnovelstranslations.wordpress.com": true,
+  "devilnovels.com": true,
+  "www.devilnovels.com": true,
+  "img1mw.xyz": "https://manhwaweb.com/",
+  "img2mw.xyz": "https://manhwaweb.com/",
+  "img3mw.xyz": "https://manhwaweb.com/",
+  "img4mw.xyz": "https://manhwaweb.com/",
+  "uploads.manhwaweb.com": "https://manhwaweb.com/",
+};
 
 /**
  * Cabeceras para descargar una imagen: el UA interno SIEMPRE (prioritario); el Referer del
@@ -154,8 +169,13 @@ export function imgHeads(url, force) {
     if (!m) return undefined;
     const h = { "User-Agent": UA };
     const host = m[1].replace(/^https?:\/\//, "").replace(/^www\./, "");
-    const wantRef = force === true || (force !== false && Boolean(IMG_REFERER[host]));
-    if (wantRef) h["Referer"] = m[1] + "/";
+    const rule = IMG_REFERER[host];
+    const wantRef = force === true || (force !== false && Boolean(rule)) || typeof force === "string";
+    if (wantRef) {
+      h["Referer"] = m[1] + "/";
+      if (typeof force === "string") h["Referer"] = force;
+      else if (typeof rule === "string") h["Referer"] = rule;
+    }
     return h;
   } catch { return undefined; }
 }

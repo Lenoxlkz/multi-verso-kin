@@ -8,8 +8,8 @@ import { createKino } from "./sdk/kino-shim.mjs";
 import { validateManifest } from "./sdk/contract.mjs";
 import { kitScreenCall } from "./sdk/kit-call.mjs";
 import { normalizeNode } from "./sdk/screen.mjs";
-import { UA } from "./src/env.js";
-import { createZoCrawleeOrchestrator, isZonaTmoOrgUrl } from "./lib/zo-crawlee.mjs";
+import { UA, SOURCES, HOME_TABS, NOVEL_SOURCES } from "./src/env.js";
+import { createZoCrawleeOrchestrator, isCrawleeManagedUrl } from "./lib/zo-crawlee.mjs";
 import * as plugin from "./plugin.js";
 
 const zoCrawlee = createZoCrawleeOrchestrator();
@@ -65,7 +65,7 @@ function ensureBaseRuntime() {
     });
     const rawFetch = baseRuntime.kino.fetch;
     const zoAwareFetch = async (url, opts) => {
-      if (isZonaTmoOrgUrl(url)) {
+      if (isCrawleeManagedUrl(url)) {
         return await zoCrawlee.fetch(String(url), opts);
       }
       return await rawFetch(url, opts);
@@ -396,6 +396,11 @@ const IMG_REFERER = {
   "astralnovelstranslations.wordpress.com": true,
   "devilnovels.com": true,
   "www.devilnovels.com": true,
+  "img1mw.xyz": "https://manhwaweb.com/",
+  "img2mw.xyz": "https://manhwaweb.com/",
+  "img3mw.xyz": "https://manhwaweb.com/",
+  "img4mw.xyz": "https://manhwaweb.com/",
+  "uploads.manhwaweb.com": "https://manhwaweb.com/",
 };
 
 // In-memory LRU image cache + in-flight request deduplication so switching sources or re-rendering is instant
@@ -465,10 +470,11 @@ async function handleImageProxy(reqUrl, res) {
     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
   };
   const bareHost = parsed.hostname.replace(/^www\./, "");
+  const refRule = IMG_REFERER[parsed.hostname] || IMG_REFERER[bareHost];
   if (refParam && /^https:\/\/[^\s/?#]+/.test(refParam)) {
     headers["Referer"] = refParam;
-  } else if (IMG_REFERER[parsed.hostname] || IMG_REFERER[bareHost]) {
-    headers["Referer"] = `${parsed.protocol}//${parsed.host}/`;
+  } else if (refRule) {
+    headers["Referer"] = typeof refRule === "string" ? refRule : `${parsed.protocol}//${parsed.host}/`;
   }
 
   let promise = imgInflight.get(cacheKey);
@@ -478,7 +484,7 @@ async function handleImageProxy(reqUrl, res) {
       const timer = setTimeout(() => controller.abort(), 12000);
       try {
         let status, ok, contentType, buf;
-        if (isZonaTmoOrgUrl(target)) {
+        if (isCrawleeManagedUrl(target)) {
           const zRes = await zoCrawlee.fetchBinary(target, headers, 12000);
           status = zRes.status;
           ok = zRes.ok;
@@ -554,6 +560,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && pathName === "/api/manifest") {
+      const sources = HOME_TABS.filter((k) => SOURCES[k]).map((k) => ({
+        k,
+        name: SOURCES[k].name,
+        novel: NOVEL_SOURCES.includes(k),
+        mixed: SOURCES[k].kind === "olympus" || SOURCES[k].kind === "ikigai" || SOURCES[k].kind === "mhscans",
+      }));
       return sendJson(res, 200, {
         id: baseManifest.id,
         name: baseManifest.name,
@@ -563,6 +575,7 @@ const server = http.createServer(async (req, res) => {
         appThemes: baseManifest.appThemes || [],
         settings: baseManifest.settings || [],
         categories: baseManifest.categories || [],
+        sources,
       });
     }
 

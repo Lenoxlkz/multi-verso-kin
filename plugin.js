@@ -11,6 +11,12 @@ var SOURCES = {
   zo: { name: "ZonaTMO.org", host: "https://zonatmo.org", kind: "zonatmoorg" },
   ms: { name: "ManhwaSS", host: "https://manhwass.lat", kind: "manhwa" },
   mh: { name: "ManhwaShot", host: "https://manhwashot.lat", kind: "manhwa" },
+  ol: { name: "Olympus", host: "https://olympusxyz.com", kind: "olympus" },
+  lc: { name: "LeerCapitulo", host: "https://www.leercapitulo.co", kind: "leercapitulo" },
+  ik: { name: "Ikigai", host: "https://visualikigai.cmpunjabrashancard.pk", kind: "ikigai" },
+  lf: { name: "LectorFenix", host: "https://lectorfenix.com", kind: "lectorfenix" },
+  mc: { name: "MHScans", host: "https://mhscans.com", kind: "mhscans" },
+  mw: { name: "ManhwaWeb", host: "https://manhwaweb.com", kind: "manhwaweb" },
   sk: { name: "Skynovels", host: "https://www.skynovels.net", kind: "skynovels" },
   mk: { name: "MatchaNovels", host: "https://matchanovels.com", kind: "matchanovels" },
   as: { name: "Astral Novels", host: "https://astralnovelstranslations.wordpress.com", kind: "astral" },
@@ -18,7 +24,7 @@ var SOURCES = {
   dv: { name: "DevilNovels", host: "https://devilnovels.com", kind: "devilnovels" }
 };
 var NOVEL_SOURCES = ["sk", "mk", "as", "an", "dv"];
-var HOME_TABS = ["zt", "ms", "sk", "mk", "as", "an", "dv", "zo", "mh"];
+var HOME_TABS = ["zt", "ms", "ol", "lc", "ik", "lf", "mc", "mw", "sk", "mk", "as", "an", "dv", "zo", "mh"];
 var HOME_SOURCES = ["zt", "ms"];
 var PAGO_TEXT_RE = /premium|\bvip\b|\bde pago\b|🔒|\bloqueado\b|\bpaid\b|\bunlock\b|\boro\b|\bcoin\b/i;
 var PAGO_CLASS_RE = /premium|\block|\bpaid|\bvip/i;
@@ -96,7 +102,16 @@ var BASE_HEADS = {
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   "Accept-Language": "es-ES,es;q=0.9,en;q=0.7"
 };
-var IMG_REFERER = { "astralnovelstranslations.wordpress.com": true, "devilnovels.com": true, "www.devilnovels.com": true };
+var IMG_REFERER = {
+  "astralnovelstranslations.wordpress.com": true,
+  "devilnovels.com": true,
+  "www.devilnovels.com": true,
+  "img1mw.xyz": "https://manhwaweb.com/",
+  "img2mw.xyz": "https://manhwaweb.com/",
+  "img3mw.xyz": "https://manhwaweb.com/",
+  "img4mw.xyz": "https://manhwaweb.com/",
+  "uploads.manhwaweb.com": "https://manhwaweb.com/"
+};
 function imgHeads(url, force) {
   try {
     const u = String(url || "");
@@ -104,8 +119,13 @@ function imgHeads(url, force) {
     if (!m) return void 0;
     const h = { "User-Agent": UA };
     const host = m[1].replace(/^https?:\/\//, "").replace(/^www\./, "");
-    const wantRef = force === true || force !== false && Boolean(IMG_REFERER[host]);
-    if (wantRef) h["Referer"] = m[1] + "/";
+    const rule = IMG_REFERER[host];
+    const wantRef = force === true || force !== false && Boolean(rule) || typeof force === "string";
+    if (wantRef) {
+      h["Referer"] = m[1] + "/";
+      if (typeof force === "string") h["Referer"] = force;
+      else if (typeof rule === "string") h["Referer"] = rule;
+    }
     return h;
   } catch {
     return void 0;
@@ -428,11 +448,11 @@ var ZT_GENRES = {
   "12915": "Academia",
   "12891": "Venganza"
 };
-async function list(src, { page = 1, order = "new", search: search6, genreId, demography, flags, postsPerPage = 24 } = {}) {
+async function list(src, { page = 1, order = "new", search: search12, genreId, demography, flags, postsPerPage = 24 } = {}) {
   const orderBy = { new: "last_chapter_date", score: "score", az: "title", old: "manga_id" }[order] || "last_chapter_date";
   const dir = order === "az" ? "asc" : order === "old" ? "asc" : "desc";
   const params = { page: String(page), postsPerPage: String(postsPerPage), orderBy, order: dir };
-  if (search6) params.search = String(search6).slice(0, 100);
+  if (search12) params.search = String(search12).slice(0, 100);
   if (genreId) params.genres = String(genreId);
   if (demography) params.demography = String(demography);
   if (flags) params.flags = String(flags);
@@ -700,8 +720,8 @@ function chapterList(html) {
 var SERIE_CACHE = /* @__PURE__ */ new Map();
 var INFLIGHT_SERIE = /* @__PURE__ */ new Map();
 var SERIE_TTL = 6e5;
-function serieCachePut(slug, chapters3) {
-  SERIE_CACHE.set(slug, { chapters: chapters3, ts: Date.now() });
+function serieCachePut(slug, chapters9) {
+  SERIE_CACHE.set(slug, { chapters: chapters9, ts: Date.now() });
   if (SERIE_CACHE.size > 10) {
     const first = SERIE_CACHE.keys().next().value;
     SERIE_CACHE.delete(first);
@@ -721,9 +741,9 @@ async function chaptersDe(slug, html0) {
   const c = SERIE_CACHE.get(slug);
   if (c && Date.now() - c.ts < SERIE_TTL) return c.chapters;
   const html = html0 || await fetchSeriesHtml(slug);
-  const chapters3 = chapterList(html);
-  if (chapters3.length) serieCachePut(slug, chapters3);
-  return chapters3;
+  const chapters9 = chapterList(html);
+  if (chapters9.length) serieCachePut(slug, chapters9);
+  return chapters9;
 }
 function seriesMeta(html, slug) {
   const pick = (re) => {
@@ -782,10 +802,10 @@ function chapterSlugDe(s) {
   return m ? { id: m[1], num: m[2] } : null;
 }
 var ORDEN = { new: "created_at", score: "likes_count", az: "title", old: "created_at" };
-async function list2(src, { page = 1, order = "new", search: search6, genreId, postsPerPage = 24 } = {}) {
+async function list2(src, { page = 1, order = "new", search: search12, genreId, postsPerPage = 24 } = {}) {
   const item = ORDEN[order] || "likes_count";
   const dir = order === "az" || order === "old" ? "asc" : "desc";
-  const html = await libHtml(page, item, search6 || "", dir, genreId);
+  const html = await libHtml(page, item, search12 || "", dir, genreId);
   const cards = seriesCards(html, postsPerPage || 24);
   const hasNext = cards.length >= Math.min(16, postsPerPage || 24) && page < 30;
   return { items: cardsToItems(src, cards), next: hasNext ? String(page + 1) : null };
@@ -802,8 +822,8 @@ async function search2(src, q, { page = 1, postsPerPage = 24 } = {}) {
 async function detail2(src, slug) {
   const html = await fetchSeriesHtml(slug);
   const meta = seriesMeta(html, slug);
-  const chapters3 = await chaptersDe(slug, html);
-  return { ...meta, totalChapters: chapters3.length };
+  const chapters9 = await chaptersDe(slug, html);
+  return { ...meta, totalChapters: chapters9.length };
 }
 async function chapters2(src, slug, { order = "asc" } = {}) {
   const list0 = await chaptersDe(slug);
@@ -969,32 +989,32 @@ async function detail3(src, slug) {
   const title = (h1 && h1.length && h1[0].text ? cleanTitle(h1[0].text) : "") || slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const desc = /<meta name="description" content="([^"]{0,600})"/.exec(html);
   const og = /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/.exec(html) || /<meta[^>]+content="([^"]+)"[^>]+property="og:image"/.exec(html);
-  const chapters3 = [];
+  const chapters9 = [];
   const rows = trySelect(html, ".chapters-grid a.ch-row");
   if (rows) {
     for (const a of rows) {
       const m = /^\/manga\/[a-z0-9-]+\/([^/"]+)\/?$/.exec(a.attrs && a.attrs.href || "");
       if (!m) continue;
       const label = (a.text || "").replace(/\s+/g, " ").trim();
-      chapters3.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: label || "Capítulo " + m[1].replace(/^capitulo-/, ""), pago: PAGO_TEXT_RE.test(label) || PAGO_CLASS_RE.test(String(a.attrs && a.attrs.class || "")) });
-      if (chapters3.length >= 500) break;
+      chapters9.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: label || "Capítulo " + m[1].replace(/^capitulo-/, ""), pago: PAGO_TEXT_RE.test(label) || PAGO_CLASS_RE.test(String(a.attrs && a.attrs.class || "")) });
+      if (chapters9.length >= 500) break;
     }
   } else {
     const i0 = html.indexOf("chapters-grid");
     const seg = i0 >= 0 ? html.slice(i0, i0 + 4e5) : html;
     const re = /href="\/manga\/[a-z0-9-]+\/(capitulo-[0-9.]+)\/"/g;
     let m;
-    while ((m = re.exec(seg)) && chapters3.length < 500) {
-      chapters3.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: "Capítulo " + m[1].replace(/^capitulo-/, "") });
+    while ((m = re.exec(seg)) && chapters9.length < 500) {
+      chapters9.push({ slug: m[1], number: m[1].replace(/^capitulo-/, ""), title: "Capítulo " + m[1].replace(/^capitulo-/, "") });
     }
   }
-  chapters3.reverse();
+  chapters9.reverse();
   return {
     slug,
     title,
     overview: desc ? String(desc[1]).trim() : void 0,
     poster: og ? og[1].replace(/&amp;/g, "&") : void 0,
-    chapters: chapters3
+    chapters: chapters9
   };
 }
 function capNum(s) {
@@ -1075,6 +1095,1911 @@ async function login3(src, user, password) {
     return { ok: false, message: msg ? "No se entró: " + msg.slice(0, 140) : "No se entró: usa «Entrar con ventana» en los ajustes." };
   } catch (e) {
     return { ok: false, message: "No se pudo contactar al sitio: usa «Entrar con ventana» en los ajustes." };
+  }
+}
+
+// src/olympus.js
+var olympus_exports = {};
+__export(olympus_exports, {
+  OL_GENRES: () => OL_GENRES,
+  chapter: () => chapter4,
+  chapters: () => chapters3,
+  decodeOlSlug: () => decodeOlSlug,
+  detail: () => detail4,
+  encodeOlSlug: () => encodeOlSlug,
+  latest: () => latest3,
+  list: () => list4,
+  search: () => search4,
+  tops: () => tops3
+});
+var API_HEADS = { Accept: "application/json, text/plain, */*" };
+var MEDIA_BASE = "https://media.imagesolymp.xyz/";
+var OL_GENRES = {
+  "1": "Acción",
+  "3": "Apocalíptico",
+  "4": "Artes marciales",
+  "5": "Aventura",
+  "6": "Ciencia Ficción",
+  "7": "Comedia",
+  "9": "Cultivación",
+  "12": "Ecchi",
+  "14": "Fantasía",
+  "16": "Harem",
+  "17": "Histórico",
+  "19": "Magia",
+  "20": "Misterio",
+  "21": "Murim",
+  "22": "Psicológico",
+  "25": "Reencarnación",
+  "26": "Romance"
+};
+var fullSlugCache = /* @__PURE__ */ new Map();
+var capsMem = /* @__PURE__ */ new Map();
+function decodeHtml(s) {
+  return String(s || "").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#0*39;|&apos;/gi, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function cleanText(s) {
+  return decodeHtml(String(s || "").replace(/<[^>]+>/g, " ")).replace(/\u200e|\u200f/g, "").replace(/\s+/g, " ").trim();
+}
+function encodeOlSlug(type, rawSlug) {
+  const prefix = String(type || "").toLowerCase() === "novel" ? "n." : "c.";
+  const safe = String(rawSlug || "").replace(/[^A-Za-z0-9._~-]/g, "-");
+  const full = prefix + safe;
+  if (full.length <= 116) return full;
+  const clipped = full.slice(0, 116);
+  fullSlugCache.set(clipped, { type: prefix === "n." ? "novel" : "comic", slug: safe });
+  return clipped;
+}
+function decodeOlSlug(encSlug) {
+  const raw = String(encSlug || "");
+  if (fullSlugCache.has(raw)) return fullSlugCache.get(raw);
+  if (raw.startsWith("n.")) return { type: "novel", slug: raw.slice(2) };
+  if (raw.startsWith("c.")) return { type: "comic", slug: raw.slice(2) };
+  return { type: "comic", slug: raw };
+}
+function absCover(cover) {
+  const c = String(cover || "").trim();
+  if (!c) return void 0;
+  if (/^https?:\/\//i.test(c)) return c;
+  if (c.startsWith("//")) return "https:" + c;
+  return MEDIA_BASE + c.replace(/^\/+/, "");
+}
+function seriesToCard(src, m) {
+  if (!m || !m.slug) return null;
+  const encSlug = encodeOlSlug(m.type || "comic", m.slug);
+  const genres = Array.isArray(m.genres) ? m.genres.map((g) => typeof g === "string" ? g : g && g.name).filter(Boolean) : void 0;
+  return toItem(src, {
+    slug: encSlug,
+    title: cleanText(m.name || m.title || m.slug),
+    poster: absCover(m.cover),
+    overview: m.summary ? cleanText(m.summary) : void 0,
+    genres,
+    year: m.created_at ? String(m.created_at).slice(0, 4) : void 0
+  });
+}
+async function getAllSeriesList(src) {
+  const ck = cacheKey("ol-all", src);
+  const cached = cacheGet(ck, TTL.list);
+  if (Array.isArray(cached) && cached.length) return cached;
+  const { ok, status, body } = await fetchJson(join(src, "/api/series/list"), { heads: API_HEADS });
+  if (!ok || !body || !Array.isArray(body.data)) {
+    throw kino.error(status === 404 ? "not_found" : "unavailable", "olympus list HTTP " + status);
+  }
+  const slim = body.data.map((x) => ({
+    s: x.slug,
+    n: x.name,
+    c: x.cover,
+    t: x.type === "novel" ? "novel" : "comic"
+  }));
+  if (slim.length) cacheSet(ck, slim);
+  return slim;
+}
+async function list4(src, { page = 1, order = "new", type, genreId, statusId } = {}) {
+  try {
+    const p = Math.max(1, Number(page) || 1);
+    const params = ["page=" + p];
+    if (type === "novel" || type === "comic") params.push("type=" + type);
+    if (genreId) params.push("genres=" + encodeURIComponent(String(genreId)));
+    if (statusId) params.push("status=" + encodeURIComponent(String(statusId)));
+    params.push("direction=" + (order === "az" ? "asc" : "desc"));
+    const { ok, status, body } = await fetchJson(join(src, "/api/series?" + params.join("&")), { heads: API_HEADS });
+    if (!ok || !body) throw kino.error(status === 404 ? "not_found" : "unavailable", "olympus HTTP " + status);
+    const pageObj = body.data && body.data.series || {};
+    const rows = Array.isArray(pageObj.data) ? pageObj.data : [];
+    const items = rows.map((m) => seriesToCard(src, m)).filter(Boolean);
+    const curPage = Number(pageObj.current_page) || p;
+    const lastPage = Number(pageObj.last_page) || curPage;
+    return { items, next: curPage < lastPage ? String(curPage + 1) : null };
+  } catch (e) {
+    netError(e, "Olympus");
+  }
+}
+async function tops3(src, { page = 1, kind = "daily" } = {}) {
+  try {
+    const p = Math.max(1, Number(page) || 1);
+    const rankType = kind === "weekly" || kind === "monthly" ? kind : "daily";
+    const { ok, status, body } = await fetchJson(join(src, "/api/rankings?type=" + rankType + "&page=" + p), { heads: API_HEADS });
+    if (!ok || !body) throw kino.error(status === 404 ? "not_found" : "unavailable", "olympus rankings HTTP " + status);
+    const rows = Array.isArray(body.data) ? body.data : [];
+    const items = rows.map((m) => seriesToCard(src, m)).filter(Boolean);
+    const curPage = Number(body.current_page) || p;
+    const lastPage = Number(body.last_page) || curPage;
+    return { items, next: curPage < lastPage ? String(curPage + 1) : null };
+  } catch (e) {
+    netError(e, "Olympus");
+  }
+}
+async function latest3(src) {
+  return list4(src, { page: 1, order: "new", type: "comic" });
+}
+async function search4(src, q) {
+  try {
+    const raw = String(q && (q.q || q) || "").trim().toLowerCase();
+    if (!raw) return { items: [], next: null };
+    const all = await getAllSeriesList(src);
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    const hits = [];
+    for (const x of all) {
+      const nameL = String(x.n || "").toLowerCase();
+      const slugL = String(x.s || "").toLowerCase();
+      if (tokens.every((tok) => nameL.includes(tok) || slugL.includes(tok))) {
+        const card2 = seriesToCard(src, { slug: x.s, name: x.n, cover: x.c, type: x.t });
+        if (card2) hits.push({ card: card2, exact: nameL.startsWith(raw) ? 0 : 1 });
+      }
+    }
+    hits.sort((a, b) => a.exact - b.exact);
+    return { items: hits.slice(0, 40).map((h) => h.card), next: null };
+  } catch (e) {
+    netError(e, "Olympus");
+  }
+}
+async function detail4(src, encSlug) {
+  try {
+    const { type, slug } = decodeOlSlug(encSlug);
+    const qs = type === "novel" ? "?type=novel" : "";
+    const { ok, status, body } = await fetchJson(join(src, "/api/series/" + encodeURIComponent(slug) + qs), { heads: API_HEADS });
+    if (!ok || !body || !body.data) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "olympus detail HTTP " + status);
+    }
+    const d = body.data;
+    const genres = Array.isArray(d.genres) ? d.genres.map((g) => cleanText(g && g.name)).filter(Boolean) : [];
+    const total = Number(d.chapter_count || d.total_chapters) || void 0;
+    return {
+      slug: encSlug,
+      title: cleanText(d.name || slug),
+      overview: cleanText(d.summary || d.synopsis || ""),
+      poster: absCover(d.cover),
+      genres,
+      statusName: d.status && d.status.name ? cleanText(d.status.name) : void 0,
+      demographyName: type === "novel" ? "Novela ligera" : "Cómic · Manhwa",
+      score: void 0,
+      totalChapters: total,
+      adult: false
+    };
+  } catch (e) {
+    netError(e, "Olympus");
+  }
+}
+function mapChapterList(rows) {
+  return (rows || []).map((ch) => {
+    const chSlug = String(ch.name != null ? ch.name : ch.id).trim();
+    const numMatch = /(\d+(?:\.\d+)?)/.exec(chSlug);
+    const num = numMatch ? Number(numMatch[1]) : NaN;
+    return {
+      slug: chSlug,
+      number: Number.isFinite(num) ? String(num) : chSlug,
+      title: ch.title ? cleanText(ch.title) : "Capítulo " + chSlug,
+      pago: false
+    };
+  });
+}
+async function chapters3(src, encSlug, { page = 1, order = "asc" } = {}) {
+  try {
+    const { type, slug } = decodeOlSlug(encSlug);
+    const p = Math.max(1, Number(page) || 1);
+    const dir = order === "desc" ? "desc" : "asc";
+    const typeQ = type === "novel" ? "&type=novel" : "";
+    const url = join(src, "/api/series/" + encodeURIComponent(slug) + "/chapters?page=" + p + "&direction=" + dir + typeQ);
+    const { ok, status, body } = await fetchJson(url, { heads: API_HEADS });
+    if (!ok || !body || !Array.isArray(body.data)) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "olympus chapters HTTP " + status);
+    }
+    const items = mapChapterList(body.data);
+    const meta = body.meta || {};
+    const cur = Number(meta.current_page) || p;
+    const last = Number(meta.last_page) || cur;
+    if (p === 1 && items.length) {
+      capsMem.set(src + "|" + encSlug, items.map((c) => c.slug));
+    } else if (capsMem.has(src + "|" + encSlug)) {
+      const merged = capsMem.get(src + "|" + encSlug).slice();
+      for (const it of items) if (!merged.includes(it.slug)) merged.push(it.slug);
+      capsMem.set(src + "|" + encSlug, merged);
+    }
+    return { items, next: cur < last ? String(cur + 1) : null };
+  } catch (e) {
+    netError(e, "Olympus");
+  }
+}
+async function ensureChapterNeighbors(src, encSlug, chSlug) {
+  const key = src + "|" + encSlug;
+  let listSlugs = capsMem.get(key);
+  if (!listSlugs || !listSlugs.includes(chSlug)) {
+    const det = cacheGet(cacheKey("det", src + "|m|" + encSlug), TTL.detail);
+    if (det && Array.isArray(det.chapters) && det.chapters.length) {
+      listSlugs = det.chapters.map((c) => {
+        const parts = String(c.r || "").split("|");
+        return parts.slice(3).join("|");
+      }).filter(Boolean);
+    }
+  }
+  if (!listSlugs || !listSlugs.includes(chSlug)) {
+    try {
+      const c1 = await chapters3(src, encSlug, { page: 1, order: "asc" });
+      listSlugs = (c1.items || []).map((c) => c.slug);
+    } catch {
+      listSlugs = [];
+    }
+  }
+  const idx = listSlugs ? listSlugs.indexOf(chSlug) : -1;
+  return {
+    prev: idx > 0 ? listSlugs[idx - 1] : null,
+    next: idx >= 0 && idx < listSlugs.length - 1 ? listSlugs[idx + 1] : null
+  };
+}
+function extractComicImages(html) {
+  const pages = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /<img[^>]+(?:data-src|src)=["'](https:\/\/media\.imagesolymp\.xyz\/comics\/[^"']+)["'][^>]*>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const u = m[1];
+    if (/\/covers\/|avatar|banner|logo|icon/i.test(u)) continue;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    pages.push(u);
+  }
+  if (!pages.length) {
+    const anyRe = /<img[^>]+src=["'](https?:\/\/[^"']+\.(?:webp|jpe?g|png)(?:\?[^"']*)?)["'][^>]*>/gi;
+    while ((m = anyRe.exec(html)) !== null) {
+      const u = m[1];
+      if (/\/assets\/|\/covers\/|logo|avatar|favicon|badge|discord|paypal/i.test(u)) continue;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      pages.push(u);
+    }
+  }
+  return pages;
+}
+function extractNovelParagraphs(html) {
+  const artMatch = /<article[^>]*class=["'][^"']*\bnovel\b[^"']*["'][^>]*>([\s\S]*?)<\/article>/i.exec(html) || /<div[^>]*class=["'][^"']*\bnovel\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(html);
+  const raw = artMatch ? artMatch[1] : "";
+  if (!raw) return [];
+  const normalized = raw.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/h[1-6]>/gi, "\n").replace(/<[^>]+>/g, "");
+  const out = [];
+  for (const line of normalized.split(/\r?\n/)) {
+    const text = decodeHtml(line).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    if (/tradujo gente que no cobra|olympusscanlation|olympusxyz|únete a nuestro discord/i.test(text)) continue;
+    out.push(text);
+  }
+  return out;
+}
+async function chapter4(src, encSlug, chSlug) {
+  try {
+    const { type, slug } = decodeOlSlug(encSlug);
+    const kindSeg = type === "novel" ? "novela-" : "comic-";
+    const url = join(src, "/series/" + kindSeg + encodeURIComponent(slug) + "/capitulo/" + encodeURIComponent(String(chSlug)));
+    const { ok, status, text } = await fetchText(url);
+    if (!ok || !text) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "olympus chapter HTTP " + status);
+    }
+    const { prev, next } = await ensureChapterNeighbors(src, encSlug, String(chSlug));
+    const rawH1 = cleanText((/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(text) || [])[1] || "");
+    const titleTag = cleanText((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(text) || [])[1] || "").split("|")[0].trim();
+    const h1 = rawH1 && !/^(recomendadas|comentarios|olympus)/i.test(rawH1) ? rawH1 : titleTag || "";
+    const numMatch = /(\d+(?:\.\d+)?)/.exec(String(chSlug));
+    const number = numMatch ? String(numMatch[1]) : String(chSlug);
+    if (type === "novel") {
+      const paragraphs = extractNovelParagraphs(text);
+      if (!paragraphs.length) {
+        throw kino.error("unavailable", "olympus novela sin contenido legible");
+      }
+      return {
+        text: paragraphs,
+        imgs: [],
+        number,
+        title: h1 || "Capítulo " + number,
+        direction: "vertical",
+        prev,
+        next
+      };
+    }
+    const pages = extractComicImages(text);
+    if (!pages.length) {
+      throw kino.error("unavailable", "olympus capítulo sin páginas de imagen");
+    }
+    return {
+      pages,
+      number,
+      title: h1 || "Capítulo " + number,
+      direction: "vertical",
+      prev,
+      next
+    };
+  } catch (e) {
+    netError(e, "Olympus");
+  }
+}
+
+// src/leercapitulo.js
+var leercapitulo_exports = {};
+__export(leercapitulo_exports, {
+  LC_GENRES: () => LC_GENRES,
+  chapter: () => chapter5,
+  chapters: () => chapters4,
+  decodeLcSlug: () => decodeLcSlug,
+  detail: () => detail5,
+  encodeLcSlug: () => encodeLcSlug,
+  homeSections: () => homeSections,
+  latest: () => latest4,
+  list: () => list5,
+  search: () => search5,
+  tops: () => tops4
+});
+var LC_GENRES = {
+  action: "Acción",
+  adventure: "Aventura",
+  comedy: "Comedia",
+  drama: "Drama",
+  fantasy: "Fantasía",
+  historical: "Histórico",
+  horror: "Horror",
+  isekai: "Isekai",
+  mystery: "Misterio",
+  psychological: "Psicológico",
+  romance: "Romance",
+  "sci-fi": "Ciencia Ficción",
+  seinen: "Seinen",
+  shoujo: "Shoujo",
+  shounen: "Shounen",
+  "slice-of-life": "Recuentos",
+  sports: "Deportes",
+  tragedy: "Tragedia",
+  wuxia: "Wuxia",
+  ecchi: "Ecchi"
+};
+var fullSlugMem = /* @__PURE__ */ new Map();
+var capsMem2 = /* @__PURE__ */ new Map();
+function decodeHtml2(s) {
+  return String(s || "").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#0*39;|&apos;/gi, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function cleanText2(s) {
+  return decodeHtml2(String(s || "").replace(/<[^>]+>/g, " ")).replace(/[\u200e\u200f\u202a-\u202e]/g, "").replace(/\s+/g, " ").trim();
+}
+function absUrl2(src, u) {
+  const s = String(u || "").trim();
+  if (!s) return void 0;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("//")) return "https:" + s;
+  return join(src, s);
+}
+function encodeLcSlug(shortId, slugPart) {
+  const id = String(shortId || "").replace(/[^A-Za-z0-9_-]/g, "");
+  const tail = String(slugPart || "m").replace(/[^A-Za-z0-9._~-]/g, "-");
+  if (id && tail) fullSlugMem.set(id, tail);
+  const full = id + "." + tail;
+  return full.length <= 112 ? full : full.slice(0, 112).replace(/[-.]+$/, "") || id;
+}
+function decodeLcSlug(encSlug) {
+  const raw = String(encSlug || "");
+  const dot = raw.indexOf(".");
+  if (dot < 0) return { shortId: raw, tail: fullSlugMem.get(raw) || "m" };
+  const shortId = raw.slice(0, dot);
+  const tail = fullSlugMem.get(shortId) || raw.slice(dot + 1) || "m";
+  return { shortId, tail };
+}
+function extractLcCards(src, html) {
+  const items = [];
+  const seen = /* @__PURE__ */ new Set();
+  const blocks = String(html || "").split(/<article\b[^>]*class=["'][^"']*lc-card/i).slice(1);
+  for (const blk of blocks) {
+    const endIdx = blk.indexOf("</article>");
+    const slice = endIdx >= 0 ? blk.slice(0, endIdx) : blk.slice(0, 1800);
+    const linkM = /href=["'](?:https?:\/\/[^/]+)?\/manga\/([A-Za-z0-9_-]+)\/([^/"'?#]+)\/?["']/i.exec(slice);
+    if (!linkM) continue;
+    const shortId = linkM[1];
+    const slugPart = linkM[2];
+    if (seen.has(shortId)) continue;
+    seen.add(shortId);
+    const imgM = /<img[^>]+(?:data-src|src)=["']([^"']+)["']/i.exec(slice);
+    const nameM = /<a[^>]*class=["'][^"']*lc-card-name[^"']*["'][^>]*>([\s\S]*?)<\/a>/i.exec(slice) || /<img[^>]*alt=["']([^"']+)["']/i.exec(slice);
+    const title = cleanText2(nameM && nameM[1] || slugPart.replace(/-/g, " "));
+    const card2 = toItem(src, {
+      slug: encodeLcSlug(shortId, slugPart),
+      title: title || slugPart,
+      poster: imgM ? absUrl2(src, imgM[1]) : void 0
+    });
+    if (card2) items.push(card2);
+  }
+  return items;
+}
+function extractHomeSection(html, headingRegex) {
+  const m = headingRegex.exec(html);
+  if (!m) return "";
+  const rest = html.slice(m.index + m[0].length);
+  const nextSection = rest.search(/<section\b|<footer\b/i);
+  return nextSection >= 0 ? rest.slice(0, nextSection) : rest.slice(0, 25e3);
+}
+async function homeSections(src) {
+  try {
+    const { ok, status, text } = await fetchText(join(src, "/"));
+    if (!ok || !text) throw kino.error("unavailable", "leercapitulo home HTTP " + status);
+    const tendHtml = extractHomeSection(text, /<h[23][^>]*>\s*Tendencias\s*<\/h[23]>/i);
+    const popHtml = extractHomeSection(text, /<h[23][^>]*>\s*Populares\s*<\/h[23]>/i);
+    const ultHtml = extractHomeSection(text, /<h[23][^>]*>\s*Ultimos mangas\s*<\/h[23]>/i);
+    return {
+      trending: extractLcCards(src, tendHtml),
+      popular: extractLcCards(src, popHtml),
+      latest: extractLcCards(src, ultHtml)
+    };
+  } catch (e) {
+    netError(e, "LeerCapitulo");
+  }
+}
+async function list5(src, { page = 1, genre, estado, type, sort } = {}) {
+  try {
+    const p = Math.max(1, Number(page) || 1);
+    const qs = ["page=" + p];
+    if (genre) qs.push("genre=" + encodeURIComponent(String(genre)));
+    if (estado) qs.push("status=" + encodeURIComponent(String(estado)));
+    if (type) qs.push("type=" + encodeURIComponent(String(type)));
+    if (sort) qs.push("sort=" + encodeURIComponent(String(sort)));
+    const { ok, status, text } = await fetchText(join(src, "/manga/?" + qs.join("&")));
+    if (!ok || !text) throw kino.error(status === 404 ? "not_found" : "unavailable", "leercapitulo HTTP " + status);
+    const items = extractLcCards(src, text);
+    const nextMatch = new RegExp("page=" + (p + 1) + "\\b", "i").test(text);
+    return { items, next: nextMatch && items.length ? String(p + 1) : null };
+  } catch (e) {
+    netError(e, "LeerCapitulo");
+  }
+}
+async function tops4(src) {
+  const hs = await homeSections(src);
+  const items = hs.popular.length ? hs.popular : hs.trending;
+  if (items.length) return { items, next: null };
+  return list5(src, { page: 1 });
+}
+async function latest4(src) {
+  const hs = await homeSections(src);
+  const items = hs.latest.length ? hs.latest : hs.trending;
+  if (items.length) return { items, next: "2" };
+  return list5(src, { page: 1 });
+}
+async function search5(src, q) {
+  try {
+    const query = String(q && (q.q || q) || "").trim();
+    if (!query) return { items: [], next: null };
+    const { ok, status, body } = await fetchJson(join(src, "/search/?q=" + encodeURIComponent(query)), {
+      heads: {
+        "X-Requested-With": "XMLHttpRequest",
+        Referer: join(src, "/"),
+        Accept: "application/json, text/javascript, */*; q=0.01"
+      }
+    });
+    if (!ok || !Array.isArray(body)) {
+      throw kino.error("unavailable", "leercapitulo search HTTP " + status);
+    }
+    const items = [];
+    for (const row of body) {
+      if (!row || !row.uri) continue;
+      const m = /\/manga\/([A-Za-z0-9_-]+)\/([^/"'?#]+)/i.exec(row.uri);
+      if (!m) continue;
+      const card2 = toItem(src, {
+        slug: encodeLcSlug(m[1], m[2]),
+        title: cleanText2(row.name || m[2].replace(/-/g, " ")),
+        poster: absUrl2(src, row.cover_uri)
+      });
+      if (card2) items.push(card2);
+    }
+    return { items: items.slice(0, 40), next: null };
+  } catch (e) {
+    netError(e, "LeerCapitulo");
+  }
+}
+function parseDetailChapters(html) {
+  const raw = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /<a[^>]+href=["'](?:https?:\/\/[^/]+)?\/leer\/([A-Za-z0-9_-]+)\/[^/"'?#]+\/([^/"'?#]+)\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const chSlug = decodeURIComponent(m[2]);
+    if (seen.has(chSlug)) continue;
+    seen.add(chSlug);
+    const labelHtml = m[3];
+    const nSpan = /<span[^>]*class=["'][^"']*\bn\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i.exec(labelHtml);
+    const rawLabel = cleanText2(nSpan && nSpan[1] || labelHtml);
+    const numMatch = /(\d+(?:\.\d+)?)/.exec(chSlug) || /(\d+(?:\.\d+)?)/.exec(rawLabel);
+    const num = numMatch ? Number(numMatch[1]) : NaN;
+    raw.push({
+      slug: chSlug,
+      number: Number.isFinite(num) ? String(num) : chSlug,
+      title: rawLabel || "Capítulo " + chSlug,
+      pago: false
+    });
+  }
+  raw.sort((a, b) => {
+    const na = Number(a.number), nb = Number(b.number);
+    if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+    return 0;
+  });
+  return raw;
+}
+async function detail5(src, encSlug) {
+  try {
+    const { shortId, tail } = decodeLcSlug(encSlug);
+    const { ok, status, text } = await fetchText(join(src, "/manga/" + encodeURIComponent(shortId) + "/" + encodeURIComponent(tail) + "/"));
+    if (!ok || !text) throw kino.error(status === 404 ? "not_found" : "unavailable", "leercapitulo detail HTTP " + status);
+    const h1 = cleanText2((/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(text) || [])[1] || tail.replace(/-/g, " "));
+    const coverM = /<img[^>]+src=["']([^"']*\/covers\/[^"']+)["']/i.exec(text);
+    const synM = /<p[^>]*id=["']example2["'][^>]*>([\s\S]*?)<\/p>/i.exec(text) || /Sinopsis[\s\S]{0,160}<p[^>]*>([\s\S]*?)<\/p>/i.exec(text) || /<div[^>]*class=["'][^"']*summary[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(text);
+    const statusM = /<span[^>]*class=["']k["'][^>]*>\s*Estado\s*<\/span>[\s\S]{0,120}?<a[^>]*>([\s\S]*?)<\/a>/i.exec(text);
+    const typeM = /<span[^>]*class=["']k["'][^>]*>\s*Tipo\s*<\/span>[\s\S]{0,120}?<a[^>]*>([\s\S]*?)<\/a>/i.exec(text);
+    const genres = [];
+    const gRe = /<a[^>]+href=["'][^"']*\?genre=[^"']+["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let gm;
+    while ((gm = gRe.exec(text)) !== null) {
+      const g = cleanText2(gm[1]);
+      if (g && !genres.includes(g)) genres.push(g);
+    }
+    const allChs = parseDetailChapters(text);
+    if (allChs.length) {
+      capsMem2.set(src + "|" + encSlug, allChs);
+    }
+    return {
+      slug: encSlug,
+      title: h1,
+      overview: synM ? cleanText2(synM[1]) : "",
+      poster: coverM ? absUrl2(src, coverM[1]) : void 0,
+      genres,
+      statusName: statusM ? cleanText2(statusM[1]) : void 0,
+      demographyName: typeM ? cleanText2(typeM[1]) : "Manga · Manhwa",
+      score: void 0,
+      totalChapters: allChs.length || void 0,
+      adult: false
+    };
+  } catch (e) {
+    netError(e, "LeerCapitulo");
+  }
+}
+async function chapters4(src, encSlug, { page = 1, postsPerPage = 50, order = "asc" } = {}) {
+  try {
+    let all = capsMem2.get(src + "|" + encSlug);
+    if (!all) {
+      await detail5(src, encSlug);
+      all = capsMem2.get(src + "|" + encSlug) || [];
+    }
+    const ordered = order === "desc" ? all.slice().reverse() : all;
+    const p = Math.max(1, Number(page) || 1);
+    const per = Math.max(10, Number(postsPerPage) || 50);
+    const start = (p - 1) * per;
+    const slice = ordered.slice(start, start + per);
+    return { items: slice, next: start + per < ordered.length ? String(p + 1) : null };
+  } catch (e) {
+    netError(e, "LeerCapitulo");
+  }
+}
+function parseChapterSelectNeighbors(html, chSlug) {
+  const selM = /<select[^>]*id=["']chapterSelect["'][^>]*>([\s\S]*?)<\/select>/i.exec(html);
+  if (!selM) return { prev: null, next: null };
+  const list10 = [];
+  const optRe = /<option[^>]+value=["'][^"']*\/leer\/[^/]+\/[^/]+\/([^/"'?#]+)\/?["'][^>]*>/gi;
+  let m;
+  while ((m = optRe.exec(selM[1])) !== null) {
+    const val = decodeURIComponent(m[1]);
+    if (!list10.includes(val)) list10.push(val);
+  }
+  const asc = list10.slice().reverse();
+  const idx = asc.indexOf(String(chSlug));
+  return {
+    prev: idx > 0 ? asc[idx - 1] : null,
+    next: idx >= 0 && idx < asc.length - 1 ? asc[idx + 1] : null
+  };
+}
+async function chapter5(src, encSlug, chSlug) {
+  try {
+    const { shortId, tail } = decodeLcSlug(encSlug);
+    const url = join(src, "/leer/" + encodeURIComponent(shortId) + "/" + encodeURIComponent(tail) + "/" + encodeURIComponent(String(chSlug)) + "/");
+    const { ok, status, text } = await fetchText(url);
+    if (!ok || !text) throw kino.error(status === 404 ? "not_found" : "unavailable", "leercapitulo chapter HTTP " + status);
+    const pages = [];
+    const seen = /* @__PURE__ */ new Set();
+    const imgTagRe = /<img\b[^>]*>/gi;
+    let tm;
+    while ((tm = imgTagRe.exec(text)) !== null) {
+      const tag = tm[0];
+      const dsM = /\bdata-src=["']([^"']+)["']/i.exec(tag);
+      const srcM = /\bsrc=["']([^"']+)["']/i.exec(tag);
+      const rawUrl = dsM && dsM[1] || srcM && srcM[1] || "";
+      if (!/^https?:\/\/[^"']+\.(?:webp|jpe?g|png|avif)(?:\?[^"']*)?$/i.test(rawUrl)) continue;
+      if (/\/covers\/|logo|avatar|favicon|discord|banner|ads|spinner|loading/i.test(rawUrl)) continue;
+      if (seen.has(rawUrl)) continue;
+      seen.add(rawUrl);
+      pages.push(rawUrl);
+    }
+    if (!pages.length) {
+      throw kino.error("unavailable", "leercapitulo capítulo sin imágenes");
+    }
+    let { prev, next } = parseChapterSelectNeighbors(text, chSlug);
+    if (!prev && !next) {
+      const cached = capsMem2.get(src + "|" + encSlug) || [];
+      const idx = cached.findIndex((c) => c.slug === String(chSlug));
+      if (idx >= 0) {
+        prev = idx > 0 ? cached[idx - 1].slug : null;
+        next = idx < cached.length - 1 ? cached[idx + 1].slug : null;
+      }
+    }
+    const numMatch = /(\d+(?:\.\d+)?)/.exec(String(chSlug));
+    const number = numMatch ? String(numMatch[1]) : String(chSlug);
+    const h1 = cleanText2((/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(text) || [])[1] || "");
+    return {
+      pages,
+      number,
+      title: h1 || "Capítulo " + number,
+      direction: "vertical",
+      prev,
+      next
+    };
+  } catch (e) {
+    netError(e, "LeerCapitulo");
+  }
+}
+
+// src/ikigai.js
+var ikigai_exports = {};
+__export(ikigai_exports, {
+  chapter: () => chapter6,
+  chapters: () => chapters5,
+  detail: () => detail6,
+  latest: () => latest5,
+  list: () => list6,
+  search: () => search6,
+  tops: () => tops5
+});
+var MAX_SLUG_LEN = 112;
+var fullSlugCache2 = /* @__PURE__ */ new Map();
+var capsMem3 = /* @__PURE__ */ new Map();
+var metaMem = /* @__PURE__ */ new Map();
+function join2(src, path) {
+  const base = SOURCES[src].host;
+  if (!path) return base;
+  return path.startsWith("http") ? path : base + (path.startsWith("/") ? path : "/" + path);
+}
+function absUrl3(raw, base) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  if (s.startsWith("//")) return "https:" + s;
+  return base + (s.startsWith("/") ? s : "/" + s);
+}
+function decodeHtml3(s) {
+  return String(s || "").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#0*39;|&apos;/gi, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function cleanText3(s) {
+  return decodeHtml3(String(s || "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+function encodeIkSlug(rawSlug) {
+  const clean3 = String(rawSlug || "").replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9._-]/g, "");
+  if (!clean3) return "";
+  if (clean3.length <= MAX_SLUG_LEN) return clean3;
+  let h = 0;
+  for (let i = 0; i < clean3.length; i++) h = h * 31 + clean3.charCodeAt(i) >>> 0;
+  const tag = h.toString(36);
+  const short = clean3.slice(0, MAX_SLUG_LEN - tag.length - 1) + "_" + tag;
+  fullSlugCache2.set(short, clean3);
+  if (fullSlugCache2.size > 400) fullSlugCache2.delete(fullSlugCache2.keys().next().value);
+  return short;
+}
+function decodeIkSlug(encSlug) {
+  const s = String(encSlug || "").trim();
+  return fullSlugCache2.get(s) || s;
+}
+function parseCards(src, html) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const cardRe = /<a[^>]+href=["']\/series\/([a-z0-9-]+)\/?["'][^>]*class=["'][^"']*\bcard\b[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = cardRe.exec(html)) !== null) {
+    const rawSlug = m[1];
+    if (!rawSlug || seen.has(rawSlug)) continue;
+    seen.add(rawSlug);
+    const block = m[2];
+    const h3Match = /<h3[^>]*>([\s\S]*?)<\/h3>/i.exec(block);
+    const imgMatch = /<img[^>]+>/i.exec(block);
+    const imgTag = imgMatch ? imgMatch[0] : "";
+    const posterRaw = (/(?:data-src|src)=["']([^"']+)["']/i.exec(imgTag) || [])[1] || "";
+    const altTitle = (/\balt=["']([^"']+)["']/i.exec(imgTag) || [])[1] || "";
+    const title = cleanText3(h3Match && h3Match[1] || altTitle || rawSlug.replace(/-/g, " "));
+    if (!title) continue;
+    const badge = cleanText3((/<div[^>]+class=["'][^"']*\bbadge[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(block) || [])[1] || "");
+    const enc = encodeIkSlug(rawSlug);
+    const poster = absUrl3(posterRaw, SOURCES[src].host);
+    metaMem.set(src + "|" + enc, { title, poster, badge });
+    if (metaMem.size > 500) metaMem.delete(metaMem.keys().next().value);
+    const it = toItem(src, { slug: enc, title, poster });
+    if (it) out.push(it);
+  }
+  return out;
+}
+function extractMaxPage(html) {
+  let max = 1;
+  const re = /[?&]pagina=(\d+)/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max;
+}
+async function list6(src, { page = 1, genre = "", sort = "last_chapter_date", type = "", q = "" } = {}) {
+  try {
+    const p = Math.max(1, Number(page) || 1);
+    const params = ["pagina=" + p];
+    if (sort) params.push("ordenar=" + encodeURIComponent(sort), "direccion=desc");
+    if (genre) params.push("generos[]=" + encodeURIComponent(genre));
+    if (type) params.push("tipos[]=" + encodeURIComponent(type));
+    if (q) params.push("buscar=" + encodeURIComponent(q));
+    const url = join2(src, "/series/?" + params.join("&"));
+    const { ok, status, text } = await fetchText(url);
+    if (!ok || !text) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "ikigai HTTP " + status);
+    }
+    const items = parseCards(src, text);
+    const maxP = extractMaxPage(text);
+    const next = items.length > 0 && p < maxP ? String(p + 1) : null;
+    return { items, next };
+  } catch (e) {
+    netError(e, "Ikigai");
+  }
+}
+async function tops5(src, page = 1) {
+  return list6(src, { page, sort: "view_count" });
+}
+async function latest5(src, page = 1) {
+  return list6(src, { page, sort: "last_chapter_date" });
+}
+async function search6(src, q, page = 1) {
+  const query = String(q || "").trim();
+  if (!query) return { items: [], next: null };
+  return list6(src, { page, sort: "view_count", q: query });
+}
+function extractDetailFields(src, html, encSlug, rawSlug) {
+  const h1 = cleanText3((/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html) || [])[1] || "");
+  const cached = metaMem.get(src + "|" + encSlug) || {};
+  const mainMatch = /<main[^>]*>([\s\S]*?)<\/main>/i.exec(html);
+  const mainHtml = mainMatch ? mainMatch[1] : html;
+  const coverMatch = /<img[^>]+src=["'](https:\/\/[^"']*ikigaimangas\.cloud\/[^"']*\/rs:fill:350:500[^"']+|https:\/\/[^"']*\/covers\/[^"']+)["'][^>]*>/i.exec(mainHtml) || /<img[^>]+src=["'](https:\/\/[^"']+)["'][^>]*alt=["'][^"']*["'][^>]*>/i.exec(mainHtml);
+  const poster = absUrl3(coverMatch && coverMatch[1] || cached.poster || "", SOURCES[src].host);
+  let overview = cleanText3((/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i.exec(html) || [])[1] || "");
+  if (!overview || /Lee el último|Ikigai Mangas/i.test(overview)) {
+    const pRe = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+    let pm;
+    while ((pm = pRe.exec(mainHtml)) !== null) {
+      const txt = cleanText3(pm[1]);
+      if (txt.length > 45 && !/Lee el último|Webtoon|Manhwa es el término|Una novela es|Wuxia es un género/i.test(txt)) {
+        overview = txt;
+        break;
+      }
+    }
+  }
+  const genres = [];
+  const gSeen = /* @__PURE__ */ new Set();
+  const gRe = /<a[^>]+href=["'][^"']*generos\[\]=\d+[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let gm;
+  while ((gm = gRe.exec(mainHtml)) !== null) {
+    const g = cleanText3(gm[1]);
+    if (g && !gSeen.has(g)) {
+      gSeen.add(g);
+      genres.push(g);
+    }
+  }
+  let statusName2;
+  if (/Completa|Finalizado/i.test(mainHtml)) statusName2 = "Finalizado";
+  else if (/En Curso/i.test(mainHtml)) statusName2 = "En curso";
+  else if (/Pausad/i.test(mainHtml)) statusName2 = "Pausado";
+  const isNovel2 = /-novela\d*$/i.test(rawSlug) || /Novela/i.test(cached.badge || "") || /\bNovela\b/i.test(h1);
+  const demographyName2 = isNovel2 ? "Novela ligera" : "Cómic · Manhwa";
+  return {
+    slug: encSlug,
+    title: h1 || cached.title || cleanText3(rawSlug.replace(/-/g, " ")),
+    overview,
+    poster,
+    genres,
+    statusName: statusName2,
+    demographyName: demographyName2,
+    score: void 0,
+    totalChapters: void 0,
+    adult: genres.some((g) => /\+18|Adulto|Gore/i.test(g))
+  };
+}
+function extractChapterLinks(html) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /<a[^>]+href=["']\/capitulo\/(\d+)\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const chId = m[1];
+    const rawTxt = cleanText3(m[2]);
+    if (!chId || seen.has(chId)) continue;
+    if (/^(primer|último|ultimo)\s+cap/i.test(rawTxt)) continue;
+    seen.add(chId);
+    const numMatch = /Cap[ií]tulo\s*(\d+(?:\.\d+)?)/i.exec(rawTxt) || /^(\d+(?:\.\d+)?)/.exec(rawTxt);
+    const number = numMatch ? String(numMatch[1]) : String(chId);
+    out.push({
+      slug: chId,
+      number,
+      title: "Capítulo " + number,
+      pago: false
+    });
+  }
+  return out;
+}
+async function detail6(src, encSlug) {
+  try {
+    const rawSlug = decodeIkSlug(encSlug);
+    const url = join2(src, "/series/" + encodeURIComponent(rawSlug) + "/");
+    const { ok, status, text } = await fetchText(url);
+    if (!ok || !text) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "ikigai detail HTTP " + status);
+    }
+    const info = extractDetailFields(src, text, encSlug, rawSlug);
+    const maxPage = extractMaxPage(text);
+    const firstCaps = extractChapterLinks(text);
+    if (firstCaps.length && maxPage === 1) info.totalChapters = firstCaps.length;
+    else if (firstCaps.length && maxPage > 1) info.totalChapters = firstCaps.length * maxPage;
+    return info;
+  } catch (e) {
+    netError(e, "Ikigai");
+  }
+}
+async function chapters5(src, encSlug, { page = 1, order = "asc" } = {}) {
+  try {
+    const rawSlug = decodeIkSlug(encSlug);
+    const p = Math.max(1, Number(page) || 1);
+    const dir = order === "desc" ? "desc" : "asc";
+    if (dir === "desc") {
+      const url = join2(src, "/series/" + encodeURIComponent(rawSlug) + "/?pagina=" + p);
+      const { ok, status, text } = await fetchText(url);
+      if (!ok || !text) {
+        throw kino.error(status === 404 ? "not_found" : "unavailable", "ikigai chapters HTTP " + status);
+      }
+      const items2 = extractChapterLinks(text);
+      const maxP2 = extractMaxPage(text);
+      return { items: items2, next: p < maxP2 ? String(p + 1) : null };
+    }
+    const url1 = join2(src, "/series/" + encodeURIComponent(rawSlug) + "/?pagina=1");
+    const r1 = await fetchText(url1);
+    if (!r1.ok || !r1.text) {
+      throw kino.error(r1.status === 404 ? "not_found" : "unavailable", "ikigai chapters HTTP " + r1.status);
+    }
+    const maxP = extractMaxPage(r1.text);
+    const targetPage = Math.max(1, maxP - p + 1);
+    let html = r1.text;
+    if (targetPage !== 1) {
+      const rp = await fetchText(join2(src, "/series/" + encodeURIComponent(rawSlug) + "/?pagina=" + targetPage));
+      if (!rp.ok || !rp.text) {
+        throw kino.error(rp.status === 404 ? "not_found" : "unavailable", "ikigai chapters HTTP " + rp.status);
+      }
+      html = rp.text;
+    }
+    const items = extractChapterLinks(html).slice().reverse();
+    const key = src + "|" + encSlug;
+    if (p === 1 && items.length) {
+      capsMem3.set(key, items.map((c) => c.slug));
+    } else if (capsMem3.has(key)) {
+      const merged = capsMem3.get(key).slice();
+      for (const it of items) if (!merged.includes(it.slug)) merged.push(it.slug);
+      capsMem3.set(key, merged);
+    }
+    return { items, next: p < maxP ? String(p + 1) : null };
+  } catch (e) {
+    netError(e, "Ikigai");
+  }
+}
+function extractReaderNeighbors(html) {
+  let prev = null;
+  let next = null;
+  const re = /<a[^>]+href=["']\/capitulo\/(\d+)\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const id = m[1];
+    const txt = cleanText3(m[2]);
+    if (/anterior/i.test(txt) && !prev) prev = id;
+    if (/siguiente/i.test(txt) && !next) next = id;
+  }
+  return { prev, next };
+}
+function extractComicPages(html) {
+  const pages = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /<img[^>]+(?:data-src|src)=["'](https:\/\/[^"']*ikigaimangas\.cloud\/series\/(\d+)\/(\d+)\/[^"']+)["'][^>]*>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const u = m[1];
+    const seriesId = m[2];
+    if (seriesId === "1000" || /BannerConcurso|covers/i.test(u)) continue;
+    if (seen.has(u)) continue;
+    seen.add(u);
+    pages.push(u);
+  }
+  return pages;
+}
+function extractNovelParagraphs2(html) {
+  const startMatch = /<div[^>]+class=["'][^"']*\bprose\b[^"']*["'][^>]*>/i.exec(html);
+  if (!startMatch) return [];
+  const after = html.slice(startMatch.index + startMatch[0].length);
+  const endIdx = after.search(/<\/section>|<\/main>|<nav\b|<!--\/qv-->\s*<\/div>\s*<div/i);
+  const raw = endIdx >= 0 ? after.slice(0, endIdx) : after.slice(0, 6e4);
+  const normalized = raw.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:p|div|h[1-6]|li)>/gi, "\n").replace(/<[^>]+>/g, "");
+  const out = [];
+  for (const line of normalized.split(/\r?\n/)) {
+    const text = cleanText3(line);
+    if (!text || text.length < 2) continue;
+    if (/Si ves este mensaje, significa que el sitio web|traducci[oó]n fue posible gracias a nuestros patrocinadores|este problema suele resolverse/i.test(text)) continue;
+    out.push(text);
+  }
+  return out;
+}
+async function chapter6(src, encSlug, chSlug) {
+  try {
+    const url = join2(src, "/capitulo/" + encodeURIComponent(String(chSlug)) + "/");
+    const { ok, status, text } = await fetchText(url);
+    if (!ok || !text) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "ikigai chapter HTTP " + status);
+    }
+    const { prev, next } = extractReaderNeighbors(text);
+    const titleTag = cleanText3((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(text) || [])[1] || "").split("|")[0].trim();
+    const h1 = cleanText3((/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(text) || [])[1] || "");
+    const numMatch = /Cap[ií]tulo\s*(\d+(?:\.\d+)?)/i.exec(titleTag + " " + h1);
+    const number = numMatch ? String(numMatch[1]) : String(chSlug);
+    const pages = extractComicPages(text);
+    if (pages.length) {
+      return {
+        pages,
+        number,
+        title: titleTag || "Capítulo " + number,
+        direction: "vertical",
+        prev,
+        next
+      };
+    }
+    const paragraphs = extractNovelParagraphs2(text);
+    if (paragraphs.length) {
+      return {
+        text: paragraphs,
+        imgs: [],
+        number,
+        title: titleTag || "Capítulo " + number,
+        direction: "vertical",
+        prev,
+        next
+      };
+    }
+    throw kino.error("unavailable", "ikigai capítulo sin contenido legible");
+  } catch (e) {
+    netError(e, "Ikigai");
+  }
+}
+
+// src/lectorfenix.js
+var lectorfenix_exports = {};
+__export(lectorfenix_exports, {
+  chapter: () => chapter7,
+  chapters: () => chapters6,
+  decodeDevalue: () => decodeDevalue,
+  detail: () => detail7,
+  homeSections: () => homeSections2,
+  latest: () => latest6,
+  list: () => list7,
+  search: () => search7,
+  tops: () => tops6
+});
+var API_HEADS2 = { Accept: "application/json, text/plain, */*" };
+var MAX_SLUG_LEN2 = 112;
+var fullSlugCache3 = /* @__PURE__ */ new Map();
+var capsMem4 = /* @__PURE__ */ new Map();
+var pagesMem = /* @__PURE__ */ new Map();
+function join3(src, path) {
+  const base = SOURCES[src].host;
+  if (!path) return base;
+  return path.startsWith("http") ? path : base + (path.startsWith("/") ? path : "/" + path);
+}
+function absUrl4(raw, base) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  if (s.startsWith("//")) return "https:" + s;
+  return base + (s.startsWith("/") ? s : "/" + s);
+}
+function decodeHtml4(s) {
+  return String(s || "").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#0*39;|&apos;/gi, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function cleanText4(s) {
+  return decodeHtml4(String(s || "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+function encodeLfSlug(rawSlug) {
+  const clean3 = String(rawSlug || "").replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9._-]/g, "");
+  if (!clean3) return "";
+  if (clean3.length <= MAX_SLUG_LEN2) return clean3;
+  let h = 0;
+  for (let i = 0; i < clean3.length; i++) h = h * 31 + clean3.charCodeAt(i) >>> 0;
+  const tag = h.toString(36);
+  const short = clean3.slice(0, MAX_SLUG_LEN2 - tag.length - 1) + "_" + tag;
+  fullSlugCache3.set(short, clean3);
+  if (fullSlugCache3.size > 400) fullSlugCache3.delete(fullSlugCache3.keys().next().value);
+  return short;
+}
+function decodeLfSlug(encSlug) {
+  const s = String(encSlug || "").trim();
+  return fullSlugCache3.get(s) || s;
+}
+function decodeDevalue(data) {
+  if (!Array.isArray(data) || !data.length) return {};
+  const seen = /* @__PURE__ */ new Map();
+  function walk(val) {
+    if (typeof val === "number") {
+      if (val === -1) return void 0;
+      if (val === -2) return NaN;
+      if (val === -3) return Infinity;
+      if (val === -4) return -Infinity;
+      if (val === -5) return -0;
+      if (val === -6) return null;
+      if (val < 0 || val >= data.length) return void 0;
+      if (seen.has(val)) return seen.get(val);
+      const raw = data[val];
+      if (Array.isArray(raw)) {
+        const arr = [];
+        seen.set(val, arr);
+        for (let i = 0; i < raw.length; i++) {
+          const item = raw[i];
+          arr.push(typeof item === "number" ? walk(item) : item);
+        }
+        return arr;
+      }
+      if (raw && typeof raw === "object") {
+        const obj = {};
+        seen.set(val, obj);
+        const keys = Object.keys(raw);
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          const v = raw[k];
+          obj[k] = typeof v === "number" ? walk(v) : v;
+        }
+        return obj;
+      }
+      return raw;
+    }
+    return val;
+  }
+  return walk(0);
+}
+async function fetchSvelteData(url) {
+  const { ok, status, text } = await fetchText(url, { heads: API_HEADS2 });
+  if (!ok || !text) return { ok, status, data: null };
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, status, data: null };
+  }
+  const nodes = Array.isArray(parsed && parsed.nodes) ? parsed.nodes : [];
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (n && n.type === "data" && Array.isArray(n.data)) {
+      return { ok: true, status, data: decodeDevalue(n.data) };
+    }
+  }
+  return { ok: false, status, data: null };
+}
+function mapComicRow(src, row) {
+  if (!row || typeof row !== "object") return null;
+  const rawSlug = String(row.comic_slug || row.slug || "").trim();
+  const title = cleanText4(row.comic_title || row.title || row.name || rawSlug);
+  if (!rawSlug || !title) return null;
+  const poster = absUrl4(row.comic_cover || row.coverImage || row.urlCover || "", SOURCES[src].host);
+  return toItem(src, { slug: encodeLfSlug(rawSlug), title, poster });
+}
+async function homeSections2(src) {
+  const ck = cacheKey("lfHome", src);
+  const hit = cacheGet(ck, TTL.home);
+  if (hit) return hit;
+  try {
+    const { ok, status, data } = await fetchSvelteData(join3(src, "/__data.json"));
+    if (!ok || !data || !data.homeData) {
+      throw kino.error("unavailable", "lectorfenix home HTTP " + status);
+    }
+    const hd = data.homeData;
+    const popular = (hd.comics_popular || []).map((r) => mapComicRow(src, r)).filter(Boolean);
+    const popularToday = (hd.comics_popular_today || []).map((r) => mapComicRow(src, r)).filter(Boolean);
+    const recent = (hd.comics_recent || []).map((r) => mapComicRow(src, r)).filter(Boolean);
+    const out = { popular, popularToday, recent };
+    cacheSet(ck, out);
+    return out;
+  } catch (e) {
+    netError(e, "LectorFenix");
+  }
+}
+async function list7(src, { page = 1, genre = "", sort = "updated_at", q = "" } = {}) {
+  try {
+    const p = Math.max(1, Number(page) || 1);
+    const params = ["page=" + p, "isDesc=true"];
+    if (sort) params.push("sort=" + encodeURIComponent(sort));
+    if (genre) params.push("genres=" + encodeURIComponent(genre));
+    if (q) params.push("q=" + encodeURIComponent(q));
+    const url = join3(src, "/comics/__data.json?" + params.join("&"));
+    const { ok, status, data } = await fetchSvelteData(url);
+    if (!ok || !data || !data.results) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "lectorfenix HTTP " + status);
+    }
+    const r = data.results;
+    const items = (r.comics || []).map((c) => mapComicRow(src, c)).filter(Boolean);
+    const cur = Number(r.page) || p;
+    const totalPages = Number(r.totalPages) || cur;
+    return { items, next: cur < totalPages ? String(cur + 1) : null };
+  } catch (e) {
+    netError(e, "LectorFenix");
+  }
+}
+async function tops6(src, page = 1) {
+  return list7(src, { page, sort: "views" });
+}
+async function latest6(src, page = 1) {
+  return list7(src, { page, sort: "updated_at" });
+}
+async function search7(src, q, page = 1) {
+  const query = String(q || "").trim();
+  if (!query) return { items: [], next: null };
+  return list7(src, { page, sort: "views", q: query });
+}
+function mapStatus(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s === "completed" || s === "finalizado") return "Finalizado";
+  if (s === "hiatus" || s === "pausado") return "Pausado";
+  if (s === "ongoing" || s === "emision") return "En curso";
+  return raw ? cleanText4(raw) : void 0;
+}
+function pickChaptersFromComic(src, encSlug, comic) {
+  const scans = Array.isArray(comic && comic.comicScans) ? comic.comicScans : [];
+  let best = [];
+  for (let i = 0; i < scans.length; i++) {
+    const chs = Array.isArray(scans[i] && scans[i].chapters) ? scans[i].chapters : [];
+    if (chs.length > best.length) best = chs;
+  }
+  const sorted = best.slice().sort((a, b) => (Number(a.chapterNumber) || 0) - (Number(b.chapterNumber) || 0));
+  const out = sorted.map((ch) => {
+    const chSlug = String(ch.id);
+    const num = ch.chapterNumber != null ? String(ch.chapterNumber) : chSlug;
+    const pages = Array.isArray(ch.urlPages) ? ch.urlPages.map((u) => absUrl4(u, SOURCES[src].host)).filter(Boolean) : [];
+    if (pages.length) {
+      pagesMem.set(src + "|" + encSlug + "|" + chSlug, {
+        pages,
+        number: num,
+        title: ch.title ? cleanText4(ch.title) : "Capítulo " + num
+      });
+      if (pagesMem.size > 1500) pagesMem.delete(pagesMem.keys().next().value);
+    }
+    return {
+      slug: chSlug,
+      number: num,
+      title: ch.title ? cleanText4(ch.title) : "Capítulo " + num,
+      pago: false
+    };
+  });
+  capsMem4.set(src + "|" + encSlug, out);
+  if (capsMem4.size > 200) capsMem4.delete(capsMem4.keys().next().value);
+  return out;
+}
+async function detail7(src, encSlug) {
+  try {
+    const slug = decodeLfSlug(encSlug);
+    const url = join3(src, "/comics/" + encodeURIComponent(slug) + "/__data.json");
+    const { ok, status, data } = await fetchSvelteData(url);
+    if (!ok || !data || !data.comic) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "lectorfenix detail HTTP " + status);
+    }
+    const c = data.comic;
+    const chList = pickChaptersFromComic(src, encSlug, c);
+    const genres = Array.isArray(c.genres) ? c.genres.map((g) => cleanText4(typeof g === "string" ? g : g && g.name)).filter(Boolean) : Array.isArray(c.comicGenres) ? c.comicGenres.map((g) => cleanText4(g && (g.name || g.genre && g.genre.name))).filter(Boolean) : [];
+    const overview = cleanText4(String(c.description || "").replace(/Haz click aqu[ií] para ir a la novela\s*\[[^\]]+\]/gi, ""));
+    return {
+      slug: encSlug,
+      title: cleanText4(c.title || c.name || slug),
+      overview,
+      poster: absUrl4(c.coverImage || c.urlCover || "", SOURCES[src].host),
+      genres,
+      statusName: mapStatus(c.status),
+      demographyName: c.type ? cleanText4(c.type.charAt(0).toUpperCase() + c.type.slice(1)) : "Manga · Manhwa",
+      score: void 0,
+      totalChapters: chList.length || void 0,
+      adult: Boolean(c.isNsfw || c.isHentai)
+    };
+  } catch (e) {
+    netError(e, "LectorFenix");
+  }
+}
+async function chapters6(src, encSlug, { page = 1, order = "asc" } = {}) {
+  try {
+    const key = src + "|" + encSlug;
+    let all = capsMem4.get(key);
+    if (!all || !all.length) {
+      await detail7(src, encSlug);
+      all = capsMem4.get(key) || [];
+    }
+    const ordered = order === "desc" ? all.slice().reverse() : all;
+    const per = 40;
+    const p = Math.max(1, Number(page) || 1);
+    const start = (p - 1) * per;
+    const items = ordered.slice(start, start + per);
+    const next = start + per < ordered.length ? String(p + 1) : null;
+    return { items, next };
+  } catch (e) {
+    netError(e, "LectorFenix");
+  }
+}
+async function chapter7(src, encSlug, chSlug) {
+  try {
+    const slug = decodeLfSlug(encSlug);
+    const key = src + "|" + encSlug;
+    const mem = pagesMem.get(key + "|" + String(chSlug));
+    const listCh = capsMem4.get(key) || [];
+    const idx = listCh.findIndex((c) => String(c.slug) === String(chSlug));
+    if (mem && mem.pages.length && idx >= 0) {
+      return {
+        pages: mem.pages,
+        number: mem.number,
+        title: mem.title,
+        direction: "vertical",
+        prev: idx > 0 ? listCh[idx - 1].slug : null,
+        next: idx >= 0 && idx < listCh.length - 1 ? listCh[idx + 1].slug : null
+      };
+    }
+    const url = join3(src, "/comics/" + encodeURIComponent(slug) + "/chapters/" + encodeURIComponent(String(chSlug)) + "/__data.json");
+    const { ok, status, data } = await fetchSvelteData(url);
+    if (!ok || !data || !data.chapter) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "lectorfenix chapter HTTP " + status);
+    }
+    const ch = data.chapter;
+    const rawPages = ch.url_pages || ch.urlPages || [];
+    const pages = rawPages.map((u) => absUrl4(u, SOURCES[src].base)).filter(Boolean);
+    if (!pages.length) {
+      throw kino.error("unavailable", "lectorfenix capítulo sin páginas");
+    }
+    const num = ch.chapter_number != null ? String(ch.chapter_number) : String(chSlug);
+    return {
+      pages,
+      number: num,
+      title: ch.title ? cleanText4(ch.title) : "Capítulo " + num,
+      direction: "vertical",
+      prev: ch.prev_chapter_id != null ? String(ch.prev_chapter_id) : idx > 0 ? listCh[idx - 1].slug : null,
+      next: ch.next_chapter_id != null ? String(ch.next_chapter_id) : idx >= 0 && idx < listCh.length - 1 ? listCh[idx + 1].slug : null
+    };
+  } catch (e) {
+    netError(e, "LectorFenix");
+  }
+}
+
+// src/mhscans.js
+var mhscans_exports = {};
+__export(mhscans_exports, {
+  chapter: () => chapter8,
+  chapters: () => chapters7,
+  detail: () => detail8,
+  latest: () => latest7,
+  list: () => list8,
+  search: () => search8,
+  tops: () => tops7
+});
+var MAX_SLUG_LEN3 = 112;
+var fullSlugCache4 = /* @__PURE__ */ new Map();
+function join4(src, path) {
+  const base = SOURCES[src].host;
+  if (!path) return base;
+  return path.startsWith("http") ? path : base + (path.startsWith("/") ? path : "/" + path);
+}
+function absUrl5(raw, base) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  if (s.startsWith("//")) return "https:" + s;
+  return base + (s.startsWith("/") ? s : "/" + s);
+}
+function decodeHtml5(s) {
+  return String(s || "").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#0*39;|&apos;/gi, "'").replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function cleanText5(s) {
+  return decodeHtml5(String(s || "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+function encodeMcSlug(rawSlug) {
+  const clean3 = String(rawSlug || "").replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9._-]/g, "");
+  if (!clean3) return "";
+  if (clean3.length <= MAX_SLUG_LEN3) return clean3;
+  let h = 0;
+  for (let i = 0; i < clean3.length; i++) h = h * 31 + clean3.charCodeAt(i) >>> 0;
+  const tag = h.toString(36);
+  const short = clean3.slice(0, MAX_SLUG_LEN3 - tag.length - 1) + "_" + tag;
+  fullSlugCache4.set(short, clean3);
+  if (fullSlugCache4.size > 400) fullSlugCache4.delete(fullSlugCache4.keys().next().value);
+  return short;
+}
+function decodeMcSlug(encSlug) {
+  const s = String(encSlug || "").trim();
+  return fullSlugCache4.get(s) || s;
+}
+function parseLibraryCards(src, html, page) {
+  const base = SOURCES[src].host;
+  const srcHtml = String(html || "");
+  const mainMatch = /<main\b[\s\S]*?<\/main>/i.exec(srcHtml);
+  const scope = mainMatch ? mainMatch[0] : srcHtml;
+  const items = [];
+  const seen = /* @__PURE__ */ new Set();
+  const anchorRe = /<a\b([^>]*href=["'](?:https?:\/\/[^"']+)?\/comics\/([^"'?#\/]+)\/?["'][^>]*)>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = anchorRe.exec(scope)) !== null) {
+    const attrs = m[1];
+    const rawSlug = decodeURIComponent(m[2]);
+    if (!rawSlug || seen.has(rawSlug)) continue;
+    const inner = m[3];
+    const imgMatch = /<img\b[^>]*\b(?:data-src|src)=["']([^"']+)["'][^>]*>/i.exec(inner);
+    const titleTagMatch = /<(?:h2|h3|h4)\b[^>]*>([\s\S]*?)<\/(?:h2|h3|h4)>/i.exec(inner);
+    const altMatch = /\balt=["']([^"']+)["']/i.exec(imgMatch ? imgMatch[0] : "");
+    const titleAttrMatch = /\btitle=["']([^"']+)["']/i.exec(attrs);
+    const title = cleanText5(
+      titleTagMatch && titleTagMatch[1] || titleAttrMatch && titleAttrMatch[1] || altMatch && altMatch[1] || inner.replace(/<[^>]+>/g, " ")
+    );
+    if (!title) continue;
+    seen.add(rawSlug);
+    const posterRaw = imgMatch ? decodeHtml5(imgMatch[1]) : "";
+    const poster = posterRaw && !/site\/logos|avatar/i.test(posterRaw) ? absUrl5(posterRaw, base) : "";
+    const item = toItem(src, { slug: encodeMcSlug(rawSlug), title, poster });
+    if (item) items.push(item);
+  }
+  const cur = Math.max(1, Number(page) || 1);
+  let maxPage = cur;
+  const pageRe = /[?&]page=(\d+)/gi;
+  let pm;
+  while ((pm = pageRe.exec(scope)) !== null) {
+    const n = Number(pm[1]);
+    if (Number.isFinite(n) && n > maxPage) maxPage = n;
+  }
+  return { items, next: maxPage > cur ? String(cur + 1) : null };
+}
+async function list8(src, { page = 1, sort = "updated", genre = "", type = "", status = "", q = "" } = {}) {
+  try {
+    const p = Math.max(1, Number(page) || 1);
+    const params = ["page=" + p];
+    if (sort) params.push("sort=" + encodeURIComponent(sort));
+    if (genre) params.push("genre=" + encodeURIComponent(genre));
+    if (type) params.push("type=" + encodeURIComponent(type));
+    if (status) params.push("status=" + encodeURIComponent(status));
+    if (q) params.push("q=" + encodeURIComponent(q));
+    const url = join4(src, "/library?" + params.join("&"));
+    const { ok, status: st, text } = await fetchText(url);
+    if (!ok || !text) {
+      throw kino.error(st === 404 ? "not_found" : "unavailable", "mhscans HTTP " + st);
+    }
+    return parseLibraryCards(src, text, p);
+  } catch (e) {
+    netError(e, "MHScans");
+  }
+}
+async function tops7(src, page = 1) {
+  return list8(src, { page, sort: "views" });
+}
+async function latest7(src, page = 1) {
+  return list8(src, { page, sort: "updated" });
+}
+async function search8(src, q, page = 1) {
+  const query = String(q || "").trim();
+  if (!query) return { items: [], next: null };
+  return list8(src, { page, q: query });
+}
+function parseChapterLinks(html) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const re = /<a\b[^>]*href=["'](?:https?:\/\/[^"']+)?\/leer\/([A-Za-z0-9._~-]+)\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const chId = m[1];
+    if (!chId || seen.has(chId)) continue;
+    const rawText = cleanText5(m[2]);
+    if (!rawText || /^comenzar\s+lectura$/i.test(rawText) || /^continuar/i.test(rawText)) continue;
+    seen.add(chId);
+    const cleaned = rawText.replace(/\bHace\s+[\w\s]+?(?:minutos?|horas?|d[ií]as?|semanas?|mes(?:es)?|a[ñn]os?)\b/gi, "").replace(/\bGRATIS\b/gi, "").replace(/\s+/g, " ").trim();
+    const numMatch = /(?:cap[ií]tulo|cap\.?)\s*(\d+(?:\.\d+)?)/i.exec(cleaned) || /(\d+(?:\.\d+)?)/.exec(cleaned);
+    const num = numMatch ? numMatch[1] : String(out.length + 1);
+    const pago = PAGO_TEXT_RE.test(cleaned);
+    out.push({
+      slug: chId,
+      number: num,
+      title: cleaned || "Capítulo " + num,
+      pago
+    });
+  }
+  return out;
+}
+async function detail8(src, encSlug) {
+  const rawSlug = decodeMcSlug(encSlug);
+  const ck = cacheKey("mcDet", rawSlug);
+  const hit = cacheGet(ck, TTL.detail);
+  if (hit) return hit;
+  try {
+    const base = SOURCES[src].host;
+    const { ok, status, text } = await fetchText(join4(src, "/comics/" + encodeURIComponent(rawSlug)));
+    if (!ok || !text) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "mhscans HTTP " + status);
+    }
+    const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text);
+    const titleTag = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+    const title = cleanText5(h1 && h1[1] || titleTag && titleTag[1].split("|")[0] || rawSlug);
+    let poster = "";
+    const coverMatch = /<img\b[^>]*\bsrc=["']([^"']*\/uploads\/covers\/[^"']+)["'][^>]*>/i.exec(text);
+    if (coverMatch) poster = absUrl5(decodeHtml5(coverMatch[1]), base);
+    const paragraphs = [];
+    const pRe = /<p\b[^>]*>([\s\S]*?)<\/p>/gi;
+    let pm;
+    while ((pm = pRe.exec(text)) !== null) {
+      const pTxt = cleanText5(pm[1]);
+      if (!pTxt || pTxt.length < 30) continue;
+      if (/avisos del autor|iniciar sesi[oó]n|derechos reservados/i.test(pTxt)) continue;
+      paragraphs.push(pTxt);
+      if (paragraphs.length >= 2) break;
+    }
+    const overview = paragraphs.join("\n\n").slice(0, 1800) || void 0;
+    const genres = [];
+    const gRe = /href=["'][^"']*\/library\?genre=[^"']+["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let gm;
+    while ((gm = gRe.exec(text)) !== null) {
+      const gName = cleanText5(gm[1]);
+      if (gName && genres.indexOf(gName) < 0) genres.push(gName);
+      if (genres.length >= 10) break;
+    }
+    let statusName2;
+    if (/\bFinalizado\b|\bCompletad[oa]\b/i.test(text)) statusName2 = "Finalizado";
+    else if (/\bEn pausa\b|\bHiatus\b/i.test(text)) statusName2 = "Pausado";
+    else if (/\bEn emisi[oó]n\b|\bEn curso\b/i.test(text)) statusName2 = "En curso";
+    let totalChapters;
+    const countMatch = /data-cl-count=["'](\d+)["']/i.exec(text);
+    if (countMatch) totalChapters = Number(countMatch[1]);
+    const res = {
+      slug: encSlug,
+      title,
+      overview,
+      poster,
+      genres,
+      statusName: statusName2,
+      totalChapters
+    };
+    cacheSet(ck, res);
+    return res;
+  } catch (e) {
+    netError(e, "MHScans");
+  }
+}
+async function chapters7(src, encSlug, { page = 1, order = "asc" } = {}) {
+  try {
+    const rawSlug = decodeMcSlug(encSlug);
+    const p = Math.max(1, Number(page) || 1);
+    const ascParam = order === "desc" ? "" : "&asc=1";
+    const apiUrl = join4(src, "/comics/" + encodeURIComponent(rawSlug) + "/chapters?page=" + p + ascParam);
+    const res = await fetchText(apiUrl);
+    if (res.ok && res.text) {
+      const items2 = parseChapterLinks(res.text);
+      const totalPages = Number(res.headers["x-pages"] || res.headers["X-Pages"] || 1);
+      if (items2.length) {
+        return {
+          items: items2,
+          next: p < totalPages ? String(p + 1) : null,
+          total: Number(res.headers["x-total"] || res.headers["X-Total"]) || void 0
+        };
+      }
+    }
+    const det = await fetchText(join4(src, "/comics/" + encodeURIComponent(rawSlug)));
+    if (!det.ok || !det.text) {
+      throw kino.error(det.status === 404 ? "not_found" : "unavailable", "mhscans HTTP " + det.status);
+    }
+    let items = parseChapterLinks(det.text);
+    if (order !== "desc") items = items.slice().reverse();
+    return { items, next: null };
+  } catch (e) {
+    netError(e, "MHScans");
+  }
+}
+async function chapter8(src, _encSlug, chId) {
+  try {
+    const base = SOURCES[src].host;
+    const { ok, status, text } = await fetchText(join4(src, "/leer/" + encodeURIComponent(String(chId))));
+    if (!ok || !text) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "mhscans HTTP " + status);
+    }
+    const titleTag = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+    const rawTitle = cleanText5(titleTag ? titleTag[1].replace(/discord$/i, "") : "");
+    const numMatch = /Cap\.?\s*(\d+(?:\.\d+)?)/i.exec(rawTitle);
+    const number = numMatch ? numMatch[1] : "";
+    const title = rawTitle || "Capítulo " + (number || chId);
+    const pages = [];
+    const seen = /* @__PURE__ */ new Set();
+    const imgTagRe = /<img\b[^>]*>/gi;
+    let im;
+    while ((im = imgTagRe.exec(text)) !== null) {
+      const tag = im[0];
+      const dataSrc = /\bdata-src=["']([^"']+)["']/i.exec(tag);
+      const srcAttr = /\bsrc=["']([^"']+)["']/i.exec(tag);
+      const rawUrl = dataSrc && dataSrc[1] || srcAttr && srcAttr[1] || "";
+      if (!rawUrl || /^data:/i.test(rawUrl)) continue;
+      if (/\/uploads\/(?:site|logos|avatars|covers)\//i.test(rawUrl)) continue;
+      const isReaderImg = /\/uploads\/pages\//i.test(rawUrl) || /\/wp-content\/uploads\/WP-manga\/data\//i.test(rawUrl) || /\bpage-img\b/i.test(tag);
+      if (!isReaderImg) continue;
+      const url = absUrl5(decodeHtml5(rawUrl), base);
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        pages.push(url);
+      }
+    }
+    let novelLines = [];
+    if (!pages.length) {
+      const ncStart = /<div\b[^>]*class=["'][^"']*novel-content[^"']*["'][^>]*>/i.exec(text);
+      if (ncStart) {
+        const after = text.slice(ncStart.index + ncStart[0].length);
+        const endMark = after.search(/<\/div>\s*(?:<\/footer>|<footer|<script|<div\b[^>]*class=["'][^"']*nav|<section)/i);
+        const chunk = endMark > 0 ? after.slice(0, endMark) : after.slice(0, 8e4);
+        novelLines = chunk.replace(/<(?:br|hr)\b[^>]*\/?>/gi, "\n").replace(/<\/(?:div|p|h[1-6]|li|blockquote)>/gi, "\n").replace(/<[^>]+>/g, " ").split(/\n+/).map((line) => decodeHtml5(line).replace(/\s+/g, " ").trim()).filter((line) => line.length >= 2);
+      }
+    }
+    if (!pages.length && !novelLines.length) {
+      throw kino.error("not_found", "Este capítulo no tiene páginas ni texto legibles.");
+    }
+    let prev = null;
+    let next = null;
+    const optList = [];
+    const optNums = [];
+    const seenOpts = /* @__PURE__ */ new Set();
+    const optRe = /<option\b[^>]*value=["'](?:\/leer\/)?([A-Za-z0-9._~-]+)["']([^>]*)>([\s\S]*?)<\/option>/gi;
+    let om;
+    let curIdx = -1;
+    while ((om = optRe.exec(text)) !== null) {
+      const id = om[1];
+      if (!id || seenOpts.has(id)) continue;
+      seenOpts.add(id);
+      if (/\bselected\b/i.test(om[2]) || id === chId) curIdx = optList.length;
+      optList.push(id);
+      const nm2 = /(\d+(?:\.\d+)?)/.exec(om[3]);
+      optNums.push(nm2 ? Number(nm2[1]) : NaN);
+    }
+    if (curIdx >= 0 && optList.length > 1) {
+      const firstN = optNums[0];
+      const lastN = optNums[optNums.length - 1];
+      const isDesc = Number.isFinite(firstN) && Number.isFinite(lastN) ? firstN > lastN : true;
+      if (isDesc) {
+        prev = optList[curIdx + 1] || null;
+        next = optList[curIdx - 1] || null;
+      } else {
+        prev = optList[curIdx - 1] || null;
+        next = optList[curIdx + 1] || null;
+      }
+    }
+    const navRe = /<a\b[^>]*href=["'](?:https?:\/\/[^"']+)?\/leer\/([A-Za-z0-9._~-]+)\/?["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let nm;
+    while ((nm = navRe.exec(text)) !== null) {
+      const lbl = cleanText5(nm[2]);
+      if (/^anterior$/i.test(lbl) || /cap\.\s*anterior/i.test(lbl)) prev = nm[1];
+      else if (/^siguiente$/i.test(lbl) || /cap\.\s*siguiente/i.test(lbl)) next = nm[1];
+    }
+    if (prev === chId) prev = null;
+    if (next === chId) next = null;
+    if (novelLines.length && !pages.length) {
+      return {
+        slug: chId,
+        number,
+        title,
+        pages: [],
+        text: novelLines,
+        imgs: [],
+        direction: "ttb",
+        prev,
+        next
+      };
+    }
+    return {
+      slug: chId,
+      number,
+      title,
+      pages,
+      direction: "ttb",
+      prev,
+      next
+    };
+  } catch (e) {
+    netError(e, "MHScans");
+  }
+}
+
+// src/manhwaweb.js
+var manhwaweb_exports = {};
+__export(manhwaweb_exports, {
+  chapter: () => chapter9,
+  chapters: () => chapters8,
+  detail: () => detail9,
+  homeSections: () => homeSections3,
+  latest: () => latest8,
+  list: () => list9,
+  search: () => search9,
+  tops: () => tops8
+});
+var API = "https://api.manhwaweb.com";
+var API_HEADS3 = { Accept: "application/json, text/plain, */*" };
+var MAX_SLUG_LEN4 = 112;
+var fullSlugCache5 = /* @__PURE__ */ new Map();
+var capsMem5 = /* @__PURE__ */ new Map();
+var pagesMem2 = /* @__PURE__ */ new Map();
+function absUrl6(raw, base) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  if (s.startsWith("//")) return "https:" + s;
+  return base + (s.startsWith("/") ? s : "/" + s);
+}
+function cleanText6(s) {
+  return String(s || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+function encodeMwSlug(rawSlug) {
+  const clean3 = String(rawSlug || "").replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9._-]/g, "");
+  if (!clean3) return "";
+  if (clean3.length <= MAX_SLUG_LEN4) return clean3;
+  let h = 0;
+  for (let i = 0; i < clean3.length; i++) h = h * 31 + clean3.charCodeAt(i) >>> 0;
+  const tag = h.toString(36);
+  const short = clean3.slice(0, MAX_SLUG_LEN4 - tag.length - 1) + "_" + tag;
+  fullSlugCache5.set(short, clean3);
+  if (fullSlugCache5.size > 400) fullSlugCache5.delete(fullSlugCache5.keys().next().value);
+  return short;
+}
+function decodeMwSlug(encSlug) {
+  const s = String(encSlug || "").trim();
+  return fullSlugCache5.get(s) || s;
+}
+function mapRow(src, row) {
+  if (!row || typeof row !== "object") return null;
+  const rawSlug = String(row.real_id || row._id || row.id_rel || row.id_manhwa || "").trim();
+  const title = cleanText6(row.name_esp || row.the_real_name || row.name_manhwa || row._name || rawSlug);
+  if (!rawSlug || !title) return null;
+  const poster = absUrl6(row._imagen || row.img || "", SOURCES[src].host);
+  return toItem(src, {
+    slug: encodeMwSlug(rawSlug),
+    title,
+    poster,
+    adult: row._erotico === "si" ? true : void 0
+  });
+}
+function dedupeItems(list10) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (let i = 0; i < list10.length; i++) {
+    const it = list10[i];
+    if (!it || seen.has(it.ref)) continue;
+    seen.add(it.ref);
+    out.push(it);
+  }
+  return out;
+}
+async function homeSections3(src) {
+  const ck = cacheKey("mwHome", src);
+  const hit = cacheGet(ck, TTL.home);
+  if (hit) return hit;
+  try {
+    const [latRes, popRes, newRes] = await Promise.allSettled([
+      fetchJson(API + "/latest/new-manhwa", { heads: API_HEADS3 }),
+      fetchJson(API + "/manhwa/library?order_item=popularidad&order_dir=desc&page=0", { heads: API_HEADS3 }),
+      fetchJson(API + "/manhwa/nuevos", { heads: API_HEADS3 })
+    ]);
+    const latestRaw = latRes.status === "fulfilled" && latRes.value.ok ? ((latRes.value.body || {}).manhwas || {})._manhwas || [] : [];
+    const popRaw = popRes.status === "fulfilled" && popRes.value.ok ? (popRes.value.body || {}).data || [] : [];
+    const newRaw = newRes.status === "fulfilled" && newRes.value.ok ? (newRes.value.body || {}).utimos_mangas_creados || [] : [];
+    const recent = dedupeItems(latestRaw.map((r) => mapRow(src, r)).filter(Boolean));
+    const popular = dedupeItems(popRaw.map((r) => mapRow(src, r)).filter(Boolean));
+    const fresh = dedupeItems(newRaw.map((r) => mapRow(src, r)).filter(Boolean));
+    if (!recent.length && !popular.length && !fresh.length) {
+      throw kino.error("unavailable", "manhwaweb sin datos");
+    }
+    const out = { recent, popular, fresh };
+    cacheSet(ck, out);
+    return out;
+  } catch (e) {
+    netError(e, "ManhwaWeb");
+  }
+}
+async function list9(src, { page = 1, orderItem = "popularidad", orderDir = "desc", genre = "", tipo = "", estado = "", q = "" } = {}) {
+  try {
+    const p = Math.max(1, Number(page) || 1);
+    const p0 = p - 1;
+    const qs = [
+      "buscar=" + encodeURIComponent(q || ""),
+      "estado=" + encodeURIComponent(estado || ""),
+      "tipo=" + encodeURIComponent(tipo || ""),
+      "erotico=",
+      "demografia=",
+      "order_item=" + encodeURIComponent(orderItem || "popularidad"),
+      "order_dir=" + encodeURIComponent(orderDir || "desc"),
+      "page=" + p0,
+      "generes=" + encodeURIComponent(genre || "")
+    ].join("&");
+    const { ok, status, body } = await fetchJson(API + "/manhwa/library?" + qs, { heads: API_HEADS3 });
+    if (!ok || !body || !Array.isArray(body.data)) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "manhwaweb HTTP " + status);
+    }
+    const items = dedupeItems(body.data.map((r) => mapRow(src, r)).filter(Boolean));
+    return { items, next: body.next ? String(p + 1) : null };
+  } catch (e) {
+    netError(e, "ManhwaWeb");
+  }
+}
+async function tops8(src, page = 1) {
+  return list9(src, { page, orderItem: "popularidad", orderDir: "desc" });
+}
+async function latest8(src, page = 1) {
+  const p = Math.max(1, Number(page) || 1);
+  if (p === 1) {
+    try {
+      const hs = await homeSections3(src);
+      if (hs.recent && hs.recent.length) return { items: hs.recent, next: "2" };
+    } catch {
+    }
+  }
+  return list9(src, { page: p, orderItem: "creacion", orderDir: "desc" });
+}
+async function search9(src, q, page = 1) {
+  const query = String(q || "").trim();
+  if (!query) return { items: [], next: null };
+  return list9(src, { page, q: query, orderItem: "popularidad" });
+}
+function mapStatus2(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s === "finalizado" || s === "completed") return "Finalizado";
+  if (s === "pausado" || s === "hiatus") return "Pausado";
+  if (s === "publicandose" || s === "ongoing") return "En curso";
+  return raw ? cleanText6(raw) : void 0;
+}
+function extractChSlug(ch, rawSeriesSlug) {
+  const link = String(ch && ch.link || "");
+  const m = /\/leer\/([A-Za-z0-9._~-]+)/i.exec(link);
+  if (m && m[1]) return m[1];
+  const ver = Array.isArray(ch && ch.versions) && ch.versions[0] && String(ch.versions[0].link || "");
+  const m2 = /\/leer\/([A-Za-z0-9._~-]+)/i.exec(ver);
+  if (m2 && m2[1]) return m2[1];
+  const n = ch && ch.chapter != null ? String(ch.chapter) : "1";
+  return (String(rawSeriesSlug) + "-" + n).replace(/[^A-Za-z0-9._~-]/g, "_").slice(0, 112);
+}
+function cacheComicChapters(src, encSlug, rawSeriesSlug, data) {
+  const rawList = Array.isArray(data && data.chapters) && data.chapters.length ? data.chapters : Array.isArray(data && data.chapters_esp) ? data.chapters_esp : [];
+  const sorted = rawList.slice().sort((a, b) => (Number(a.chapter) || 0) - (Number(b.chapter) || 0));
+  const out = sorted.map((ch, idx) => {
+    const chSlug = extractChSlug(ch, rawSeriesSlug);
+    const num = ch.chapter != null ? String(ch.chapter) : String(idx + 1);
+    const imgs = Array.isArray(ch.img) ? ch.img.map((u) => absUrl6(u, SOURCES[src].host)).filter(Boolean) : [];
+    if (imgs.length) {
+      pagesMem2.set(src + "|" + encSlug + "|" + chSlug, {
+        pages: imgs,
+        number: num,
+        title: "Capítulo " + num
+      });
+      if (pagesMem2.size > 1500) pagesMem2.delete(pagesMem2.keys().next().value);
+    }
+    return {
+      slug: chSlug,
+      number: num,
+      title: "Capítulo " + num,
+      pago: false
+    };
+  });
+  capsMem5.set(src + "|" + encSlug, out);
+  if (capsMem5.size > 200) capsMem5.delete(capsMem5.keys().next().value);
+  return out;
+}
+async function detail9(src, encSlug) {
+  const rawSlug = decodeMwSlug(encSlug);
+  const ck = cacheKey("mwDet", rawSlug);
+  const hit = cacheGet(ck, TTL.detail);
+  if (hit) return hit;
+  try {
+    const { ok, status, body } = await fetchJson(API + "/manhwa/see/" + encodeURIComponent(rawSlug), { heads: API_HEADS3 });
+    if (!ok || !body || !body._id && !body.real_id) {
+      throw kino.error(status === 404 ? "not_found" : "unavailable", "manhwaweb HTTP " + status);
+    }
+    const chs = cacheComicChapters(src, encSlug, rawSlug, body);
+    const genres = [];
+    if (Array.isArray(body._categoris)) {
+      for (const obj of body._categoris) {
+        if (obj && typeof obj === "object") {
+          for (const k of Object.keys(obj)) {
+            const val = cleanText6(obj[k]);
+            if (val && genres.indexOf(val) < 0) genres.push(val);
+          }
+        } else if (typeof obj === "string" && obj.trim()) {
+          genres.push(obj.trim());
+        }
+      }
+    }
+    const res = {
+      slug: encSlug,
+      title: cleanText6(body.name_esp || body.the_real_name || body._name || rawSlug),
+      overview: body._sinopsis ? cleanText6(body._sinopsis) : void 0,
+      poster: absUrl6(body._imagen || "", SOURCES[src].host),
+      genres: genres.slice(0, 10),
+      statusName: mapStatus2(body._status),
+      demographyName: body._tipo ? cleanText6(String(body._tipo)).toUpperCase() : void 0,
+      totalChapters: chs.length || Number(body._numero_cap) || void 0,
+      adult: body._erotico === "si" ? true : void 0
+    };
+    cacheSet(ck, res);
+    return res;
+  } catch (e) {
+    netError(e, "ManhwaWeb");
+  }
+}
+async function chapters8(src, encSlug, { page = 1, postsPerPage = 60, order = "asc" } = {}) {
+  try {
+    const memKey = src + "|" + encSlug;
+    let all = capsMem5.get(memKey);
+    if (!all) {
+      await detail9(src, encSlug);
+      all = capsMem5.get(memKey) || [];
+    }
+    const ordered = order === "desc" ? all.slice().reverse() : all;
+    const p = Math.max(1, Number(page) || 1);
+    const per = Math.max(10, Math.min(250, Number(postsPerPage) || 60));
+    const start = (p - 1) * per;
+    const slice = ordered.slice(start, start + per);
+    const next = start + per < ordered.length ? String(p + 1) : null;
+    return { items: slice, next, total: ordered.length };
+  } catch (e) {
+    netError(e, "ManhwaWeb");
+  }
+}
+async function chapter9(src, encSlug, chSlug) {
+  try {
+    const memKey = src + "|" + encSlug;
+    if (!capsMem5.has(memKey)) {
+      await detail9(src, encSlug).catch(() => {
+      });
+    }
+    const memPage = pagesMem2.get(memKey + "|" + chSlug);
+    let pages = memPage && memPage.pages ? memPage.pages : [];
+    let number = memPage ? memPage.number : "";
+    let title = memPage ? memPage.title : "";
+    if (!pages.length) {
+      const { ok, status, body } = await fetchJson(API + "/chapters/see_new/" + encodeURIComponent(String(chSlug)), { heads: API_HEADS3 });
+      if (!ok || !body || !Array.isArray(body.img) || !body.img.length) {
+        throw kino.error(status === 404 ? "not_found" : "unavailable", "manhwaweb chapter HTTP " + status);
+      }
+      pages = body.img.map((u) => absUrl6(u, SOURCES[src].host)).filter(Boolean);
+      if (body.chapter != null) number = String(body.chapter);
+      title = body.name ? cleanText6(body.name) + (number ? " — Cap. " + number : "") : "Capítulo " + (number || chSlug);
+    }
+    const listAll = capsMem5.get(memKey) || [];
+    const idx = listAll.findIndex((c) => c.slug === String(chSlug));
+    const prev = idx > 0 ? listAll[idx - 1].slug : null;
+    const next = idx >= 0 && idx + 1 < listAll.length ? listAll[idx + 1].slug : null;
+    if (!number && idx >= 0) number = listAll[idx].number;
+    if (!title) title = "Capítulo " + (number || chSlug);
+    return {
+      slug: chSlug,
+      number: number || "",
+      title,
+      pages,
+      direction: "ttb",
+      prev,
+      next
+    };
+  } catch (e) {
+    netError(e, "ManhwaWeb");
   }
 }
 
@@ -1219,8 +3144,8 @@ function novelCards(html, limit) {
   }
   return out;
 }
-function asItems2(list4) {
-  return list4.map((m) => toItem("dv", m)).filter(Boolean);
+function asItems2(list10) {
+  return list10.map((m) => toItem("dv", m)).filter(Boolean);
 }
 var CAPS_TTL = 72e5;
 var CAPS_CACHE = /* @__PURE__ */ new Map();
@@ -1320,7 +3245,7 @@ function filaAjax(item, locked) {
   const pago = Boolean(item.locked || item.is_locked || item.pago) || (locked ? locked.has(id) : false);
   return filaDe(cs, id, pago);
 }
-async function ajaxCaps(catId, page, search6 = "") {
+async function ajaxCaps(catId, page, search12 = "") {
   const r = await fetchText(AJAX_URL, {
     heads: {
       Accept: "application/json, text/javascript, */*; q=0.01",
@@ -1329,7 +3254,7 @@ async function ajaxCaps(catId, page, search6 = "") {
       "User-Agent": UA
     },
     method: "POST",
-    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page + "&search=" + encodeURIComponent(String(search6 || "").trim()),
+    body: "action=dv_load_chapters&cat_id=" + encodeURIComponent(catId) + "&page=" + page + "&search=" + encodeURIComponent(String(search12 || "").trim()),
     timeoutMs: AJAX_TIMEOUT
   });
   if (!r.ok) return null;
@@ -1653,7 +3578,7 @@ function capRows(html, slug) {
   }
   return [...map.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0)).slice(0, MAX_CAPS2);
 }
-async function search4(src, q) {
+async function search10(src, q) {
   const t = String(q || "").trim();
   if (!t) return { items: [] };
   try {
@@ -1731,7 +3656,7 @@ async function browse(src, kind, cursor) {
   }
   return { items: [], next: null };
 }
-async function detail4(src, slug) {
+async function detail10(src, slug) {
   const html = await fichaDe(slug);
   const pick = (re) => {
     const m = html.match(re);
@@ -1771,7 +3696,7 @@ async function detail4(src, slug) {
     // el total real llega de la REST en el primer lote (X-WP-Total); no se baja la obra aquí
   };
 }
-async function chapter4(src, slug, capId) {
+async function chapter10(src, slug, capId) {
   const punto = String(capId || "").lastIndexOf(".");
   if (punto <= 0) netError({ message: "capítulo desconocido" }, "el capítulo");
   const capSlug = String(capId).slice(0, punto);
@@ -1961,8 +3886,8 @@ function dropFiller(text) {
   }
   return out;
 }
-function asItems3(src, list4) {
-  return list4.map((m) => toItem(src, m)).filter(Boolean);
+function asItems3(src, list10) {
+  return list10.map((m) => toItem(src, m)).filter(Boolean);
 }
 function madaraHost(src) {
   return src === "an" ? "https://anslid.com" : "https://devilnovels.com";
@@ -2076,14 +4001,14 @@ async function madaraDetail(src, slug) {
     let m;
     while ((m = re.exec(seg)) && genres.length < 6) genres.push(unescapeHtml2(m[1]).trim());
   }
-  const chapters3 = await madaraChapters(src, slug, html);
+  const chapters9 = await madaraChapters(src, slug, html);
   return {
     slug,
     title: t ? unescapeHtml2(t[1]).trim() : slug.replace(/-novela$/, "").replace(/-/g, " "),
     overview: desc ? unescapeHtml2(String(desc[1]).replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim() : void 0,
     poster: og ? og[1].replace(/&amp;/g, "&") : void 0,
     genres,
-    chapters: chapters3
+    chapters: chapters9
   };
 }
 async function madaraChapters(src, slug, detailHtml) {
@@ -2192,9 +4117,9 @@ async function skHome(src) {
   const out = [];
   for (const s of secs) {
     const raw = b[s.k];
-    const list4 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
-    if (!Array.isArray(list4) || !list4.length) continue;
-    const items = asItems3(src, list4.slice(0, 14).map((n) => ({
+    const list10 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
+    if (!Array.isArray(list10) || !list10.length) continue;
+    const items = asItems3(src, list10.slice(0, 14).map((n) => ({
       slug: String(n.id),
       title: n.title || n.nvl_title,
       overview: void 0,
@@ -2204,8 +4129,8 @@ async function skHome(src) {
   }
   return out;
 }
-function skMapItems(src, list4, limit) {
-  return asItems3(src, (list4 || []).slice(0, limit || 24).map((n) => ({
+function skMapItems(src, list10, limit) {
+  return asItems3(src, (list10 || []).slice(0, limit || 24).map((n) => ({
     slug: String(n.id),
     title: n.title || n.nvl_title,
     overview: n.synopsis ? clip(n.synopsis, 200) : void 0,
@@ -2237,8 +4162,8 @@ async function skBrowse(src, kind, cursor, arg) {
     const r = await fetchJson(SK_API + "/v1/home", { heads: heads2(), timeoutMs: timeoutFor(src) });
     if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "el catálogo de Skynovels");
     const raw = r.body[homeKey];
-    const list4 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
-    const items = skMapItems(src, list4, 60);
+    const list10 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
+    const items = skMapItems(src, list10, 60);
     return { items, next: null };
   }
   return skBrowse(src, "updated", cursor, arg);
@@ -2269,7 +4194,7 @@ async function skDetail(src, slug) {
     netError(e, "el detalle");
   }
   const n = r.body;
-  const chapters3 = await capsOf(src, slug, () => skCaps(src, slug));
+  const chapters9 = await capsOf(src, slug, () => skCaps(src, slug));
   return {
     slug,
     title: n.title,
@@ -2277,7 +4202,7 @@ async function skDetail(src, slug) {
     poster: skPoster(n),
     genres: Array.isArray(n.genres) ? n.genres.map((g) => String(g.name || g)).filter(Boolean).slice(0, 6) : void 0,
     status: n.status === "Finished" ? "Finalizada" : void 0,
-    chapters: chapters3
+    chapters: chapters9
   };
 }
 async function skChapter(src, slug, capId) {
@@ -2391,14 +4316,14 @@ async function mkDetail(src, slug) {
     netError(e, "el detalle");
   }
   const n = r.body;
-  const chapters3 = await capsOf(src, slug, () => mkCaps(src, slug));
+  const chapters9 = await capsOf(src, slug, () => mkCaps(src, slug));
   return {
     slug,
     title: n.title,
     overview: n.synopsis ? clip(String(n.synopsis).replace(/<[^>]+>/g, " "), 600) : void 0,
     poster: mkCover(n.cover_image_url),
     genres: Array.isArray(n.genres) ? n.genres.map((g) => String(g.name || g)).filter(Boolean).slice(0, 6) : void 0,
-    chapters: chapters3
+    chapters: chapters9
   };
 }
 async function mkChapter(src, slug, capId) {
@@ -2550,7 +4475,7 @@ async function novelSearch(src, q) {
   if (k === "sk") return skSearch(src, q);
   if (k === "mk") return mkSearch(src, q);
   if (k === "as") return asSearch(src, q);
-  if (k === "devilnovels") return search4(src, q);
+  if (k === "devilnovels") return search10(src, q);
   return madaraSearch(src, q);
 }
 async function novelHome(src, opts = {}) {
@@ -2574,7 +4499,7 @@ async function novelDetail(src, slug) {
   if (k === "sk") return skDetail(src, slug);
   if (k === "mk") return mkDetail(src, slug);
   if (k === "as") return asDetail(src, slug);
-  if (k === "devilnovels") return detail4(src, slug);
+  if (k === "devilnovels") return detail10(src, slug);
   return madaraDetail(src, slug);
 }
 async function novelChapter(src, slug, capId) {
@@ -2582,7 +4507,7 @@ async function novelChapter(src, slug, capId) {
   if (k === "sk") return skChapter(src, slug, capId);
   if (k === "mk") return mkChapter(src, slug, capId);
   if (k === "as") return asChapter(src, slug, capId);
-  if (k === "devilnovels") return chapter4(src, slug, capId);
+  if (k === "devilnovels") return chapter10(src, slug, capId);
   return madaraChapter(src, slug, capId);
 }
 function capsLoader(src, slug) {
@@ -2609,7 +4534,18 @@ async function novelChapters(src, slug, opts = {}) {
 }
 
 // src/catalog.js
-var adapter = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : SOURCES[src].kind === "zonatmoorg" ? zonatmoorg_exports : manhwa_exports;
+var adapter = (src) => {
+  const k = SOURCES[src].kind;
+  if (k === "zonatmo") return zonatmo_exports;
+  if (k === "zonatmoorg") return zonatmoorg_exports;
+  if (k === "olympus") return olympus_exports;
+  if (k === "leercapitulo") return leercapitulo_exports;
+  if (k === "ikigai") return ikigai_exports;
+  if (k === "lectorfenix") return lectorfenix_exports;
+  if (k === "mhscans") return mhscans_exports;
+  if (k === "manhwaweb") return manhwaweb_exports;
+  return manhwa_exports;
+};
 var esNovela = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
 var ZT_GENRE_LIST = [
   ["2", "Acción", "Action"],
@@ -2660,6 +4596,85 @@ var AN_GENRE_LIST = [
   ["regresion", "Regresión", "Regression"],
   ["romance", "Romance", "Romance"]
 ];
+var OL_GENRE_LIST = [
+  ["1", "Acción", "Action"],
+  ["4", "Artes marciales", "Martial Arts"],
+  ["5", "Aventura", "Adventure"],
+  ["6", "Ciencia Ficción", "Sci-Fi"],
+  ["7", "Comedia", "Comedy"],
+  ["9", "Cultivación", "Cultivation"],
+  ["14", "Fantasía", "Fantasy"],
+  ["16", "Harem", "Harem"],
+  ["19", "Magia", "Magic"],
+  ["20", "Misterio", "Mystery"],
+  ["21", "Murim", "Murim"],
+  ["22", "Psicológico", "Psychological"],
+  ["25", "Reencarnación", "Reincarnation"],
+  ["26", "Romance", "Romance"]
+];
+var LC_GENRE_LIST = [
+  ["action", "Acción", "Action"],
+  ["adventure", "Aventura", "Adventure"],
+  ["comedy", "Comedia", "Comedy"],
+  ["drama", "Drama", "Drama"],
+  ["fantasy", "Fantasía", "Fantasy"],
+  ["isekai", "Isekai", "Isekai"],
+  ["mystery", "Misterio", "Mystery"],
+  ["psychological", "Psicológico", "Psychological"],
+  ["romance", "Romance", "Romance"],
+  ["sci-fi", "Ciencia Ficción", "Sci-Fi"],
+  ["wuxia", "Wuxia", "Wuxia"],
+  ["seinen", "Seinen", "Seinen"],
+  ["shounen", "Shounen", "Shounen"]
+];
+var IK_GENRE_LIST = [
+  ["906397904327999491", "Acción", "Action"],
+  ["906397904061530115", "Aventura", "Adventure"],
+  ["906398112851165187", "Comedia", "Comedy"],
+  ["906397903933407235", "Drama", "Drama"],
+  ["906397894348570627", "Fantasía", "Fantasy"],
+  ["906397894527549443", "Romance", "Romance"],
+  ["906409501957390339", "Josei", "Josei"],
+  ["906397894408372227", "Shoujo", "Shoujo"],
+  ["906409351330037763", "Boys Love", "Boys Love"],
+  ["906409351272792067", "+18", "+18"]
+];
+var LF_GENRE_LIST = [
+  ["Acción", "Acción", "Action"],
+  ["Aventura", "Aventura", "Adventure"],
+  ["Comedia", "Comedia", "Comedy"],
+  ["Drama", "Drama", "Drama"],
+  ["Fantasía", "Fantasía", "Fantasy"],
+  ["Isekai", "Isekai", "Isekai"],
+  ["Romance", "Romance", "Romance"],
+  ["Artes Marciales", "Artes Marciales", "Martial Arts"],
+  ["Shonen", "Shounen", "Shounen"],
+  ["Magia", "Magia", "Magic"]
+];
+var MC_GENRE_LIST = [
+  ["Acción", "Acción", "Action"],
+  ["Fantasía", "Fantasía", "Fantasy"],
+  ["Aventura", "Aventura", "Adventure"],
+  ["Artes Marciales", "Artes Marciales", "Martial Arts"],
+  ["Drama", "Drama", "Drama"],
+  ["Comedia", "Comedia", "Comedy"],
+  ["Sistema", "Sistema", "System"],
+  ["Reencarnación", "Reencarnación", "Reincarnation"],
+  ["Ciencia ficción", "Ciencia Ficción", "Sci-Fi"],
+  ["Shounen", "Shounen", "Shounen"]
+];
+var MW_GENRE_LIST = [
+  ["3", "Acción", "Action"],
+  ["29", "Aventura", "Adventure"],
+  ["18", "Comedia", "Comedy"],
+  ["1", "Drama", "Drama"],
+  ["2", "Romance", "Romance"],
+  ["23", "Fantasía", "Fantasy"],
+  ["31", "Sobrenatural", "Supernatural"],
+  ["41", "Reencarnación", "Reincarnation"],
+  ["39", "Artes Marciales", "Martial Arts"],
+  ["37", "Sistema de niveles", "Leveling"]
+];
 var SOURCE_CATALOG = {
   zt: {
     cats: [
@@ -2698,6 +4713,73 @@ var SOURCE_CATALOG = {
       { ref: "mh:all", label: "Todo el catálogo", labelEn: "Full catalog" }
     ],
     genres: MS_GENRE_LIST.map(([id, l, le]) => ({ ref: "mh:genre:" + id, label: l, labelEn: le }))
+  },
+  ol: {
+    cats: [
+      { ref: "ol:new", label: "Recientes", labelEn: "Latest" },
+      { ref: "ol:pop", label: "Ranking diario", labelEn: "Daily ranking" },
+      { ref: "ol:weekly", label: "Ranking semanal", labelEn: "Weekly ranking" },
+      { ref: "ol:novels", label: "Novelas ligeras", labelEn: "Light novels" },
+      { ref: "ol:active", label: "Activos", labelEn: "Ongoing" },
+      { ref: "ol:finished", label: "Finalizados", labelEn: "Completed" },
+      { ref: "ol:az", label: "A–Z", labelEn: "A–Z" }
+    ],
+    genres: OL_GENRE_LIST.map(([id, l, le]) => ({ ref: "ol:genre:" + id, label: l, labelEn: le }))
+  },
+  lc: {
+    cats: [
+      { ref: "lc:latest", label: "Últimos mangas", labelEn: "Latest manga" },
+      { ref: "lc:pop", label: "Tendencias", labelEn: "Trending" },
+      { ref: "lc:ongoing", label: "En emisión", labelEn: "Ongoing" },
+      { ref: "lc:completed", label: "Completados", labelEn: "Completed" },
+      { ref: "lc:paused", label: "En pausa", labelEn: "On hold" },
+      { ref: "lc:manhwa", label: "Manhwas", labelEn: "Manhwa" },
+      { ref: "lc:all", label: "Todo el catálogo", labelEn: "Full catalog" }
+    ],
+    genres: LC_GENRE_LIST.map(([id, l, le]) => ({ ref: "lc:genre:" + id, label: l, labelEn: le }))
+  },
+  ik: {
+    cats: [
+      { ref: "ik:new", label: "Actualizados", labelEn: "Updated" },
+      { ref: "ik:pop", label: "Más vistos", labelEn: "Most viewed" },
+      { ref: "ik:novels", label: "Novelas ligeras", labelEn: "Light novels" },
+      { ref: "ik:comics", label: "Cómics", labelEn: "Comics" },
+      { ref: "ik:rated", label: "Mejor valorados", labelEn: "Top rated" },
+      { ref: "ik:az", label: "A–Z", labelEn: "A–Z" }
+    ],
+    genres: IK_GENRE_LIST.map(([id, l, le]) => ({ ref: "ik:genre:" + id, label: l, labelEn: le }))
+  },
+  lf: {
+    cats: [
+      { ref: "lf:latest", label: "Actualizados", labelEn: "Updated" },
+      { ref: "lf:pop", label: "Populares", labelEn: "Popular" },
+      { ref: "lf:today", label: "Tendencias hoy", labelEn: "Popular today" },
+      { ref: "lf:new", label: "Nuevos", labelEn: "New" },
+      { ref: "lf:all", label: "Todo el catálogo", labelEn: "Full catalog" }
+    ],
+    genres: LF_GENRE_LIST.map(([id, l, le]) => ({ ref: "lf:genre:" + id, label: l, labelEn: le }))
+  },
+  mc: {
+    cats: [
+      { ref: "mc:latest", label: "Actualizados", labelEn: "Updated" },
+      { ref: "mc:pop", label: "Más vistos", labelEn: "Most viewed" },
+      { ref: "mc:rated", label: "Mejor valorados", labelEn: "Top rated" },
+      { ref: "mc:novels", label: "Novelas", labelEn: "Novels" },
+      { ref: "mc:manhwa", label: "Manhwas", labelEn: "Manhwa" },
+      { ref: "mc:az", label: "A–Z", labelEn: "A–Z" }
+    ],
+    genres: MC_GENRE_LIST.map(([id, l, le]) => ({ ref: "mc:genre:" + id, label: l, labelEn: le }))
+  },
+  mw: {
+    cats: [
+      { ref: "mw:latest", label: "Capítulos recientes", labelEn: "Latest chapters" },
+      { ref: "mw:pop", label: "Populares", labelEn: "Popular" },
+      { ref: "mw:new", label: "Recién agregados", labelEn: "Newly added" },
+      { ref: "mw:manhwa", label: "Manhwa", labelEn: "Manhwa" },
+      { ref: "mw:manga", label: "Manga", labelEn: "Manga" },
+      { ref: "mw:az", label: "A–Z", labelEn: "A–Z" }
+    ],
+    genres: MW_GENRE_LIST.map(([id, l, le]) => ({ ref: "mw:genre:" + id, label: l, labelEn: le }))
   },
   sk: {
     cats: [
@@ -2768,7 +4850,7 @@ function catalogEntryFor(ref) {
       };
     }
   }
-  const tail = p.kind === "genre" && p.arg ? ZT_GENRES && ZT_GENRES[p.arg] || String(p.arg).replace(/-/g, " ") : p.kind;
+  const tail = p.kind === "genre" && p.arg ? OL_GENRES && p.src === "ol" && OL_GENRES[p.arg] || LC_GENRES && p.src === "lc" && LC_GENRES[p.arg] || ZT_GENRES && ZT_GENRES[p.arg] || String(p.arg).replace(/-/g, " ") : p.kind;
   return {
     src: p.src,
     ref,
@@ -2784,23 +4866,31 @@ function parseBrowseRef(ref) {
   const [src, kind, ...rest] = parts;
   return { src, kind: kind || "all", arg: rest.join(":") };
 }
-async function search5(query) {
+async function search11(query) {
   const q = String(query && (query.q || query) || "").trim();
   if (!q) return { items: [], next: null };
   const srcs = Object.keys(SOURCES);
   const settled = await Promise.allSettled(srcs.map((s) => esNovela(s) ? novelSearch(s, q) : adapter(s).search(s, q)));
   const seen = [];
   const items = [];
-  for (let i = 0; i < settled.length; i++) {
-    if (settled[i].status !== "fulfilled" || !settled[i].value) continue;
-    for (const it of settled[i].value.items || []) {
-      const key = String(it.title || "").toLowerCase().replace(/\s+/g, " ");
-      if (seen.indexOf(key) >= 0) continue;
-      seen.push(key);
-      items.push(it);
-      if (items.length >= 100) break;
+  const lists = settled.map((r) => r.status === "fulfilled" && r.value && Array.isArray(r.value.items) ? r.value.items : []);
+  const idx = lists.map(() => 0);
+  let advanced = true;
+  while (items.length < 100 && advanced) {
+    advanced = false;
+    for (let i = 0; i < lists.length && items.length < 100; i++) {
+      const list10 = lists[i];
+      while (idx[i] < list10.length) {
+        const it = list10[idx[i]++];
+        advanced = true;
+        if (!it || !it.title) continue;
+        const key = String(it.title).toLowerCase().replace(/\s+/g, " ");
+        if (seen.indexOf(key) >= 0) continue;
+        seen.push(key);
+        items.push(it);
+        break;
+      }
     }
-    if (items.length >= 100) break;
   }
   const ql = q.toLowerCase();
   items.sort((a, b) => {
@@ -2813,8 +4903,8 @@ async function search5(query) {
 async function progressRow(lang) {
   if (typeof kino.progress !== "object" || !kino.progress || typeof kino.progress.list !== "function") return null;
   try {
-    const list4 = await kino.progress.list({ limit: 20 });
-    const entries = (Array.isArray(list4) ? list4 : []).filter((e) => e && !e.done && e.resume);
+    const list10 = await kino.progress.list({ limit: 20 });
+    const entries = (Array.isArray(list10) ? list10 : []).filter((e) => e && !e.done && e.resume);
     if (!entries.length) return null;
     const items = [];
     for (const e of entries.slice(0, 20)) {
@@ -2859,6 +4949,43 @@ async function rowsFor(src, lang) {
       if (pop.items.length) rows.push({ id: src + "-pop", title: name + " · Lo más visto", titleEn: name + " · Most read", items: pop.items, ref: src + ":pop" });
       const top = await a.list(src, { page: 1, order: "score", postsPerPage: 20 });
       if (top.items.length) rows.push({ id: src + "-top", title: name + " · Mejor valorados", titleEn: name + " · Top rated", items: top.items, ref: src + ":score" });
+    } else if (kind === "olympus") {
+      const rec = await a.list(src, { page: 1, order: "new", type: "comic" });
+      if (rec.items.length) rows.push({ id: src + "-new", title: name + " · Recientes", titleEn: name + " · Latest", items: rec.items, ref: src + ":new" });
+      const pop = await a.tops(src, { page: 1, kind: "daily" });
+      if (pop.items.length) rows.push({ id: src + "-pop", title: name + " · Ranking diario", titleEn: name + " · Daily ranking", items: pop.items, ref: src + ":pop" });
+      const nov = await a.list(src, { page: 1, order: "new", type: "novel" });
+      if (nov.items.length) rows.push({ id: src + "-nov", title: name + " · Novelas ligeras", titleEn: name + " · Light novels", items: nov.items, ref: src + ":novels" });
+    } else if (kind === "leercapitulo") {
+      const hs = await a.homeSections(src);
+      if (hs.latest && hs.latest.length) rows.push({ id: src + "-new", title: name + " · Últimos mangas", titleEn: name + " · Latest manga", items: hs.latest, ref: src + ":latest" });
+      if (hs.trending && hs.trending.length) rows.push({ id: src + "-pop", title: name + " · Tendencias", titleEn: name + " · Trending", items: hs.trending, ref: src + ":pop" });
+      const emi = await a.list(src, { page: 1, estado: "ongoing" });
+      if (emi.items.length) rows.push({ id: src + "-emi", title: name + " · En emisión", titleEn: name + " · Ongoing", items: emi.items, ref: src + ":ongoing" });
+    } else if (kind === "ikigai") {
+      const rec = await a.latest(src, 1);
+      if (rec.items.length) rows.push({ id: src + "-new", title: name + " · Actualizados", titleEn: name + " · Updated", items: rec.items, ref: src + ":new" });
+      const pop = await a.tops(src, 1);
+      if (pop.items.length) rows.push({ id: src + "-pop", title: name + " · Más vistos", titleEn: name + " · Most viewed", items: pop.items, ref: src + ":pop" });
+      const nov = await a.list(src, { page: 1, sort: "last_chapter_date", type: "novel" });
+      if (nov.items.length) rows.push({ id: src + "-nov", title: name + " · Novelas ligeras", titleEn: name + " · Light novels", items: nov.items, ref: src + ":novels" });
+    } else if (kind === "lectorfenix") {
+      const hs = await a.homeSections(src);
+      if (hs.recent && hs.recent.length) rows.push({ id: src + "-new", title: name + " · Actualizados", titleEn: name + " · Updated", items: hs.recent, ref: src + ":latest" });
+      if (hs.popular && hs.popular.length) rows.push({ id: src + "-pop", title: name + " · Populares", titleEn: name + " · Popular", items: hs.popular, ref: src + ":pop" });
+      if (hs.popularToday && hs.popularToday.length) rows.push({ id: src + "-today", title: name + " · Tendencias hoy", titleEn: name + " · Popular today", items: hs.popularToday, ref: src + ":today" });
+    } else if (kind === "mhscans") {
+      const rec = await a.latest(src, 1);
+      if (rec.items.length) rows.push({ id: src + "-new", title: name + " · Actualizados", titleEn: name + " · Updated", items: rec.items, ref: src + ":latest" });
+      const pop = await a.tops(src, 1);
+      if (pop.items.length) rows.push({ id: src + "-pop", title: name + " · Más vistos", titleEn: name + " · Most viewed", items: pop.items, ref: src + ":pop" });
+      const nov = await a.list(src, { page: 1, sort: "updated", type: "Novel" });
+      if (nov.items.length) rows.push({ id: src + "-nov", title: name + " · Novelas", titleEn: name + " · Novels", items: nov.items, ref: src + ":novels" });
+    } else if (kind === "manhwaweb") {
+      const hs = await a.homeSections(src);
+      if (hs.recent && hs.recent.length) rows.push({ id: src + "-new", title: name + " · Capítulos recientes", titleEn: name + " · Latest chapters", items: hs.recent, ref: src + ":latest" });
+      if (hs.popular && hs.popular.length) rows.push({ id: src + "-pop", title: name + " · Populares", titleEn: name + " · Popular", items: hs.popular, ref: src + ":pop" });
+      if (hs.fresh && hs.fresh.length) rows.push({ id: src + "-nuevos", title: name + " · Recién agregados", titleEn: name + " · Newly added", items: hs.fresh, ref: src + ":new" });
     } else if (esNovela(src)) {
       const homeRows = await novelHome(src);
       for (const r of homeRows || []) rows.push(r);
@@ -2905,6 +5032,70 @@ async function browse2(ref, cursor) {
     else if (kind === "genre") res = await a.list(src, { page, genreId: arg, postsPerPage: 24 });
     else if (kind === "all") res = await a.list(src, { page, order: "new", postsPerPage: 24 });
     else throw kino.error("not_found", "lista desconocida");
+  } else if (k === "olympus") {
+    if (kind === "pop") res = await a.tops(src, { page, kind: "daily" });
+    else if (kind === "weekly") res = await a.tops(src, { page, kind: "weekly" });
+    else if (kind === "novels") res = await a.list(src, { page, order: "new", type: "novel" });
+    else if (kind === "active") res = await a.list(src, { page, order: "new", statusId: 1 });
+    else if (kind === "finished") res = await a.list(src, { page, order: "new", statusId: 4 });
+    else if (kind === "az") res = await a.list(src, { page, order: "az" });
+    else if (kind === "genre" && arg) res = await a.list(src, { page, genreId: arg });
+    else if (kind === "new" || kind === "all") res = await a.list(src, { page, order: "new" });
+    else throw kino.error("not_found", "lista desconocida");
+  } else if (k === "leercapitulo") {
+    if (kind === "pop") res = page > 1 ? await a.list(src, { page }) : await a.tops(src);
+    else if (kind === "latest") res = page > 1 ? await a.list(src, { page }) : await a.latest(src);
+    else if (kind === "ongoing" || kind === "completed" || kind === "paused" || kind === "cancelled") res = await a.list(src, { page, estado: kind });
+    else if (kind === "manga" || kind === "manhwa" || kind === "manhua") res = await a.list(src, { page, type: kind });
+    else if (kind === "genre" && arg) res = await a.list(src, { page, genre: arg });
+    else if (kind === "all") res = await a.list(src, { page });
+    else throw kino.error("not_found", "lista desconocida");
+  } else if (k === "ikigai") {
+    if (kind === "pop") res = await a.tops(src, page);
+    else if (kind === "novels") res = await a.list(src, { page, sort: "last_chapter_date", type: "novel" });
+    else if (kind === "comics") res = await a.list(src, { page, sort: "last_chapter_date", type: "comic" });
+    else if (kind === "rated") res = await a.list(src, { page, sort: "rating_count" });
+    else if (kind === "az") res = await a.list(src, { page, sort: "name" });
+    else if (kind === "genre" && arg) res = await a.list(src, { page, genre: arg, sort: "view_count" });
+    else if (kind === "new" || kind === "all") res = await a.latest(src, page);
+    else throw kino.error("not_found", "lista desconocida");
+  } else if (k === "lectorfenix") {
+    if (kind === "pop") res = await a.tops(src, page);
+    else if (kind === "today") {
+      if (page === 1) {
+        const hs = await a.homeSections(src);
+        res = { items: hs.popularToday || [], next: "2" };
+      } else {
+        res = await a.list(src, { page, sort: "views" });
+      }
+    } else if (kind === "new") res = await a.list(src, { page, sort: "created_at" });
+    else if (kind === "genre" && arg) res = await a.list(src, { page, genre: arg, sort: "views" });
+    else if (kind === "latest" || kind === "all") res = await a.latest(src, page);
+    else throw kino.error("not_found", "lista desconocida");
+  } else if (k === "mhscans") {
+    if (kind === "pop") res = await a.tops(src, page);
+    else if (kind === "rated") res = await a.list(src, { page, sort: "rating" });
+    else if (kind === "novels") res = await a.list(src, { page, sort: "updated", type: "Novel" });
+    else if (kind === "manhwa") res = await a.list(src, { page, sort: "updated", type: "Manhwa" });
+    else if (kind === "az") res = await a.list(src, { page, sort: "title" });
+    else if (kind === "genre" && arg) res = await a.list(src, { page, genre: arg, sort: "views" });
+    else if (kind === "latest" || kind === "all") res = await a.latest(src, page);
+    else throw kino.error("not_found", "lista desconocida");
+  } else if (k === "manhwaweb") {
+    if (kind === "pop") res = await a.tops(src, page);
+    else if (kind === "new") {
+      if (page === 1) {
+        const hs = await a.homeSections(src);
+        res = { items: hs.fresh || [], next: "2" };
+      } else {
+        res = await a.list(src, { page, orderItem: "creacion", orderDir: "desc" });
+      }
+    } else if (kind === "manhwa") res = await a.list(src, { page, tipo: "manhwa" });
+    else if (kind === "manga") res = await a.list(src, { page, tipo: "manga" });
+    else if (kind === "az") res = await a.list(src, { page, orderItem: "alfabetico", orderDir: "asc" });
+    else if (kind === "genre" && arg) res = await a.list(src, { page, genre: arg, orderItem: "popularidad" });
+    else if (kind === "latest" || kind === "all") res = await a.latest(src, page);
+    else throw kino.error("not_found", "lista desconocida");
   } else {
     if (kind === "latest") res = page > 1 ? await a.list(src, { page }) : await a.latest(src);
     else if (kind === "on-going" || kind === "end" || kind === "on-hold" || kind === "canceled" || kind === "upcoming") res = await a.list(src, { page, estado: kind });
@@ -2922,7 +5113,13 @@ async function section(arg) {
     { id: "zt", label: "ZonaTMO" },
     { id: "zo", label: "ZonaTMO.org" },
     { id: "ms", label: "ManhwaSS" },
-    { id: "mh", label: "ManhwaShot" }
+    { id: "mh", label: "ManhwaShot" },
+    { id: "ol", label: "Olympus" },
+    { id: "lc", label: "LeerCapitulo" },
+    { id: "ik", label: "Ikigai" },
+    { id: "lf", label: "LectorFenix" },
+    { id: "mc", label: "MHScans" },
+    { id: "mw", label: "ManhwaWeb" }
   ];
   const tab = tabs.some((t) => t.id === asked) ? asked : "todo";
   const srcs = tab === "todo" ? HOME_SOURCES : [tab];
@@ -2940,12 +5137,8 @@ var GENRES = [
   ["Drama", 15],
   ["Fantasía", 5],
   ["Romance", 16],
-  ["Ciencia ficción", 21],
   ["Misterio", 40],
-  ["Psicológico", 36],
-  ["Deportes", 37],
-  ["Sobrenatural", 7],
-  ["Horror", 82]
+  ["Sobrenatural", 7]
 ];
 async function categories() {
   const tiles = [];
@@ -2958,6 +5151,12 @@ async function categories() {
   }
   tiles.push({ id: "ms-todo", title: "Explorar ManhwaSS", ref: "ms:all" });
   tiles.push({ id: "mh-todo", title: "Explorar ManhwaShot", ref: "mh:all" });
+  tiles.push({ id: "ol-todo", title: "Explorar Olympus", ref: "ol:new" });
+  tiles.push({ id: "lc-todo", title: "Explorar LeerCapitulo", ref: "lc:latest" });
+  tiles.push({ id: "ik-todo", title: "Explorar Ikigai", ref: "ik:new" });
+  tiles.push({ id: "lf-todo", title: "Explorar LectorFenix", ref: "lf:latest" });
+  tiles.push({ id: "mc-todo", title: "Explorar MHScans", ref: "mc:latest" });
+  tiles.push({ id: "mw-todo", title: "Explorar ManhwaWeb", ref: "mw:latest" });
   tiles.push({ id: "zt-todo", title: "Explorar ZonaTMO", ref: "zt:all" });
   tiles.push({ id: "zo-todo", title: "Explorar ZonaTMO.org", ref: "zo:all" });
   tiles.push({ id: "sk-todo", title: "Explorar Skynovels", ref: "sk:updated" });
@@ -2982,8 +5181,9 @@ var THEMES = [
 
 // src/screen.js
 var nvAd = { search: novelSearch, list: null, latest: null, detail: novelDetail, chapter: novelChapter };
-var adapter2 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : SOURCES[src].kind === "zonatmoorg" ? zonatmoorg_exports : SOURCES[src].kind === "manhwa" ? manhwa_exports : nvAd;
+var adapter2 = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : SOURCES[src].kind === "zonatmoorg" ? zonatmoorg_exports : SOURCES[src].kind === "manhwa" ? manhwa_exports : SOURCES[src].kind === "olympus" ? olympus_exports : SOURCES[src].kind === "leercapitulo" ? leercapitulo_exports : SOURCES[src].kind === "ikigai" ? ikigai_exports : SOURCES[src].kind === "lectorfenix" ? lectorfenix_exports : SOURCES[src].kind === "mhscans" ? mhscans_exports : SOURCES[src].kind === "manhwaweb" ? manhwaweb_exports : nvAd;
 var isNovel = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
+var isMixed = (src) => SOURCES[src] && (SOURCES[src].kind === "olympus" || SOURCES[src].kind === "ikigai" || SOURCES[src].kind === "mhscans");
 var hasProgress = () => typeof kino.progress === "object" && kino.progress && typeof kino.progress.set === "function";
 var RPREF_KEY = "rprefs";
 var DEFAULT_RPREFS = {
@@ -3067,6 +5267,12 @@ var FUENTES_URL = {
   zo: "https://zonatmo.org",
   ms: "https://manhwass.lat",
   mh: "https://manhwashot.lat",
+  ol: "https://olympusxyz.com",
+  lc: "https://www.leercapitulo.co",
+  ik: "https://visualikigai.cmpunjabrashancard.pk",
+  lf: "https://lectorfenix.com",
+  mc: "https://mhscans.com",
+  mw: "https://manhwaweb.com",
   sk: "https://api.skynovels.net",
   mk: "https://matchanovels.com",
   as: "https://astralnovelstranslations.wordpress.com",
@@ -3181,6 +5387,36 @@ function tabSpecs(src) {
     { id: src + "-emi", src, ref: src + ":on-going", title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
     { id: src + "-end", src, ref: src + ":end", title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } }
   ];
+  if (src === "ol") return [
+    { id: "ol-new", src: "ol", ref: "ol:new", title: SOURCES.ol.name + " · Recientes", titleEn: SOURCES.ol.name + " · Latest", params: { page: 1, order: "new", type: "comic" } },
+    { id: "ol-pop", src: "ol", ref: "ol:pop", title: SOURCES.ol.name + " · Ranking diario", titleEn: SOURCES.ol.name + " · Daily ranking", params: { tops: true, page: 1, kind: "daily" } },
+    { id: "ol-nov", src: "ol", ref: "ol:novels", title: SOURCES.ol.name + " · Novelas ligeras", titleEn: SOURCES.ol.name + " · Light novels", params: { page: 1, order: "new", type: "novel" } }
+  ];
+  if (src === "lc") return [
+    { id: "lc-new", src: "lc", ref: "lc:latest", title: SOURCES.lc.name + " · Últimos mangas", titleEn: SOURCES.lc.name + " · Latest manga", params: { latest: true } },
+    { id: "lc-pop", src: "lc", ref: "lc:pop", title: SOURCES.lc.name + " · Tendencias", titleEn: SOURCES.lc.name + " · Trending", params: { tops: true, page: 1 } },
+    { id: "lc-emi", src: "lc", ref: "lc:ongoing", title: SOURCES.lc.name + " · En emisión", titleEn: SOURCES.lc.name + " · Ongoing", params: { page: 1, estado: "ongoing" } }
+  ];
+  if (src === "ik") return [
+    { id: "ik-new", src: "ik", ref: "ik:new", title: SOURCES.ik.name + " · Actualizados", titleEn: SOURCES.ik.name + " · Updated", params: { page: 1, sort: "last_chapter_date" } },
+    { id: "ik-pop", src: "ik", ref: "ik:pop", title: SOURCES.ik.name + " · Más vistos", titleEn: SOURCES.ik.name + " · Most viewed", params: { tops: true, page: 1 } },
+    { id: "ik-nov", src: "ik", ref: "ik:novels", title: SOURCES.ik.name + " · Novelas ligeras", titleEn: SOURCES.ik.name + " · Light novels", params: { page: 1, sort: "last_chapter_date", type: "novel" } }
+  ];
+  if (src === "lf") return [
+    { id: "lf-new", src: "lf", ref: "lf:latest", title: SOURCES.lf.name + " · Actualizados", titleEn: SOURCES.lf.name + " · Updated", params: { homeKey: "recent" } },
+    { id: "lf-pop", src: "lf", ref: "lf:pop", title: SOURCES.lf.name + " · Populares", titleEn: SOURCES.lf.name + " · Popular", params: { homeKey: "popular" } },
+    { id: "lf-today", src: "lf", ref: "lf:today", title: SOURCES.lf.name + " · Tendencias hoy", titleEn: SOURCES.lf.name + " · Popular today", params: { homeKey: "popularToday" } }
+  ];
+  if (src === "mc") return [
+    { id: "mc-new", src: "mc", ref: "mc:latest", title: SOURCES.mc.name + " · Actualizados", titleEn: SOURCES.mc.name + " · Updated", params: { page: 1, sort: "updated" } },
+    { id: "mc-pop", src: "mc", ref: "mc:pop", title: SOURCES.mc.name + " · Más vistos", titleEn: SOURCES.mc.name + " · Most viewed", params: { tops: true, page: 1 } },
+    { id: "mc-nov", src: "mc", ref: "mc:novels", title: SOURCES.mc.name + " · Novelas", titleEn: SOURCES.mc.name + " · Novels", params: { page: 1, sort: "updated", type: "Novel" } }
+  ];
+  if (src === "mw") return [
+    { id: "mw-new", src: "mw", ref: "mw:latest", title: SOURCES.mw.name + " · Capítulos recientes", titleEn: SOURCES.mw.name + " · Latest chapters", params: { homeKey: "recent" } },
+    { id: "mw-pop", src: "mw", ref: "mw:pop", title: SOURCES.mw.name + " · Populares", titleEn: SOURCES.mw.name + " · Popular", params: { homeKey: "popular" } },
+    { id: "mw-nuevos", src: "mw", ref: "mw:new", title: SOURCES.mw.name + " · Recién agregados", titleEn: SOURCES.mw.name + " · Newly added", params: { homeKey: "fresh" } }
+  ];
   return [];
 }
 async function loadHomeShelves(src, en) {
@@ -3228,7 +5464,10 @@ async function probeCf(src, en, shelves, fallbackErr) {
 async function fetchOneRow(spec) {
   const a = adapter2(spec.src);
   let res;
-  if (spec.params.tops) res = await a.tops(spec.src, { page: spec.params.page, postsPerPage: spec.params.postsPerPage });
+  if (spec.params.homeKey && typeof a.homeSections === "function") {
+    const hs = await a.homeSections(spec.src);
+    res = { items: hs && hs[spec.params.homeKey] || [] };
+  } else if (spec.params.tops) res = await a.tops(spec.src, { page: spec.params.page, postsPerPage: spec.params.postsPerPage });
   else if (spec.params.latest) res = await a.latest(spec.src);
   else res = await a.list(spec.src, spec.params);
   const items = res.items.slice(0, 12).map(compactCard);
@@ -3239,8 +5478,8 @@ async function progressEntries() {
   const out = [];
   if (hasProgress()) {
     try {
-      const list4 = await kino.progress.list({ limit: 12 });
-      for (const e of Array.isArray(list4) ? list4 : []) {
+      const list10 = await kino.progress.list({ limit: 12 });
+      for (const e of Array.isArray(list10) ? list10 : []) {
         if (!e || e.done || !e.resume) continue;
         let resume;
         try {
@@ -3271,13 +5510,14 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     if (cached && cached.title) return cached;
   }
   const a = adapter2(p.src);
-  let d, chapters3 = [], next = null, totalCaps;
-  if (SOURCES[p.src].kind === "zonatmo" || SOURCES[p.src].kind === "zonatmoorg") {
+  let d, chapters9 = [], next = null, totalCaps;
+  const k = SOURCES[p.src].kind;
+  if (k === "olympus" || k === "leercapitulo" || k === "ikigai" || k === "lectorfenix" || k === "mhscans" || k === "manhwaweb" || SOURCES[p.src].kind === "zonatmo" || SOURCES[p.src].kind === "zonatmoorg") {
     const [dRes, cRes] = await Promise.allSettled([a.detail(p.src, p.a), a.chapters(p.src, p.a, { page: 1, postsPerPage: 50, order: "asc" })]);
     if (dRes.status === "rejected") throw dRes.reason;
     d = dRes.value;
     if (cRes.status === "fulfilled") {
-      chapters3 = cRes.value.items;
+      chapters9 = cRes.value.items;
       next = cRes.value.next;
     }
   } else {
@@ -3285,11 +5525,11 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     if (dRes.status === "rejected") throw dRes.reason;
     d = dRes.value;
     if (cRes.status === "fulfilled" && cRes.value && cRes.value.items && cRes.value.items.length) {
-      chapters3 = cRes.value.items;
+      chapters9 = cRes.value.items;
       next = cRes.value.next;
       totalCaps = cRes.value.total;
-    } else if (!chapters3.length) {
-      chapters3 = d.chapters || [];
+    } else if (!chapters9.length) {
+      chapters9 = d.chapters || [];
     }
   }
   const det = {
@@ -3303,7 +5543,7 @@ async function loadDetail(ref, { skipCache = false } = {}) {
     demography: d.demographyName,
     score: d.score,
     total: typeof totalCaps === "number" ? totalCaps : d.totalChapters,
-    chapters: chapters3.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title, pago: Boolean(c.pago) })),
+    chapters: chapters9.slice(0, 250).map((c) => ({ r: chapterRef(p.src, p.a, c.slug), n: c.number, t: c.title, pago: Boolean(c.pago) })),
     next,
     adult: d.adult
   };
@@ -3318,22 +5558,22 @@ async function loadChapter(ref, args, { skipCache = false } = {}) {
     if (cached && cached.pages && cached.pages.length) return withChapterMeta(cached, args);
     if (cached && cached.text && cached.text.length) return withChapterMeta(cached, args);
   }
-  if (isNovel(p.src)) {
-    const c2 = await novelChapter(p.src, p.a, p.b);
+  const c = isNovel(p.src) ? await novelChapter(p.src, p.a, p.b) : await adapter2(p.src).chapter(p.src, p.a, p.b);
+  if (c.text && c.text.length) {
     const data2 = {
       ref,
       src: p.src,
       mangaSlug: p.a,
       mr: mangaRef(p.src, p.a),
-      text: c2.text,
-      imgs: c2.imgs,
-      number: c2.number,
-      title: c2.title,
-      direction: c2.direction,
-      prev: c2.prev ? chapterRef(p.src, p.a, c2.prev) : null,
-      next: c2.next ? chapterRef(p.src, p.a, c2.next) : null,
-      total: Math.max(1, Math.ceil(c2.text.slice(0, 600).length / 12)),
-      ppages: Math.max(1, Math.ceil(c2.text.slice(0, 600).length / 12)),
+      text: c.text,
+      imgs: c.imgs,
+      number: c.number,
+      title: c.title,
+      direction: c.direction,
+      prev: c.prev ? chapterRef(p.src, p.a, c.prev) : null,
+      next: c.next ? chapterRef(p.src, p.a, c.next) : null,
+      total: Math.max(1, Math.ceil(c.text.slice(0, 600).length / 12)),
+      ppages: Math.max(1, Math.ceil(c.text.slice(0, 600).length / 12)),
       mode: "texto"
     };
     cacheSet(cacheKey("ch", ref), data2);
@@ -3344,8 +5584,6 @@ async function loadChapter(ref, args, { skipCache = false } = {}) {
     }
     return fin;
   }
-  const a = adapter2(p.src);
-  const c = await a.chapter(p.src, p.a, p.b);
   const data = {
     ref,
     src: p.src,
@@ -3435,8 +5673,8 @@ function panelSources(src, en) {
       variant: k === src ? "primary" : "secondary",
       icon: k === src ? "check" : isNovel(k) ? "list" : "magic",
       selected: k === src,
-      labelText: SOURCES[k].name + (isNovel(k) ? en ? " · novel" : " · novela" : ""),
-      labelTextEn: SOURCES[k].name + (isNovel(k) ? " · novel" : ""),
+      labelText: SOURCES[k].name + (isNovel(k) ? en ? " · novel" : " · novela" : isMixed(k) ? en ? " · mix" : " · mixta" : ""),
+      labelTextEn: SOURCES[k].name + (isNovel(k) ? " · novel" : isMixed(k) ? " · mix" : ""),
       onPressed: { event: "tabSrc", arg: k },
       flex: 1,
       fill: true
@@ -3446,7 +5684,7 @@ function panelSources(src, en) {
 }
 function buildHeroSlide(item, shelfTitle, firstRef, src, en, tv) {
   const nombre = SOURCES[src].name;
-  const sub = (shelfTitle ? shelfTitle + " · " : "") + (isNovel(src) ? en ? "Light Novel" : "Novela Ligera" : "Manga · Manhwa");
+  const sub = (shelfTitle ? shelfTitle + " · " : "") + (isNovel(src) ? en ? "Light Novel" : "Novela Ligera" : isMixed(src) ? en ? "Comics & Novels" : "Cómics y Novelas" : "Manga · Manhwa");
   const hasHttps = typeof item.p === "string" && item.p.indexOf("https://") === 0;
   return {
     type: "heroCard",
@@ -3578,7 +5816,7 @@ function viewMain(ctx) {
         { type: "CircleAvatar", icon: isNovel(src) ? "list" : "magic", radius: 16, backgroundColor: "primaryContainer", labelText: SOURCES[src].name },
         { type: "Column", flex: 1, gap: 4, children: [
           { type: "Text", text: SOURCES[src].name, style: "h4" },
-          { type: "Text", text: isNovel(src) ? en ? "Light Novels · Active source" : "Novelas Ligeras · Fuente activa" : en ? "Manga & Manhwa · Active source" : "Manga y Manhwa · Fuente activa", style: "caption", color: "muted" }
+          { type: "Text", text: isNovel(src) ? en ? "Light Novels · Active source" : "Novelas Ligeras · Fuente activa" : isMixed(src) ? en ? "Comics & Novels · Active source" : "Cómics y Novelas · Fuente activa" : en ? "Manga & Manhwa · Active source" : "Manga y Manhwa · Fuente activa", style: "caption", color: "muted" }
         ] },
         {
           type: "Button",
@@ -3622,7 +5860,7 @@ function viewMain(ctx) {
           children: [
             { type: "Row", mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [
               { type: "Text", text: "Elegir fuente", textEn: "Pick a source", style: "h3" },
-              { type: "Badge", text: "9 fuentes", textEn: "9 sources", color: "primary" }
+              { type: "Badge", text: Object.keys(SOURCES).length + " fuentes", textEn: Object.keys(SOURCES).length + " sources", color: "primary" }
             ] },
             ...panelSources(src, en),
             { type: "Text", text: "El panel se cierra solo a los 5 segundos o al tocar fuera.", textEn: "The panel closes on its own after 5 seconds or on a tap outside.", style: "caption", color: "muted" }
@@ -3916,6 +6154,19 @@ function siteUrlOf(src, slug) {
   if (kind === "madara") return SOURCES[src].host + "/novela/" + e + "/";
   if (kind === "devilnovels") return "https://devilnovels.com/" + e;
   if (kind === "zonatmoorg") return SOURCES[src].host + "/library/" + String(slug || "").split(".").map(encodeURIComponent).join("/") + "/";
+  if (kind === "olympus") {
+    const raw = String(slug || "");
+    const pref = raw.startsWith("n.") ? "novela-" : "comic-";
+    return SOURCES[src].host + "/series/" + pref + encodeURIComponent(raw.replace(/^[cn]\./, ""));
+  }
+  if (kind === "leercapitulo") {
+    const d = decodeLcSlug(slug);
+    return SOURCES[src].host + "/manga/" + encodeURIComponent(d.shortId) + "/" + encodeURIComponent(d.tail) + "/";
+  }
+  if (kind === "ikigai") return SOURCES[src].host + "/series/" + e + "/";
+  if (kind === "lectorfenix") return SOURCES[src].host + "/comics/" + e;
+  if (kind === "mhscans") return SOURCES[src].host + "/comics/" + e;
+  if (kind === "manhwaweb") return SOURCES[src].host + "/manhwa/" + e;
   return SOURCES[src].host + "/manga/" + e + "/";
 }
 function deviceCols(ctx) {
@@ -3943,8 +6194,8 @@ function descNode(overview, state, en) {
     ]
   };
 }
-function ordenarCaps(list4, orden) {
-  const conIdx = (list4 || []).map((c, i) => ({ c, i, n: Number(c.n) }));
+function ordenarCaps(list10, orden) {
+  const conIdx = (list10 || []).map((c, i) => ({ c, i, n: Number(c.n) }));
   conIdx.sort((a, b) => {
     const an = Number.isFinite(a.n), bn = Number.isFinite(b.n);
     if (an && bn && a.n !== b.n) return a.n - b.n;
@@ -4622,14 +6873,14 @@ async function screenEvent(ctx) {
     case "cap": {
       const ref = String(arg || "");
       try {
-        const chapter5 = await loadChapter(ref, { t: state && state.detail ? state.detail.title : void 0, p: state && state.detail ? state.detail.poster : void 0 });
-        chapter5.tk = ++navSeq;
-        const prev = storageProgress()[chapter5.mr];
+        const chapter11 = await loadChapter(ref, { t: state && state.detail ? state.detail.title : void 0, p: state && state.detail ? state.detail.poster : void 0 });
+        chapter11.tk = ++navSeq;
+        const prev = storageProgress()[chapter11.mr];
         if (prev && prev.cr === ref && (prev.page || 1) > 1) {
-          chapter5.resumePage = Math.min(prev.page, chapter5.total || prev.page);
+          chapter11.resumePage = Math.min(prev.page, chapter11.total || prev.page);
         }
         scrSave = { k: "", at: 0, page: 0, frac: 0 };
-        return { route: { push: "leer", params: { r: ref } }, state: { chapter: chapter5, imgPage: null, img: null, imgError: null, busyChapter: false } };
+        return { route: { push: "leer", params: { r: ref } }, state: { chapter: chapter11, imgPage: null, img: null, imgError: null, busyChapter: false } };
       } catch (e) {
         return { toast: errText(e) };
       }
@@ -4638,9 +6889,9 @@ async function screenEvent(ctx) {
       const ref = String(arg || "");
       const c = state && state.chapter;
       try {
-        const chapter5 = await loadChapter(ref, { t: c ? c.mTitle : void 0, p: c ? c.mPoster : void 0 });
-        chapter5.tk = ++navSeq;
-        return { state: { chapter: chapter5, imgPage: null, img: null, imgError: null, pagIdx: 0 } };
+        const chapter11 = await loadChapter(ref, { t: c ? c.mTitle : void 0, p: c ? c.mPoster : void 0 });
+        chapter11.tk = ++navSeq;
+        return { state: { chapter: chapter11, imgPage: null, img: null, imgError: null, pagIdx: 0 } };
       } catch (e) {
         return { toast: en ? "Could not open that chapter." : "No se pudo abrir ese capítulo." };
       }
@@ -4739,18 +6990,18 @@ async function handleOpen(ctx) {
   }
   if (args && args.r && args.m) {
     try {
-      const detail5 = await loadDetail(args.m);
+      const detail11 = await loadDetail(args.m);
       const prog = await readProgress(args.m);
-      return { route: { push: "detalle", params: { r: args.m } }, state: { detail: detail5, detailRef: args.m, prog, error: null, fav: Boolean(favsAll()[args.m]), bibTagCur: (biblioAll()[args.m] || {}).tag || null } };
+      return { route: { push: "detalle", params: { r: args.m } }, state: { detail: detail11, detailRef: args.m, prog, error: null, fav: Boolean(favsAll()[args.m]), bibTagCur: (biblioAll()[args.m] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
   }
   if (args && args.r) {
     try {
-      const detail5 = await loadDetail(args.r);
+      const detail11 = await loadDetail(args.r);
       const prog = await readProgress(args.r);
-      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail5, detailRef: args.r, prog, error: null, fav: Boolean(favsAll()[args.r]), bibTagCur: (biblioAll()[args.r] || {}).tag || null } };
+      return { route: { push: "detalle", params: { r: args.r } }, state: { detail: detail11, detailRef: args.r, prog, error: null, fav: Boolean(favsAll()[args.r]), bibTagCur: (biblioAll()[args.r] || {}).tag || null } };
     } catch (e) {
       return { route: { push: "buscar" }, state: { error: errText(e) } };
     }
@@ -4864,7 +7115,7 @@ export {
   home2 as home,
   screen,
   screenEvent,
-  search5 as search,
+  search11 as search,
   section,
   settingsStatus,
   validateSettings
