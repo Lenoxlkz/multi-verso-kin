@@ -39,12 +39,12 @@ test("v2.18.0: manifest y piezas nuevas", () => {
   assert.ok(dvSrc.includes("function lastNumberDe"), "falta lastNumberDe");
   assert.ok(dvSrc.includes("numDe(cs) || lastNumberDe(cs)"), "el número no usa el último número del slug");
   assert.ok(dvSrc.includes("RUTAS_FIJAS.test(cs2)"), "la paginación entra como capítulo");
-  // #2: pantalla dedicada por fuente
-  assert.ok(screenSrc.includes('route: "fuente"'), "el Ver más no abre la ruta fuente");
+  // #2: pantalla dedicada por categoría/fuente
+  assert.ok(screenSrc.includes('route: "fuente"'), "el catálogo no abre la ruta fuente");
   assert.ok(screenSrc.includes('case "fuente"'), "screen no despacha la ruta fuente");
-  assert.ok(screenSrc.includes('"Ver más de "'), "falta el botón Ver más en el Home");
+  assert.ok(!screenSrc.includes('"Ver más de " + SOURCES[src].name'), "no debe quedar el botón inferior Ver más de [fuente]");
   assert.ok(screenSrc.includes("Salir (volver al Home)"), "falta el botón de Salir");
-  assert.ok(screenSrc.includes("loadFuenteAll"), "falta la carga completa por fuente");
+  assert.ok(screenSrc.includes("loadFuenteAll"), "falta la carga por fuente");
   assert.ok(novelsSrc.includes("dvA.home(src, opts)"), "novelHome no pasa la opción full");
 });
 
@@ -100,17 +100,18 @@ test("v2.18.0 (#3c): slugs renombrados dan el número real y la paginación no e
   assert.equal(l1.total, 2, "la paginación y las rutas sin número no cuentan como capítulos");
 });
 
-test("v2.18.0 (#2): la pantalla dedicada de la fuente lleva Salir y el Home lleva Ver más", async () => {
+test("v2.18.0 (#2): la pantalla dedicada de la fuente lleva Salir y el Home enlaza por categoría", async () => {
   // sin estado cargado: esqueleto + Salir + Reintentar (la carga llega por el evento open)
   const v = await mod.screen({ route: { name: "fuente", args: { s: "dv" } }, lang: "es", device: "phone", state: {} });
   const s = JSON.stringify(v);
   assert.ok(s.includes("Salir (volver al Home)"), "la pantalla dedicada no tiene botón de Salir");
-  assert.ok(s.includes("DevilNovels · Todo"), "título de la pantalla dedicada");
+  assert.ok(s.includes("DevilNovels · "), "título de la pantalla dedicada");
   assert.ok(s.includes("Reintentar"), "sin datos debe poder reintentarse");
-  // el Home con estantes: el botón Ver más abre la ruta fuente con la fuente como argumento
-  const m = await mod.screen({ route: { name: "main" }, lang: "es", device: "phone", state: { hsrc: "dv", done: true, hrows: [{ id: "dv-ranking", title: "Ranking de novelas", items: [{ r: "dv:la-espada-del-vagabundo", t: "La espada del vagabundo", p: "https://devilnovels.com/espada.jpg" }] }] } });
+  // el Home con estantes: sin botón inferior repetido y cada fila con su ref de categoría
+  const m = await mod.screen({ route: { name: "main" }, lang: "es", device: "phone", state: { hsrc: "dv", done: true, hrows: [{ id: "dv-ranking", ref: "dv:ranking", title: "Ranking de novelas", items: [{ s: "dv|m|la-espada-del-vagabundo", t: "La espada del vagabundo", p: "https://devilnovels.com/espada.jpg" }] }] } });
   const sm = JSON.stringify(m);
-  assert.ok(sm.includes("Ver más de DevilNovels"), "el Home no tiene el botón Ver más");
-  assert.ok(sm.includes('\"route\": \"fuente\"') || sm.includes('"route":"fuente"'), "el Ver más no apunta a la ruta fuente");
-  assert.ok(sm.includes('"s": "dv"') || sm.includes('"s":"dv"'), "el Ver más no lleva la fuente como argumento");
+  assert.ok(!sm.includes("Ver más de DevilNovels"), "el botón inferior Ver más de DevilNovels debe haberse eliminado");
+  assert.ok(sm.includes('"ref":"dv:ranking"') || sm.includes('"ref": "dv:ranking"'), "el riel de categoría debe llevar su ref dv:ranking");
+  assert.ok(sm.includes('\"route\": \"fuente\"') || sm.includes('"route":"fuente"'), "el héroe apunta a la ruta fuente");
+  assert.ok(sm.includes('"s": "dv"') || sm.includes('"s":"dv"'), "el héroe lleva la fuente como argumento");
 });

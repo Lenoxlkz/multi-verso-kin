@@ -264,6 +264,7 @@ function normalizeForHost(node, lang) {
       out.icon = n.icon || null;
       out.label = localizeText(n, "label", lang);
       out.confirm = localizeText(n, "confirm", lang) || null;
+      if (n.loading) out.loading = true;
       break;
     case "image":
       out.url = n.url || "";
@@ -304,6 +305,10 @@ function normalizeForHost(node, lang) {
       out.size = n.size || "small";
       out.headers = n.headers || {};
       out.items = (n.items || []).filter(Boolean);
+      if (typeof n.ref === "string" && n.ref) out.ref = n.ref;
+      if (n.onEndReached) out.onEndReached = normalizeAction(n.onEndReached);
+      if (n.loadingMore) out.loadingMore = true;
+      if (n.done) out.done = true;
       break;
     case "errorState":
     case "emptyState":
@@ -318,6 +323,16 @@ function normalizeForHost(node, lang) {
     case "settings":
       out.keys = Array.isArray(n.keys) ? n.keys : null;
       out.onSaved = normalizeAction(n.onSaved);
+      break;
+    case "badge":
+      out.text = localizeText(n, "text", lang);
+      break;
+    case "avatar":
+      out.icon = n.icon || null;
+      out.text = localizeText(n, "text", lang);
+      break;
+    case "icon":
+      out.name = n.name || n.icon || null;
       break;
     case "spacer":
     case "divider":

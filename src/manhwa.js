@@ -100,10 +100,13 @@ export async function search(src, q) {
   };
 }
 
-/** Página N de «Explorar» (catálogo completo; `estado`: on-going | end | on-hold | canceled | upcoming). */
-export async function list(src, { page = 1, estado } = {}) {
+/** Página N de «Explorar» (catálogo completo; `estado`: on-going | end | on-hold | canceled | upcoming; `genero`: slug). */
+export async function list(src, { page = 1, estado, genero } = {}) {
   const path = page > 1 ? "/explorar/page/" + page + "/" : "/explorar/";
-  const url = join(src, path + (estado ? "?estado=" + encodeURIComponent(estado) : ""));
+  const qs = [];
+  if (estado) qs.push("estado=" + encodeURIComponent(estado));
+  if (genero) qs.push("genero=" + encodeURIComponent(genero));
+  const url = join(src, path + (qs.length ? "?" + qs.join("&") : ""));
   const r = await fetchText(url, { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "Manhwa");
   const cards = cardsOf(r.text, 30);

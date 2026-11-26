@@ -582,7 +582,8 @@
     .kino-rail-header-row {
       display: flex;
       align-items: center;
-      gap: 16px;
+      flex-wrap: wrap;
+      gap: 10px 14px;
       padding: 10px 0 14px;
     }
     .kino-rail-header {
@@ -595,8 +596,16 @@
     }
     .rail-hairline {
       flex: 1;
+      min-width: 24px;
       height: 1px;
       background: var(--border);
+    }
+    .rail-header-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
+      max-width: 100%;
     }
     .rail-count {
       font-size: 12px;
@@ -623,6 +632,100 @@
     }
     .rail-arrow-btn:hover { border-color: var(--accent); background: var(--surface-high); }
 
+    .rail-more-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      max-width: 100%;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--accent);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      transition: border-color 0.16s var(--ease-out), background 0.16s var(--ease-out), color 0.16s var(--ease-out), transform 0.14s var(--ease-out);
+    }
+    .rail-more-btn:hover {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 14%, var(--surface-high));
+    }
+    .rail-more-btn.at-end {
+      background: var(--accent);
+      color: var(--on-accent);
+      border-color: var(--accent);
+      box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 26%, transparent);
+    }
+    .rail-more-btn svg { flex-shrink: 0; }
+    .rail-more-btn span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .rail-end-card {
+      flex: 0 0 158px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      cursor: pointer;
+      text-align: left;
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-family: var(--font-sans);
+    }
+    .rail-end-box {
+      width: 100%;
+      aspect-ratio: 2 / 3;
+      border-radius: var(--radius-sm);
+      border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
+      background: radial-gradient(circle at 50% 28%, color-mix(in srgb, var(--accent) 16%, transparent), var(--surface));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 16px 12px;
+      text-align: center;
+      color: var(--text);
+      transition: border-color 0.18s var(--ease-out), background 0.18s var(--ease-out), transform 0.18s var(--ease-out);
+    }
+    .rail-end-card:hover .rail-end-box {
+      border-style: solid;
+      border-color: var(--accent);
+      background: radial-gradient(circle at 50% 28%, color-mix(in srgb, var(--accent) 24%, transparent), var(--surface-high));
+      transform: translateY(-2px);
+    }
+    .rail-end-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .rail-end-label {
+      font-size: 12.5px;
+      font-weight: 700;
+      line-height: 1.35;
+      color: var(--accent);
+    }
+    .rail-end-sub {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
     .kino-rail-track {
       display: flex;
       gap: 16px;
@@ -643,7 +746,11 @@
     @media (max-width: 767px) {
       .kino-rail-section { padding: 0 14px; }
       .kino-rail-header { font-size: 21px; }
+      .rail-hairline { display: none; }
+      .rail-header-actions { width: 100%; justify-content: space-between; margin-left: 0; }
       .rail-arrows { display: none; }
+      .rail-more-btn { font-size: 11.5px; height: 30px; padding: 0 10px; }
+      .rail-end-card { flex: 0 0 122px; }
       .kino-grid { padding: 8px 14px 16px; gap: 14px 10px; }
     }
 
@@ -812,8 +919,18 @@
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
       margin: 10px auto;
+      width: calc(100% - 48px);
       max-width: 1272px;
       overflow: hidden;
+    }
+    .kino-card .kino-text.h3, .kino-card .kino-text.h4 {
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+      margin: 0 !important;
+      width: auto !important;
+    }
+    @media (max-width: 767px) {
+      .kino-card { width: calc(100% - 28px); }
     }
 
     .kino-input-wrap {
@@ -2081,6 +2198,12 @@
           showToast(lang === "en" ? "Theme applied" : "Tema aplicado");
           return;
         }
+        if (go.browse && go.browse.ref) {
+          const refStr = String(go.browse.ref);
+          const srcGuess = refStr.split(":")[0] || "";
+          await handleGo({ screen: { route: "fuente", args: { s: srcGuess, ref: refStr, title: go.browse.title || "" } } });
+          return;
+        }
         if (go.url && go.url.href) {
           modalState = {
             title: go.url.title || (lang === "en" ? "Open external site" : "Abrir sitio externo"),
@@ -2359,7 +2482,10 @@
         if (style.elevation) el.style.boxShadow = "0 20px 56px rgba(0,0,0,0.68)";
         if (style.crossAxisAlignment === "stretch") el.style.alignItems = "stretch";
         if (style.crossAxisAlignment === "start") el.style.alignItems = "flex-start";
+        if (style.crossAxisAlignment === "center") el.style.alignItems = "center";
         if (style.mainAxisAlignment === "end") el.style.justifyContent = "flex-end";
+        if (style.mainAxisAlignment === "spaceBetween") el.style.justifyContent = "space-between";
+        if (style.mainAxisAlignment === "center") el.style.justifyContent = "center";
         if (style.span) el.style.gridColumn = `span ${style.span} / span ${style.span}`;
         if (style.positioned) {
           el.classList.add("kino-positioned");
@@ -2516,9 +2642,9 @@
         moreBtn.className = "kino-btn secondary";
         moreBtn.appendChild(svgIcon("menu_book", 15));
         const moreLbl = document.createElement("span");
-        moreLbl.textContent = lang === "en" ? `All from ${sObj.name}` : `Explorar ${sObj.name}`;
+        moreLbl.textContent = lang === "en" ? `Browse ${sObj.name}` : `Catálogo ${sObj.name}`;
         moreBtn.appendChild(moreLbl);
-        moreBtn.onclick = () => handleGo({ screen: { route: "fuente", args: { s: src } } });
+        moreBtn.onclick = () => handleGo({ screen: { route: "fuente", args: { s: src, ref: firstRailNode.ref || "" } } });
         actions.appendChild(moreBtn);
 
         left.appendChild(actions);
@@ -3752,22 +3878,51 @@
             track.className = "kino-rail-track";
             for (const it of node.items || []) track.appendChild(renderTitleCard(it, node.headers));
 
+            const cleanTitle = decodeEntities(node.title || "");
+            const moreLabel = (lang === "en" ? "More from " : "Ver más de ") + cleanTitle;
+            let moreBtnEl = null;
+
+            if (node.ref) {
+              const endCard = document.createElement("button");
+              endCard.type = "button";
+              endCard.className = "rail-end-card";
+              endCard.setAttribute("aria-label", moreLabel);
+              const endBox = document.createElement("div");
+              endBox.className = "rail-end-box";
+              const endIcon = document.createElement("span");
+              endIcon.className = "rail-end-icon";
+              endIcon.appendChild(svgIcon("chevron_right", 20));
+              const endTitle = document.createElement("div");
+              endTitle.className = "rail-end-label";
+              endTitle.textContent = moreLabel;
+              const endSub = document.createElement("div");
+              endSub.className = "rail-end-sub";
+              endSub.textContent = lang === "en" ? "Browse full category" : "Explorar catálogo completo";
+              endBox.append(endIcon, endTitle, endSub);
+              endCard.appendChild(endBox);
+              endCard.onclick = () => handleGo({ browse: { ref: node.ref, title: cleanTitle } });
+              track.appendChild(endCard);
+            }
+
             if (node.title) {
               const hRow = document.createElement("div");
               hRow.className = "kino-rail-header-row";
               const h = document.createElement("h2");
               h.className = "kino-rail-header";
               h.style.margin = "0";
-              h.textContent = decodeEntities(node.title);
+              h.textContent = cleanTitle;
               hRow.appendChild(h);
               const line = document.createElement("div");
               line.className = "rail-hairline";
               hRow.appendChild(line);
+
+              const rightGrp = document.createElement("div");
+              rightGrp.className = "rail-header-actions";
               const cnt = document.createElement("span");
               cnt.className = "rail-count tabular-nums";
               const cntNum = (node.items || []).length;
               cnt.textContent = `${cntNum} ${lang === "en" ? (cntNum === 1 ? "title" : "titles") : (cntNum === 1 ? "título" : "títulos")}`;
-              hRow.appendChild(cnt);
+              rightGrp.appendChild(cnt);
 
               const arrows = document.createElement("div");
               arrows.className = "rail-arrows";
@@ -3784,9 +3939,36 @@
               rBtn.appendChild(svgIcon("chevron_right", 15));
               rBtn.onclick = () => track.scrollBy({ left: 520, behavior: "smooth" });
               arrows.append(lBtn, rBtn);
-              hRow.appendChild(arrows);
+              rightGrp.appendChild(arrows);
+
+              if (node.ref) {
+                moreBtnEl = document.createElement("button");
+                moreBtnEl.type = "button";
+                moreBtnEl.className = "rail-more-btn";
+                moreBtnEl.title = moreLabel;
+                moreBtnEl.setAttribute("aria-label", moreLabel);
+                const lblSpan = document.createElement("span");
+                lblSpan.textContent = moreLabel;
+                moreBtnEl.appendChild(lblSpan);
+                moreBtnEl.appendChild(svgIcon("chevron_right", 14));
+                moreBtnEl.onclick = () => handleGo({ browse: { ref: node.ref, title: cleanTitle } });
+                rightGrp.appendChild(moreBtnEl);
+              }
+
+              hRow.appendChild(rightGrp);
               sec.appendChild(hRow);
             }
+
+            if (moreBtnEl) {
+              const syncEndState = () => {
+                const scrollable = track.scrollWidth > track.clientWidth + 24;
+                const atEnd = !scrollable || (track.scrollLeft + track.clientWidth >= track.scrollWidth - 28);
+                moreBtnEl.classList.toggle("at-end", atEnd && scrollable);
+              };
+              track.addEventListener("scroll", syncEndState, { passive: true });
+              requestAnimationFrame(syncEndState);
+            }
+
             sec.appendChild(track);
             return sec;
           }
@@ -3949,7 +4131,18 @@
           if (routeName === "detalle" && top?.state?.detail) {
             bodyWrap.appendChild(renderDetailView(top));
           } else if (root.body) {
-            bodyWrap.appendChild(renderNode(root.body));
+            const renderedBody = renderNode(root.body);
+            if (routeName === "fuente" && !renderedBody.classList?.contains("kino-scroll")) {
+              const scWrap = document.createElement("div");
+              scWrap.className = "kino-scroll";
+              if (renderedBody.style) renderedBody.style.flex = "none";
+              const gridInside = renderedBody.querySelector?.(".kino-grid");
+              if (gridInside) gridInside.style.flex = "none";
+              scWrap.appendChild(renderedBody);
+              bodyWrap.appendChild(scWrap);
+            } else {
+              bodyWrap.appendChild(renderedBody);
+            }
           }
           appEl.appendChild(bodyWrap);
         } else {

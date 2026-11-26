@@ -56,7 +56,7 @@ function genresOf(m) {
 }
 
 // Géneros por id, según la configuración pública del sitio (siteConfig.datas.genres, capturada en 2026-11).
-const ZT_GENRES = {
+export const ZT_GENRES = {
   "16": "Romance", "4": "Comedia", "15": "Drama", "5": "Fantasía", "2": "Acción", "103": "Boys Love",
   "33": "Recuentos de la vida", "23": "Vida Escolar", "3": "Aventura", "32": "Ecchi", "7": "Sobrenatural",
   "60": "Reencarnación", "8": "Harem", "6": "Magia", "36": "Psicológico", "40": "Misterio",

@@ -724,9 +724,26 @@ export async function search(src, q) {
   return { items: asItems(cards.slice(0, 30)) };
 }
 
+function dvCleanCards(html, limit) {
+  const cards = novelCards(html, limit);
+  // seguro anti-portadas repetidas (RCA 2026-11): si la mitad o más de las tarjetas con
+  // imagen comparten LA MISMA URL, es un sustituto que se coló, no diseño del sitio —
+  // mejor quitarlas todas que enseñar la misma portada en media sección
+  const conImg = cards.filter((c) => c.poster);
+  if (conImg.length >= 4) {
+    const cuenta = {};
+    let max = 0;
+    for (const c of conImg) {
+      cuenta[c.poster] = (cuenta[c.poster] || 0) + 1;
+      if (cuenta[c.poster] > max) max = cuenta[c.poster];
+    }
+    if (max * 2 > conImg.length) for (const c of cards) c.poster = undefined;
+  }
+  return cards;
+}
+
 export async function home(src, opts = {}) {
-  // las secciones nativas del sitio: su ranking (home), su listado y sus finalizadas;
-  // «full» (pantalla dedicada «Ver más») trae 60 por sección en vez de 18
+  // las secciones nativas del sitio: su ranking (home), su listado y sus finalizadas
   const n0 = opts && opts.full ? 60 : 18;
   const settled = await Promise.allSettled([
     getHtml("/"),
@@ -734,32 +751,49 @@ export async function home(src, opts = {}) {
     getHtml("/novelas-finalizadas"),
   ]);
   const secs = [
-    { id: "ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: n0 },
-    { id: "todas", t: "Listado de novelas", te: "All novels", i: 1, n: n0 },
-    { id: "finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: n0 },
+    { id: "ranking", ref: "dv:ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: n0 },
+    { id: "todas", ref: "dv:todas", t: "Listado de novelas", te: "All novels", i: 1, n: n0 },
+    { id: "finalizadas", ref: "dv:finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: n0 },
   ];
   const out = [];
   for (const s of secs) {
     const p = settled[s.i];
     if (p.status !== "fulfilled" || !p.value) continue;
-    const cards = novelCards(p.value, s.n);
-    // seguro anti-portadas repetidas (RCA 2026-11): si la mitad o más de las tarjetas con
-    // imagen comparten LA MISMA URL, es un sustituto que se coló, no diseño del sitio —
-    // mejor quitarlas todas que enseñar la misma portada en media sección
-    const conImg = cards.filter((c) => c.poster);
-    if (conImg.length >= 4) {
-      const cuenta = {};
-      let max = 0;
-      for (const c of conImg) {
-        cuenta[c.poster] = (cuenta[c.poster] || 0) + 1;
-        if (cuenta[c.poster] > max) max = cuenta[c.poster];
-      }
-      if (max * 2 > conImg.length) for (const c of cards) c.poster = undefined;
-    }
-    const items = asItems(cards);
-    if (items.length) out.push({ id: "dv-" + s.id, title: s.t, titleEn: s.te, items });
+    const items = asItems(dvCleanCards(p.value, s.n));
+    if (items.length) out.push({ id: "dv-" + s.id, ref: s.ref, title: s.t, titleEn: s.te, items });
   }
   return out;
+}
+
+const DV_BROWSE_CACHE = new Map();
+export async function browse(src, kind, cursor) {
+  const page = Math.max(1, Number(cursor) || 1);
+  const per = 24;
+  const k = kind === "pop" || kind === "ranking" ? "ranking"
+    : kind === "finalizadas" || kind === "finished" ? "finalizadas"
+    : "todas";
+  const basePath = k === "ranking" ? "/" : k === "finalizadas" ? "/novelas-finalizadas" : "/listado-de-novelas";
+  let all = DV_BROWSE_CACHE.get(k);
+  if (!all || Date.now() - all.ts > 300000) {
+    const html = await getHtml(basePath, { what: "el catálogo de DevilNovels" });
+    all = { items: asItems(dvCleanCards(html, 480)), ts: Date.now() };
+    if (all.items.length) DV_BROWSE_CACHE.set(k, all);
+  }
+  const offset = (page - 1) * per;
+  if (offset < all.items.length) {
+    const slice = all.items.slice(offset, offset + per);
+    const hasMoreInCache = offset + per < all.items.length;
+    return { items: slice, next: hasMoreInCache ? String(page + 1) : null };
+  }
+  // Si el listado paginara por /page/N/ en la web, intenta la página siguiente
+  if (page > 1 && basePath !== "/") {
+    try {
+      const htmlP = await getHtml(basePath + "/page/" + page + "/", { what: "el catálogo de DevilNovels" });
+      const itemsP = asItems(dvCleanCards(htmlP, per));
+      return { items: itemsP, next: itemsP.length >= 16 && page < 20 ? String(page + 1) : null };
+    } catch { /* sin página extra */ }
+  }
+  return { items: [], next: null };
 }
 
 export async function detail(src, slug) {

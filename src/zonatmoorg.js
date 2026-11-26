@@ -33,10 +33,11 @@ async function getHtml(path, timeoutMs) {
 }
 
 /** La rejilla de /biblioteca llega como JSON { html: fragmento } (como pide la web con XHR). */
-async function libHtml(page, order, q, dir) {
-  const url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") +
+async function libHtml(page, order, q, dir, genreId) {
+  let url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") +
     "&filter_by=title&order_item=" + (order || "likes_count") +
     "&order_dir=" + (dir === "asc" ? "asc" : "desc") + "&_pg=1&page=" + page);
+  if (genreId) url += "&genders[]=" + encodeURIComponent(String(genreId));
   const r = await fetchText(url, {
     heads: {
       Accept: "application/json, text/javascript, */*; q=0.01",
@@ -266,12 +267,13 @@ function chapterSlugDe(s) {
 
 const ORDEN = { new: "created_at", score: "likes_count", az: "title", old: "created_at" };
 
-export async function list(src, { page = 1, order = "new", search, postsPerPage = 24 } = {}) {
+export async function list(src, { page = 1, order = "new", search, genreId, postsPerPage = 24 } = {}) {
   const item = ORDEN[order] || "likes_count";
   const dir = order === "az" || order === "old" ? "asc" : "desc";
-  const html = await libHtml(page, item, search || "", dir);
+  const html = await libHtml(page, item, search || "", dir, genreId);
   const cards = seriesCards(html, postsPerPage || 24);
-  return { items: cardsToItems(src, cards), next: cards.length >= (postsPerPage || 24) && page < 30 ? String(page + 1) : null };
+  const hasNext = cards.length >= Math.min(16, postsPerPage || 24) && page < 30;
+  return { items: cardsToItems(src, cards), next: hasNext ? String(page + 1) : null };
 }
 
 export async function tops(src, { page = 1, postsPerPage = 24 } = {}) {

@@ -331,6 +331,7 @@ function msCookie() {
 // src/zonatmo.js
 var zonatmo_exports = {};
 __export(zonatmo_exports, {
+  ZT_GENRES: () => ZT_GENRES,
   chapter: () => chapter,
   chapters: () => chapters,
   detail: () => detail,
@@ -551,15 +552,308 @@ async function login(src, email, password) {
   }
 }
 
-// src/manhwa.js
-var manhwa_exports = {};
-__export(manhwa_exports, {
+// src/zonatmoorg.js
+var zonatmoorg_exports = {};
+__export(zonatmoorg_exports, {
   chapter: () => chapter2,
+  chapters: () => chapters2,
   detail: () => detail2,
   latest: () => latest,
   list: () => list2,
   login: () => login2,
-  search: () => search2
+  search: () => search2,
+  tops: () => tops2
+});
+var HOST = SOURCES.zo.host;
+var MAX_CAPS = 490;
+async function getHtml(path, timeoutMs) {
+  const r = await fetchText(join("zo", path), {
+    heads: { Accept: "text/html", Referer: HOST + "/" },
+    timeoutMs: timeoutMs || 45e3
+  });
+  if (!r.ok) {
+    const e = new Error("HTTP " + r.status);
+    if (r.status === 404) {
+      e.code = "not_found";
+      e.userMessage = "Esta obra no está disponible en ZonaTMO.org.";
+    }
+    netError(e, "ZonaTMO.org");
+  }
+  return r.text;
+}
+async function libHtml(page, order, q, dir, genreId) {
+  let url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") + "&filter_by=title&order_item=" + (order || "likes_count") + "&order_dir=" + (dir === "asc" ? "asc" : "desc") + "&_pg=1&page=" + page);
+  if (genreId) url += "&genders[]=" + encodeURIComponent(String(genreId));
+  const r = await fetchText(url, {
+    heads: {
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      Referer: HOST + "/biblioteca",
+      "X-Requested-With": "XMLHttpRequest"
+    },
+    timeoutMs: 25e3
+  });
+  if (!r.ok) netError(new Error("HTTP " + r.status), "ZonaTMO.org (biblioteca)");
+  let frag = "";
+  const j = r.text.indexOf("{");
+  if (j >= 0) {
+    try {
+      frag = JSON.parse(r.text.slice(j)).html || "";
+    } catch {
+    }
+  }
+  return frag || r.text;
+}
+function clean(s) {
+  return String(s).replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ").replace(/&#\d+;/g, "").replace(/\s+/g, " ").trim();
+}
+function absUrl(u) {
+  u = String(u || "").trim();
+  if (!u || /^data:/.test(u)) return "";
+  if (u.indexOf("//") === 0) return "https:" + u;
+  if (u.indexOf("/") === 0) return HOST + u;
+  return u;
+}
+function natCmp(a, b) {
+  const A = String(a).match(/\d+|\D+/g) || [], B = String(b).match(/\d+|\D+/g) || [];
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i] || "", y = B[i] || "";
+    if (/^\d+$/.test(x) && /^\d+$/.test(y)) {
+      const d = parseInt(x, 10) - parseInt(y, 10);
+      if (d) return d;
+    } else {
+      const c = x.localeCompare(y);
+      if (c) return c;
+    }
+  }
+  return 0;
+}
+function deSlug(slug) {
+  return String(slug).split(".").join("/");
+}
+function seriesCards(html, max) {
+  const out = [], seen = {};
+  const re = /href="(?:https:\/\/zonatmo\.org)?\/library\/([a-z_-]+)\/(\d+)\/([a-z0-9-]+)\/?"/g;
+  let m;
+  while ((m = re.exec(html)) !== null && out.length < (max || 40)) {
+    const type = m[1], id = m[2], name = m[3];
+    if (seen[id] || type === "page") continue;
+    seen[id] = true;
+    if (type === "novel" || type === "novela") continue;
+    const win = html.slice(m.index, m.index + 3500);
+    let title = "";
+    const th = win.match(/<h4[^>]*\btitle="([^"]{1,200})"/) || win.match(/<h4[^>]*>\s*([^<]{1,200})</);
+    if (th) title = clean(th[1]);
+    if (!title) title = name.replace(/-/g, " ");
+    let poster = "";
+    const im = win.match(/<img[^>]+(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/);
+    if (im) poster = absUrl(im[1]);
+    if (!poster) {
+      const bg = win.match(/data-bg="([^"]+)"/);
+      if (bg) poster = absUrl(bg[1]);
+    }
+    if (!poster) {
+      const st = win.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\s*\)/);
+      if (st) poster = absUrl(st[1]);
+    }
+    out.push({ slug: type + "." + id + "." + name, poster, title });
+  }
+  return out;
+}
+function cardsToItems(src, cards) {
+  return cards.map((c) => toItem(src, { slug: c.slug, title: c.title, poster: c.poster })).filter(Boolean);
+}
+function chapterList(html) {
+  const map = /* @__PURE__ */ new Map();
+  const rowRe = /<li[^>]*upload-link[^>]*>/g;
+  let m;
+  while ((m = rowRe.exec(html)) !== null) {
+    const end = html.indexOf("</li>", m.index);
+    const row = html.slice(m.index, end > 0 ? end : m.index + 6e3);
+    const num = ((row.match(/data-chapter-number="([^"]*)"/) || row.match(/class="chapter-number"[^>]*data-number="([^"]*)"/) || [])[1] || "").trim();
+    const numN = (num.match(/\d+(?:\.\d+)?/) || [""])[0];
+    const numL = numN && numN.indexOf(".") >= 0 ? String(parseFloat(numN)) : numN;
+    const upRe = /href="(?:https:\/\/zonatmo\.org)?\/view_uploads\/(\d+)\/?"/g;
+    let u;
+    while ((u = upRe.exec(row)) !== null) {
+      const id = u[1];
+      if (map.has(id)) continue;
+      const near = row.slice(Math.max(0, u.index - 600), u.index + 600);
+      const sm = near.match(/href="[^"]*\/groups\/[^"]*"[^>]*>([^<]{1,60})</);
+      const scan = sm ? clean(sm[1]) : "";
+      map.set(id, { id, num: numL || id, scan });
+    }
+  }
+  if (!map.size) {
+    const re = /href="(?:https:\/\/zonatmo\.org)?\/view_uploads\/(\d+)\/?"/g;
+    let u;
+    while ((u = re.exec(html)) !== null) {
+      if (map.has(u[1])) continue;
+      const near = html.slice(Math.max(0, u.index - 500), u.index + 500);
+      const numN = ((near.match(/data-chapter-number="([^"]*)"/) || near.match(/Cap[ií]tulo\s*(\d+(?:\.\d+)?)/i) || [])[1] || "").trim() || u[1];
+      map.set(u[1], { id: u[1], num: numN, scan: "" });
+    }
+  }
+  const arr = [...map.values()];
+  arr.sort((a, b) => natCmp(a.num, b.num) || (a.scan || "").localeCompare(b.scan || ""));
+  return arr.slice(0, MAX_CAPS);
+}
+var SERIE_CACHE = /* @__PURE__ */ new Map();
+var INFLIGHT_SERIE = /* @__PURE__ */ new Map();
+var SERIE_TTL = 6e5;
+function serieCachePut(slug, chapters3) {
+  SERIE_CACHE.set(slug, { chapters: chapters3, ts: Date.now() });
+  if (SERIE_CACHE.size > 10) {
+    const first = SERIE_CACHE.keys().next().value;
+    SERIE_CACHE.delete(first);
+  }
+}
+async function fetchSeriesHtml(slug) {
+  let p = INFLIGHT_SERIE.get(slug);
+  if (!p) {
+    p = getHtml("/library/" + deSlug(slug) + "/").finally(() => {
+      if (INFLIGHT_SERIE.get(slug) === p) INFLIGHT_SERIE.delete(slug);
+    });
+    INFLIGHT_SERIE.set(slug, p);
+  }
+  return p;
+}
+async function chaptersDe(slug, html0) {
+  const c = SERIE_CACHE.get(slug);
+  if (c && Date.now() - c.ts < SERIE_TTL) return c.chapters;
+  const html = html0 || await fetchSeriesHtml(slug);
+  const chapters3 = chapterList(html);
+  if (chapters3.length) serieCachePut(slug, chapters3);
+  return chapters3;
+}
+function seriesMeta(html, slug) {
+  const pick = (re) => {
+    const m = html.match(re);
+    return m ? clean(m[1]) : "";
+  };
+  let poster = "";
+  const im = html.match(/<img[^>]*class="[^"]*book-thumbnail[^"]*"[^>]*>/);
+  if (im) poster = absUrl((im[0].match(/(?:data-src|src)="([^"]+)"/) || [])[1]);
+  if (!poster) poster = pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/);
+  let overview = "";
+  const sy = html.match(/id="manga-synopsis"[^>]*>([\s\S]{0,3000}?)<\/(?:p|div)>/);
+  if (sy) overview = clean(sy[1].replace(/<[^>]+>/g, " "));
+  if (!overview) overview = pick(/property="og:description"[^>]*content="([^"]+)"/);
+  const genres = [];
+  const gre = /href="[^"]*\/tag\/[^"]*"[^>]*>([^<]{1,50})</g;
+  let g;
+  while ((g = gre.exec(html)) !== null && genres.length < 20) {
+    const t = clean(g[1]);
+    if (t && genres.indexOf(t) < 0) genres.push(t);
+  }
+  return {
+    slug,
+    title: pick(/<h1[^>]*class="[^"]*element-title[^"]*"[^>]*>([^<]{1,200})</) || pick(/property="og:title"[^>]*content="([^"]+)"/) || deSlug(slug).split("/")[2].replace(/-/g, " "),
+    poster: poster || void 0,
+    overview: overview.slice(0, 600) || void 0,
+    genres: genres.slice(0, 5)
+  };
+}
+function readerImages(html, uploadId) {
+  const out = [], seen = {};
+  const re = new RegExp(`https?:\\/\\/[^"'\\s>]+\\/chapters\\/` + uploadId + "\\/\\d+\\.(?:webp|jpe?g|png|avif|gif)", "g");
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    if (seen[m[0]]) continue;
+    seen[m[0]] = true;
+    out.push(m[0]);
+  }
+  if (!out.length) {
+    const re2 = /<img[^>]*class="[^"]*reader-image[^"]*"[^>]*>/g;
+    let t;
+    while ((t = re2.exec(html)) !== null) {
+      const src = (t[0].match(/(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/) || [])[1];
+      if (!src || seen[src]) continue;
+      seen[src] = true;
+      const u = absUrl(src);
+      if (u) out.push(u);
+    }
+  }
+  const num = (u) => parseInt((u.match(/\/(\d+)\.[a-z0-9]+(?:\?|$)/i) || [])[1], 10) || 0;
+  out.sort((a, b) => num(a) - num(b));
+  return out;
+}
+function chapterSlugDe(s) {
+  const m = String(s || "").match(/^up-(\d+)\.n(.+)$/);
+  return m ? { id: m[1], num: m[2] } : null;
+}
+var ORDEN = { new: "created_at", score: "likes_count", az: "title", old: "created_at" };
+async function list2(src, { page = 1, order = "new", search: search6, genreId, postsPerPage = 24 } = {}) {
+  const item = ORDEN[order] || "likes_count";
+  const dir = order === "az" || order === "old" ? "asc" : "desc";
+  const html = await libHtml(page, item, search6 || "", dir, genreId);
+  const cards = seriesCards(html, postsPerPage || 24);
+  const hasNext = cards.length >= Math.min(16, postsPerPage || 24) && page < 30;
+  return { items: cardsToItems(src, cards), next: hasNext ? String(page + 1) : null };
+}
+async function tops2(src, { page = 1, postsPerPage = 24 } = {}) {
+  return list2(src, { page, order: "score", postsPerPage });
+}
+async function latest(src) {
+  return list2(src, { page: 1, order: "new", postsPerPage: 24 });
+}
+async function search2(src, q, { page = 1, postsPerPage = 24 } = {}) {
+  return list2(src, { page, order: "likes_count", search: q, postsPerPage });
+}
+async function detail2(src, slug) {
+  const html = await fetchSeriesHtml(slug);
+  const meta = seriesMeta(html, slug);
+  const chapters3 = await chaptersDe(slug, html);
+  return { ...meta, totalChapters: chapters3.length };
+}
+async function chapters2(src, slug, { order = "asc" } = {}) {
+  const list0 = await chaptersDe(slug);
+  const arr = list0.slice();
+  if (order === "desc") arr.reverse();
+  return {
+    items: arr.map((c) => ({
+      id: "up-" + c.id + ".n" + c.num,
+      slug: "up-" + c.id + ".n" + c.num,
+      number: c.num,
+      title: "Capítulo " + c.num + (c.scan ? " · " + c.scan : ""),
+      group: c.scan || void 0,
+      pago: false
+    })),
+    next: null,
+    // el HTML de la obra trae todos los capítulos: no hay paginación
+    total: arr.length
+  };
+}
+async function chapter2(src, slug, chapterSlug) {
+  const ch = chapterSlugDe(chapterSlug);
+  if (!ch) netError({ message: "capítulo desconocido" }, "el capítulo");
+  const html = await getHtml("/view_uploads/" + ch.id + "/", 45e3);
+  const pages = readerImages(html, ch.id);
+  if (!pages.length) netError({ message: "sin páginas" }, "las páginas del capítulo");
+  let prev = null, next = null;
+  try {
+    const lista = await chaptersDe(slug);
+    const i = lista.findIndex((x) => x.id === ch.id);
+    if (i >= 0) {
+      if (i > 0) prev = "up-" + lista[i - 1].id + ".n" + lista[i - 1].num;
+      if (i < lista.length - 1) next = "up-" + lista[i + 1].id + ".n" + lista[i + 1].num;
+    }
+  } catch {
+  }
+  return { pages, number: ch.num, title: "Capítulo " + ch.num, direction: "ltr", prev, next };
+}
+async function login2() {
+  netError({ message: "ZonaTMO.org no usa cuentas: el sitio público no las pide" }, "el inicio de sesión");
+}
+
+// src/manhwa.js
+var manhwa_exports = {};
+__export(manhwa_exports, {
+  chapter: () => chapter3,
+  detail: () => detail3,
+  latest: () => latest2,
+  list: () => list3,
+  login: () => login3,
+  search: () => search3
 });
 function heads() {
   const c = msCookie();
@@ -636,7 +930,7 @@ function cardsOf(html, limit) {
 function asItems(src, cards) {
   return cards.map((c) => toItem(src, { slug: c.slug, title: c.title, poster: c.cover })).filter(Boolean);
 }
-async function search2(src, q) {
+async function search3(src, q) {
   const { ok, body } = await fetchJson(join(src, "/api/search/?q=" + encodeURIComponent(String(q).slice(0, 100))), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!ok || !body || !Array.isArray(body.results)) return { items: [], next: null, degraded: true };
   return {
@@ -644,20 +938,23 @@ async function search2(src, q) {
     next: null
   };
 }
-async function list2(src, { page = 1, estado } = {}) {
+async function list3(src, { page = 1, estado, genero } = {}) {
   const path = page > 1 ? "/explorar/page/" + page + "/" : "/explorar/";
-  const url = join(src, path + (estado ? "?estado=" + encodeURIComponent(estado) : ""));
+  const qs = [];
+  if (estado) qs.push("estado=" + encodeURIComponent(estado));
+  if (genero) qs.push("genero=" + encodeURIComponent(genero));
+  const url = join(src, path + (qs.length ? "?" + qs.join("&") : ""));
   const r = await fetchText(url, { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "Manhwa");
   const cards = cardsOf(r.text, 30);
   return { items: asItems(src, cards), next: cards.length >= 15 ? String(page + 1) : null };
 }
-async function latest(src) {
+async function latest2(src) {
   const r = await fetchText(join(src, "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) netError(new Error("HTTP " + r.status), "la portada de Manhwa");
   return { items: asItems(src, cardsOf(r.text, 24)), next: null };
 }
-async function detail2(src, slug) {
+async function detail3(src, slug) {
   const r = await fetchText(join(src, "/manga/" + slug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
@@ -704,7 +1001,7 @@ function capNum(s) {
   const n = Number(String(s).replace(/^capitulo-/, ""));
   return Number.isFinite(n) ? n : NaN;
 }
-async function chapter2(src, slug, chapterSlug) {
+async function chapter3(src, slug, chapterSlug) {
   const r = await fetchText(join(src, "/manga/" + slug + "/" + chapterSlug + "/"), { heads: heads(), timeoutMs: timeoutFor(src) });
   if (!r.ok) {
     const e = new Error("HTTP " + r.status);
@@ -761,7 +1058,7 @@ async function chapter2(src, slug, chapterSlug) {
     next
   };
 }
-async function login2(src, user, password) {
+async function login3(src, user, password) {
   try {
     const r = await kino.fetch(join(src, "/api/auth/login/"), {
       method: "POST",
@@ -782,9 +1079,9 @@ async function login2(src, user, password) {
 }
 
 // src/devilnovels.js
-var MAX_CAPS = 800;
+var MAX_CAPS2 = 800;
 var RUTAS_FIJAS = /^(listado-de-novelas|novelas-finalizadas|novelas-nuevas|ultimas-actualizaciones|top-vistas|top-lectores|comentarios|comentarios-recientes|comment|leer-ahora|imagenes|inicio|home|index|ranking|buscar|search|acortador|descargas|membership-join|membership-account|membership-checkout|membership-levels|memberships?|membresia|membresias|suscripcion|suscribete|subscribe|mi-cuenta|mi-login|mi-registro|mi-recuperar|mi-perfil|mi-lista|mi-historial|mi-activar|account|cuenta|perfil|usuario|checkout|payments|invoice|carrito|cart|wishlist|favoritos|favoritas|wp-login|login|signin|sign-in|signup|sign-up|signout|logout|register|registro|registrarse|registrar|iniciar-sesion|crear-cuenta|entrar|salir|recuperar|forgot-password|lostpassword|lost-password|reset-password|activate|activation|join|join-us|joinus|dmca|politica-de-privacidad|politica-privacidad|politica-de-cookies|terminos|terminos-y-condiciones|condiciones|aviso-legal|privacidad|contacto|nosotros|about|ayuda|help|faq|novela|novelas|genero|generos|genre|genres|author|tag|category|feed|page|amp|wp-content|wp-admin|wp-json|wp-includes)(\/|$)/i;
-async function getHtml(path, { what = "DevilNovels", timeout } = {}) {
+async function getHtml2(path, { what = "DevilNovels", timeout } = {}) {
   const r = await fetchText("https://devilnovels.com" + path, {
     heads: { Accept: "text/html", Referer: "https://devilnovels.com/" },
     // 45 s como zonatmo.org: el home y las fichas son páginas de WordPress pesadas (portadas,
@@ -816,7 +1113,7 @@ function unescapeHtml(t) {
     }
   });
 }
-function clean(s) {
+function clean2(s) {
   return unescapeHtml(String(s)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 function numDe(slugCap) {
@@ -868,7 +1165,7 @@ function novelCards(html, limit) {
     const slug = m[1];
     if (seen[slug] || !esNovelaSlug(slug)) continue;
     const attrs = m[2];
-    const texto = clean(m[3]);
+    const texto = clean2(m[3]);
     let inner = "";
     const cierre = html.slice(m.index, m.index + 4600).search(/<\/a[\s>]/i);
     const gt = m.index + m[0].length - m[3].length - 2;
@@ -878,32 +1175,32 @@ function novelCards(html, limit) {
     }
     let title = "";
     const tA = /(?:^|\s)title="([^"]{3,200})"/i.exec(attrs);
-    if (tA) title = clean(tA[1]);
+    if (tA) title = clean2(tA[1]);
     if (title.length < 3 && texto.length >= 3 && !esContador(texto)) title = texto.slice(0, 200);
     if (title.length < 3 && inner) {
       const hi = inner.match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
-      if (hi) title = clean(hi[1]);
+      if (hi) title = clean2(hi[1]);
     }
     if (title.length < 3 && inner) {
       const sc = inner.match(/<(?:h[1-6]|span|div|p)[^>]*class="[^"]*(?:post-title|entry-title|titulo|title)[^"]*"[^>]*>\s*([^<]{3,200})</i);
-      if (sc) title = clean(sc[1]);
+      if (sc) title = clean2(sc[1]);
     }
     if (title.length < 3 && inner) {
-      const tx = clean(inner);
+      const tx = clean2(inner);
       if (tx.length >= 3 && !esContador(tx)) title = tx.slice(0, 200);
     }
     if (title.length < 3) {
       const h2 = html.slice(m.index, m.index + 700).match(/<h[1-6][^>]*>\s*([^<]{3,200})</i);
-      if (h2) title = clean(h2[1]);
+      if (h2) title = clean2(h2[1]);
     }
     if (title.length < 3) {
       const al = /(?:^|\s)alt="([^"]{3,200})"/i.exec(attrs);
-      if (al) title = clean(al[1]);
+      if (al) title = clean2(al[1]);
     }
     if (title.length < 3 && inner) {
       const im = inner.match(/<img\b[^>]*>/i);
       const al2 = im ? /(?:^|\s)alt="([^"]{3,200})"/i.exec(im[0]) : null;
-      if (al2) title = clean(al2[1]);
+      if (al2) title = clean2(al2[1]);
     }
     if (title.length < 3) title = slug.replace(/-/g, " ");
     title = quitaVistas(title);
@@ -936,7 +1233,7 @@ var FICHA_CACHE = /* @__PURE__ */ new Map();
 async function fichaDe(slug) {
   const c = FICHA_CACHE.get(slug);
   if (c && Date.now() - c.ts < FICHA_TTL) return c.html;
-  const html = await getHtml("/" + slug + "/", { what: "la novela en DevilNovels" });
+  const html = await getHtml2("/" + slug + "/", { what: "la novela en DevilNovels" });
   if (FICHA_CACHE.size > 12) FICHA_CACHE.delete(FICHA_CACHE.keys().next().value);
   FICHA_CACHE.set(slug, { html, ts: Date.now() });
   return html;
@@ -1136,7 +1433,7 @@ async function enumFichaPaginas(e, slug) {
   }
   const lista = [...urls].slice(0, 40);
   for (let i = 0; i < lista.length; i += 4) {
-    const rs = await Promise.allSettled(lista.slice(i, i + 4).map((u) => getHtml(u, { what: "la lista de capítulos en DevilNovels" })));
+    const rs = await Promise.allSettled(lista.slice(i, i + 4).map((u) => getHtml2(u, { what: "la lista de capítulos en DevilNovels" })));
     for (const r of rs) if (r.status === "fulfilled" && r.value) enumVuelca(e, r.value, slug);
   }
   e.completa = true;
@@ -1333,7 +1630,7 @@ function capRows(html, slug) {
   const map = /* @__PURE__ */ new Map();
   const re = new RegExp('href="(?:https?:\\/\\/(?:www\\.)?devilnovels\\.com)?\\/' + slug + '\\/([a-z0-9-]+)\\/(\\d{2,10})\\/?"', "gi");
   let m;
-  while ((m = re.exec(html)) !== null && map.size < MAX_CAPS + 200) {
+  while ((m = re.exec(html)) !== null && map.size < MAX_CAPS2 + 200) {
     const capSlug = m[1], id = m[2];
     if (!/capitulo/i.test(capSlug) || map.has(id)) continue;
     const near = html.slice(Math.max(0, m.index - 400), m.index + 600);
@@ -1347,67 +1644,98 @@ function capRows(html, slug) {
   if (!map.size) {
     const re2 = new RegExp('href="(?:https?:\\/\\/(?:www\\.)?devilnovels\\.com)?\\/' + slug + '\\/([a-z0-9-]+)\\/(\\d{2,10})\\/?"', "gi");
     let m2;
-    while ((m2 = re2.exec(html)) !== null && map.size < MAX_CAPS) {
+    while ((m2 = re2.exec(html)) !== null && map.size < MAX_CAPS2) {
       const cs2 = m2[1];
       if (RUTAS_FIJAS.test(cs2) || /^(?:page|pagina|pag|amp|feed|print|comment|comentarios)(?:[-_].*)?$/i.test(cs2) || !/\d/.test(cs2)) continue;
       if (map.has(m2[2])) continue;
       map.set(m2[2], { capSlug: cs2, id: m2[2], number: numDe(cs2) || lastNumberDe(cs2) || m2[2], pago: false });
     }
   }
-  return [...map.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0)).slice(0, MAX_CAPS);
+  return [...map.values()].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0)).slice(0, MAX_CAPS2);
 }
-async function search3(src, q) {
+async function search4(src, q) {
   const t = String(q || "").trim();
   if (!t) return { items: [] };
   try {
-    const html2 = await getHtml("/?s=" + encodeURIComponent(t), { what: "la búsqueda en DevilNovels" });
+    const html2 = await getHtml2("/?s=" + encodeURIComponent(t), { what: "la búsqueda en DevilNovels" });
     const items = asItems2(novelCards(html2, 30));
     if (items.length) return { items };
   } catch {
   }
-  const html = await getHtml("/listado-de-novelas", { what: "el listado de DevilNovels" });
+  const html = await getHtml2("/listado-de-novelas", { what: "el listado de DevilNovels" });
   const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const qb = norm(t);
   const cards = novelCards(html, 400).filter((c) => norm(c.title).indexOf(qb) >= 0 || norm(c.slug).indexOf(qb) >= 0);
   return { items: asItems2(cards.slice(0, 30)) };
 }
+function dvCleanCards(html, limit) {
+  const cards = novelCards(html, limit);
+  const conImg = cards.filter((c) => c.poster);
+  if (conImg.length >= 4) {
+    const cuenta = {};
+    let max = 0;
+    for (const c of conImg) {
+      cuenta[c.poster] = (cuenta[c.poster] || 0) + 1;
+      if (cuenta[c.poster] > max) max = cuenta[c.poster];
+    }
+    if (max * 2 > conImg.length) for (const c of cards) c.poster = void 0;
+  }
+  return cards;
+}
 async function home(src, opts = {}) {
   const n0 = opts && opts.full ? 60 : 18;
   const settled = await Promise.allSettled([
-    getHtml("/"),
-    getHtml("/listado-de-novelas"),
-    getHtml("/novelas-finalizadas")
+    getHtml2("/"),
+    getHtml2("/listado-de-novelas"),
+    getHtml2("/novelas-finalizadas")
   ]);
   const secs = [
-    { id: "ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: n0 },
-    { id: "todas", t: "Listado de novelas", te: "All novels", i: 1, n: n0 },
-    { id: "finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: n0 }
+    { id: "ranking", ref: "dv:ranking", t: "Ranking de novelas", te: "Novel ranking", i: 0, n: n0 },
+    { id: "todas", ref: "dv:todas", t: "Listado de novelas", te: "All novels", i: 1, n: n0 },
+    { id: "finalizadas", ref: "dv:finalizadas", t: "Novelas finalizadas", te: "Finished novels", i: 2, n: n0 }
   ];
   const out = [];
   for (const s of secs) {
     const p = settled[s.i];
     if (p.status !== "fulfilled" || !p.value) continue;
-    const cards = novelCards(p.value, s.n);
-    const conImg = cards.filter((c) => c.poster);
-    if (conImg.length >= 4) {
-      const cuenta = {};
-      let max = 0;
-      for (const c of conImg) {
-        cuenta[c.poster] = (cuenta[c.poster] || 0) + 1;
-        if (cuenta[c.poster] > max) max = cuenta[c.poster];
-      }
-      if (max * 2 > conImg.length) for (const c of cards) c.poster = void 0;
-    }
-    const items = asItems2(cards);
-    if (items.length) out.push({ id: "dv-" + s.id, title: s.t, titleEn: s.te, items });
+    const items = asItems2(dvCleanCards(p.value, s.n));
+    if (items.length) out.push({ id: "dv-" + s.id, ref: s.ref, title: s.t, titleEn: s.te, items });
   }
   return out;
 }
-async function detail3(src, slug) {
+var DV_BROWSE_CACHE = /* @__PURE__ */ new Map();
+async function browse(src, kind, cursor) {
+  const page = Math.max(1, Number(cursor) || 1);
+  const per = 24;
+  const k = kind === "pop" || kind === "ranking" ? "ranking" : kind === "finalizadas" || kind === "finished" ? "finalizadas" : "todas";
+  const basePath = k === "ranking" ? "/" : k === "finalizadas" ? "/novelas-finalizadas" : "/listado-de-novelas";
+  let all = DV_BROWSE_CACHE.get(k);
+  if (!all || Date.now() - all.ts > 3e5) {
+    const html = await getHtml2(basePath, { what: "el catálogo de DevilNovels" });
+    all = { items: asItems2(dvCleanCards(html, 480)), ts: Date.now() };
+    if (all.items.length) DV_BROWSE_CACHE.set(k, all);
+  }
+  const offset = (page - 1) * per;
+  if (offset < all.items.length) {
+    const slice = all.items.slice(offset, offset + per);
+    const hasMoreInCache = offset + per < all.items.length;
+    return { items: slice, next: hasMoreInCache ? String(page + 1) : null };
+  }
+  if (page > 1 && basePath !== "/") {
+    try {
+      const htmlP = await getHtml2(basePath + "/page/" + page + "/", { what: "el catálogo de DevilNovels" });
+      const itemsP = asItems2(dvCleanCards(htmlP, per));
+      return { items: itemsP, next: itemsP.length >= 16 && page < 20 ? String(page + 1) : null };
+    } catch {
+    }
+  }
+  return { items: [], next: null };
+}
+async function detail4(src, slug) {
   const html = await fichaDe(slug);
   const pick = (re) => {
     const m = html.match(re);
-    return m ? clean(m[1]) : "";
+    return m ? clean2(m[1]) : "";
   };
   let poster = pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/);
   if (poster) poster = poster.replace(/&amp;/g, "&");
@@ -1416,13 +1744,13 @@ async function detail3(src, slug) {
   let overview = pick(/<meta name="description" content="([^"]{10,600})"/) || pick(/property="og:description"[^>]*content="([^"]+)"/);
   if (!overview) {
     const sy = html.match(/class="[^"]*(?:summary__content|synopsis|sinopsis)[^"]*"[^>]*>([\s\S]{10,900}?)<\/div>/);
-    if (sy) overview = clean(sy[1]);
+    if (sy) overview = clean2(sy[1]);
   }
   const genres = [];
   const g0 = html.match(/G[eé]neros?:\s*(?:<\/[^>]+>\s*)*([^<]{3,200})/i);
   if (g0) {
     for (const g of g0[1].split(/[,;]\s*/)) {
-      const t = clean(g);
+      const t = clean2(g);
       if (t && genres.length < 6) genres.push(t);
     }
   }
@@ -1430,7 +1758,7 @@ async function detail3(src, slug) {
     const gre = /href="[^"]*\/(?:tag|genre|genero)\/[^"]*"[^>]*>([^<]{2,40})</gi;
     let g;
     while ((g = gre.exec(html)) !== null && genres.length < 6) {
-      const t = clean(g[1]);
+      const t = clean2(g[1]);
       if (t && genres.indexOf(t) < 0) genres.push(t);
     }
   }
@@ -1443,13 +1771,13 @@ async function detail3(src, slug) {
     // el total real llega de la REST en el primer lote (X-WP-Total); no se baja la obra aquí
   };
 }
-async function chapter3(src, slug, capId) {
+async function chapter4(src, slug, capId) {
   const punto = String(capId || "").lastIndexOf(".");
   if (punto <= 0) netError({ message: "capítulo desconocido" }, "el capítulo");
   const capSlug = String(capId).slice(0, punto);
   const id = String(capId).slice(punto + 1);
   if (!/^[a-z0-9-]+$/i.test(capSlug) || !/^\d+$/.test(id)) netError({ message: "capítulo desconocido" }, "el capítulo");
-  const html = await getHtml("/" + slug + "/" + capSlug + "/" + id + "/", { what: "el capítulo en DevilNovels" });
+  const html = await getHtml2("/" + slug + "/" + capSlug + "/" + id + "/", { what: "el capítulo en DevilNovels" });
   let seg = "";
   let marcaUsada = "";
   const marcas = [
@@ -1706,9 +2034,25 @@ async function madaraHome(src) {
     const p = settled[i];
     if (p.status !== "fulfilled" || !p.value.ok) continue;
     const items = asItems3(src, madaraCards(p.value.text, src, 14));
-    if (items.length) out.push({ id: src + "-" + specs[i].id, title: specs[i].t, titleEn: specs[i].te, items });
+    if (items.length) out.push({ id: src + "-" + specs[i].id, ref: src + ":" + specs[i].id, title: specs[i].t, titleEn: specs[i].te, items });
   }
   return out;
+}
+async function madaraBrowse(src, kind, cursor, arg) {
+  const page = Math.max(1, Number(cursor) || 1);
+  let url;
+  if (kind === "genre" && arg) {
+    const g = encodeURIComponent(String(arg));
+    url = page > 1 ? madaraHost(src) + "/manga-genre/" + g + "/page/" + page + "/" : madaraHost(src) + "/manga-genre/" + g + "/";
+  } else {
+    const valid = ["trending", "latest", "views", "rating", "new"];
+    const ob = valid.includes(kind) ? kind : "latest";
+    url = page > 1 ? madaraHost(src) + "/novela/page/" + page + "/?m_orderby=" + ob : madaraHost(src) + "/novela/?m_orderby=" + ob;
+  }
+  const r = await fetchText(url, { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok) netError(new Error("HTTP " + r.status), "el catálogo en " + madaraHost(src));
+  const items = asItems3(src, madaraCards(r.text, src, 24));
+  return { items, next: items.length >= 12 && page < 30 ? String(page + 1) : null };
 }
 async function madaraDetail(src, slug) {
   const r = await fetchText(madaraHost(src) + "/novela/" + slug + "/", { heads: heads2(), timeoutMs: timeoutFor(src) });
@@ -1856,9 +2200,48 @@ async function skHome(src) {
       overview: void 0,
       poster: skPoster(n, true)
     }))).filter(Boolean);
-    if (items.length) out.push({ id: src + "-" + s.id, title: s.t, titleEn: s.te, items });
+    if (items.length) out.push({ id: src + "-" + s.id, ref: src + ":" + s.id, title: s.t, titleEn: s.te, items });
   }
   return out;
+}
+function skMapItems(src, list4, limit) {
+  return asItems3(src, (list4 || []).slice(0, limit || 24).map((n) => ({
+    slug: String(n.id),
+    title: n.title || n.nvl_title,
+    overview: n.synopsis ? clip(n.synopsis, 200) : void 0,
+    poster: skPoster(n, true),
+    rating: n.rating != null ? Number(n.rating) : void 0
+  }))).filter(Boolean);
+}
+async function skBrowse(src, kind, cursor, arg) {
+  const page = Math.max(1, Number(cursor) || 1);
+  const per = 24;
+  const orderMap = { updated: "updated", views: "views", top: "rating", rising: "likes", pop: "views", new: "updated", score: "rating" };
+  if (kind === "genre" && arg) {
+    const r = await fetchJson(SK_API + "/v1/novels?page=" + page + "&limit=" + per + "&genres=" + encodeURIComponent(String(arg)), { heads: heads2(), timeoutMs: timeoutFor(src) });
+    if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "el catálogo de Skynovels");
+    const items = skMapItems(src, r.body.items, per);
+    const total = Number(r.body.total) || 0;
+    return { items, next: (total ? page * per < total : items.length >= per) && page < 40 ? String(page + 1) : null };
+  }
+  if (orderMap[kind] || kind === "all" || kind === "recent") {
+    const ord = orderMap[kind] ? "&order=" + orderMap[kind] : "";
+    const r = await fetchJson(SK_API + "/v1/novels?page=" + page + "&limit=" + per + ord, { heads: heads2(), timeoutMs: timeoutFor(src) });
+    if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "el catálogo de Skynovels");
+    const items = skMapItems(src, r.body.items, per);
+    const total = Number(r.body.total) || 0;
+    return { items, next: (total ? page * per < total : items.length >= per) && page < 40 ? String(page + 1) : null };
+  }
+  const homeKey = { featured: "featured", trending: "trending", week: "weekly_views", month: "monthly_views", finished: "finished" }[kind];
+  if (homeKey) {
+    const r = await fetchJson(SK_API + "/v1/home", { heads: heads2(), timeoutMs: timeoutFor(src) });
+    if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "el catálogo de Skynovels");
+    const raw = r.body[homeKey];
+    const list4 = Array.isArray(raw) ? raw : raw && Array.isArray(raw.novels) ? raw.novels : raw && Array.isArray(raw.items) ? raw.items : raw && raw.novel ? [raw.novel] : raw && raw.id && raw.title ? [raw] : [];
+    const items = skMapItems(src, list4, 60);
+    return { items, next: null };
+  }
+  return skBrowse(src, "updated", cursor, arg);
 }
 async function skCaps(src, slug) {
   const cr = await fetchJson(SK_API + "/v1/novels/" + encodeURIComponent(slug) + "/chapters?limit=800", { heads: heads2(), timeoutMs: timeoutFor(src) });
@@ -1960,9 +2343,30 @@ async function mkHome(src) {
       title: n.title,
       poster: mkCover(n.cover_image_url)
     }))).filter(Boolean);
-    if (items.length) out.push({ id: src + "-" + specs[i].id, title: specs[i].t, titleEn: specs[i].te, items });
+    if (items.length) out.push({ id: src + "-" + specs[i].id, ref: src + ":" + specs[i].id, title: specs[i].t, titleEn: specs[i].te, items });
   }
   return out;
+}
+async function mkBrowse(src, kind, cursor) {
+  const page = Math.max(1, Number(cursor) || 1);
+  const qsMap = {
+    latest: "",
+    all: "",
+    views: "&order=views",
+    followers: "&order=followers",
+    completed: "&status=completed",
+    ongoing: "&status=ongoing"
+  };
+  const extra = qsMap[kind] !== void 0 ? qsMap[kind] : "";
+  const r = await fetchJson(MK_API + "/novels?page=" + page + extra, { heads: heads2(), timeoutMs: timeoutFor(src) });
+  if (!r.ok || !r.body) netError(new Error("HTTP " + r.status), "el catálogo en MatchaNovels");
+  const items = asItems3(src, (r.body.items || []).map((n) => ({
+    slug: String(n.slug),
+    title: n.title,
+    poster: mkCover(n.cover_image_url),
+    overview: n.synopsis ? clip(n.synopsis, 200) : void 0
+  }))).filter(Boolean);
+  return { items, next: r.body.has_next ? String(page + 1) : null };
 }
 async function mkCaps(src, slug) {
   const cr = await fetchJson(MK_API + "/novels/" + encodeURIComponent(slug) + "/chapters", { heads: heads2(), timeoutMs: timeoutFor(src) });
@@ -2069,7 +2473,37 @@ async function asHome(src) {
     if (it && !items.some((x) => x.id === it.id)) items.push(it);
     if (items.length >= 14) break;
   }
-  return items.length ? [{ id: src + "-latest", title: "Últimos capítulos publicados", titleEn: "Latest chapter posts", items }] : [];
+  return items.length ? [{ id: src + "-latest", ref: src + ":latest", title: "Últimos capítulos publicados", titleEn: "Latest chapter posts", items }] : [];
+}
+async function asBrowse(src, kind, cursor) {
+  const page = Math.max(1, Number(cursor) || 1);
+  if (kind === "all") {
+    const per2 = 40;
+    const b2 = await asApi("/categories?number=" + per2 + "&page=" + page, src);
+    const items2 = (b2.categories || []).filter((c) => c && c.slug && c.slug !== "uncategorized" && c.slug !== "sin-categoria").map((c) => toItem(src, {
+      slug: String(c.slug),
+      title: unescapeHtml2(c.name || String(c.slug).replace(/-/g, " ")),
+      overview: c.description ? clip(unescapeHtml2(c.description), 200) : void 0
+    })).filter(Boolean);
+    const found2 = Number(b2.found) || 0;
+    return { items: items2, next: (found2 ? page * per2 < found2 : (b2.categories || []).length >= per2) ? String(page + 1) : null };
+  }
+  const per = 30;
+  const b = await asApi("/posts?number=" + per + "&page=" + page, src);
+  const items = [];
+  for (const p of b.posts || []) {
+    const cat = asCat(p);
+    if (!cat) continue;
+    const it = toItem(src, {
+      slug: cat,
+      title: cat.replace(/-/g, " "),
+      overview: clip(p.title, 120),
+      poster: asCover(p)
+    });
+    if (it && !items.some((x) => x.id === it.id)) items.push(it);
+  }
+  const found = Number(b.found) || 0;
+  return { items, next: (found ? page * per < found : (b.posts || []).length >= per) && page < 30 ? String(page + 1) : null };
 }
 async function asCaps(src, slug) {
   const b = await asApi("/posts?category=" + encodeURIComponent(slug) + "&number=100", src);
@@ -2116,7 +2550,7 @@ async function novelSearch(src, q) {
   if (k === "sk") return skSearch(src, q);
   if (k === "mk") return mkSearch(src, q);
   if (k === "as") return asSearch(src, q);
-  if (k === "devilnovels") return search3(src, q);
+  if (k === "devilnovels") return search4(src, q);
   return madaraSearch(src, q);
 }
 async function novelHome(src, opts = {}) {
@@ -2127,12 +2561,20 @@ async function novelHome(src, opts = {}) {
   if (k === "devilnovels") return home(src, opts);
   return madaraHome(src);
 }
+async function novelBrowse(src, kind, cursor, arg) {
+  const k = KIND_OF[src];
+  if (k === "sk") return skBrowse(src, kind, cursor, arg);
+  if (k === "mk") return mkBrowse(src, kind, cursor);
+  if (k === "as") return asBrowse(src, kind, cursor);
+  if (k === "devilnovels") return browse(src, kind, cursor);
+  return madaraBrowse(src, kind, cursor, arg);
+}
 async function novelDetail(src, slug) {
   const k = KIND_OF[src];
   if (k === "sk") return skDetail(src, slug);
   if (k === "mk") return mkDetail(src, slug);
   if (k === "as") return asDetail(src, slug);
-  if (k === "devilnovels") return detail3(src, slug);
+  if (k === "devilnovels") return detail4(src, slug);
   return madaraDetail(src, slug);
 }
 async function novelChapter(src, slug, capId) {
@@ -2140,7 +2582,7 @@ async function novelChapter(src, slug, capId) {
   if (k === "sk") return skChapter(src, slug, capId);
   if (k === "mk") return mkChapter(src, slug, capId);
   if (k === "as") return asChapter(src, slug, capId);
-  if (k === "devilnovels") return chapter3(src, slug, capId);
+  if (k === "devilnovels") return chapter4(src, slug, capId);
   return madaraChapter(src, slug, capId);
 }
 function capsLoader(src, slug) {
@@ -2167,15 +2609,182 @@ async function novelChapters(src, slug, opts = {}) {
 }
 
 // src/catalog.js
-var adapter = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : manhwa_exports;
+var adapter = (src) => SOURCES[src].kind === "zonatmo" ? zonatmo_exports : SOURCES[src].kind === "zonatmoorg" ? zonatmoorg_exports : manhwa_exports;
 var esNovela = (src) => NOVEL_SOURCES.indexOf(src) >= 0;
-function parseBrowseRef(ref) {
-  const parts = String(ref).split(":");
-  if (!SOURCES[parts[0]]) return null;
-  const [src, kind, arg] = parts;
-  return { src, kind, arg };
+var ZT_GENRE_LIST = [
+  ["2", "Acción", "Action"],
+  ["3", "Aventura", "Adventure"],
+  ["4", "Comedia", "Comedy"],
+  ["15", "Drama", "Drama"],
+  ["5", "Fantasía", "Fantasy"],
+  ["16", "Romance", "Romance"],
+  ["7", "Sobrenatural", "Supernatural"],
+  ["60", "Reencarnación", "Reincarnation"],
+  ["6", "Magia", "Magic"],
+  ["26", "Artes Marciales", "Martial Arts"],
+  ["36", "Psicológico", "Psychological"],
+  ["40", "Misterio", "Mystery"],
+  ["21", "Ciencia Ficción", "Sci-Fi"],
+  ["82", "Horror", "Horror"]
+];
+var MS_GENRE_LIST = [
+  ["accion", "Acción", "Action"],
+  ["fantasia", "Fantasía", "Fantasy"],
+  ["romance", "Romance", "Romance"],
+  ["drama", "Drama", "Drama"],
+  ["comedia", "Comedia", "Comedy"],
+  ["aventura", "Aventura", "Adventure"],
+  ["artes-marciales", "Artes Marciales", "Martial Arts"]
+];
+var SK_GENRE_LIST = [
+  ["9", "Acción", "Action"],
+  ["2", "Aventura", "Adventure"],
+  ["7", "Comedia", "Comedy"],
+  ["8", "Drama", "Drama"],
+  ["4", "Fantasía", "Fantasy"],
+  ["5", "Romance", "Romance"],
+  ["19", "Cultivación", "Cultivation"],
+  ["23", "Reencarnación", "Reincarnation"],
+  ["3", "Artes Marciales", "Martial Arts"],
+  ["16", "Magia", "Magic"],
+  ["22", "Misterio", "Mystery"],
+  ["27", "Psicológico", "Psychological"]
+];
+var AN_GENRE_LIST = [
+  ["accion", "Acción", "Action"],
+  ["artes-marciales", "Artes Marciales", "Martial Arts"],
+  ["aventura", "Aventura", "Adventure"],
+  ["drama", "Drama", "Drama"],
+  ["isekai", "Isekai", "Isekai"],
+  ["reencarnacion", "Reencarnación", "Reincarnation"],
+  ["regresion", "Regresión", "Regression"],
+  ["romance", "Romance", "Romance"]
+];
+var SOURCE_CATALOG = {
+  zt: {
+    cats: [
+      { ref: "zt:new", label: "Actualizados", labelEn: "Updated" },
+      { ref: "zt:pop", label: "Lo más visto", labelEn: "Most read" },
+      { ref: "zt:score", label: "Mejor valorados", labelEn: "Top rated" },
+      { ref: "zt:az", label: "A–Z", labelEn: "A–Z" }
+    ],
+    genres: ZT_GENRE_LIST.map(([id, l, le]) => ({ ref: "zt:genre:" + id, label: l, labelEn: le }))
+  },
+  zo: {
+    cats: [
+      { ref: "zo:new", label: "Actualizados", labelEn: "Updated" },
+      { ref: "zo:pop", label: "Lo más visto", labelEn: "Most read" },
+      { ref: "zo:score", label: "Mejor valorados", labelEn: "Top rated" },
+      { ref: "zo:az", label: "A–Z", labelEn: "A–Z" }
+    ],
+    genres: ZT_GENRE_LIST.slice(0, 10).map(([id, l, le]) => ({ ref: "zo:genre:" + id, label: l, labelEn: le }))
+  },
+  ms: {
+    cats: [
+      { ref: "ms:latest", label: "Últimas actualizaciones", labelEn: "Latest updates" },
+      { ref: "ms:on-going", label: "En emisión", labelEn: "Ongoing" },
+      { ref: "ms:end", label: "Completados", labelEn: "Completed" },
+      { ref: "ms:on-hold", label: "En pausa", labelEn: "On hold" },
+      { ref: "ms:all", label: "Todo el catálogo", labelEn: "Full catalog" }
+    ],
+    genres: MS_GENRE_LIST.map(([id, l, le]) => ({ ref: "ms:genre:" + id, label: l, labelEn: le }))
+  },
+  mh: {
+    cats: [
+      { ref: "mh:latest", label: "Últimas actualizaciones", labelEn: "Latest updates" },
+      { ref: "mh:on-going", label: "En emisión", labelEn: "Ongoing" },
+      { ref: "mh:end", label: "Completados", labelEn: "Completed" },
+      { ref: "mh:on-hold", label: "En pausa", labelEn: "On hold" },
+      { ref: "mh:all", label: "Todo el catálogo", labelEn: "Full catalog" }
+    ],
+    genres: MS_GENRE_LIST.map(([id, l, le]) => ({ ref: "mh:genre:" + id, label: l, labelEn: le }))
+  },
+  sk: {
+    cats: [
+      { ref: "sk:updated", label: "Actualizadas hoy", labelEn: "Updated today" },
+      { ref: "sk:views", label: "Lo más leído de siempre", labelEn: "Most read of all time" },
+      { ref: "sk:top", label: "Mejor valoradas", labelEn: "Top rated" },
+      { ref: "sk:rising", label: "En ascenso", labelEn: "Rising" },
+      { ref: "sk:trending", label: "Tendencias de hoy", labelEn: "Trending today" },
+      { ref: "sk:week", label: "Lo más leído de la semana", labelEn: "Most read this week" },
+      { ref: "sk:month", label: "Lo más leído del mes", labelEn: "Most read this month" },
+      { ref: "sk:recent", label: "Recientes", labelEn: "Recent" },
+      { ref: "sk:finished", label: "Finalizadas", labelEn: "Finished" },
+      { ref: "sk:featured", label: "Destacada", labelEn: "Featured" }
+    ],
+    genres: SK_GENRE_LIST.map(([id, l, le]) => ({ ref: "sk:genre:" + id, label: l, labelEn: le }))
+  },
+  mk: {
+    cats: [
+      { ref: "mk:latest", label: "Actualizaciones recientes", labelEn: "Latest updates" },
+      { ref: "mk:views", label: "Más leídas", labelEn: "Most read" },
+      { ref: "mk:followers", label: "Más seguidas", labelEn: "Most followed" },
+      { ref: "mk:completed", label: "Completadas", labelEn: "Completed" },
+      { ref: "mk:ongoing", label: "En curso", labelEn: "Ongoing" }
+    ],
+    genres: []
+  },
+  as: {
+    cats: [
+      { ref: "as:latest", label: "Últimos capítulos publicados", labelEn: "Latest chapter posts" },
+      { ref: "as:all", label: "Todas las novelas", labelEn: "All novels" }
+    ],
+    genres: []
+  },
+  an: {
+    cats: [
+      { ref: "an:trending", label: "Tendencias", labelEn: "Trending" },
+      { ref: "an:latest", label: "Últimas actualizaciones", labelEn: "Latest updates" },
+      { ref: "an:views", label: "Más leídas", labelEn: "Most read" },
+      { ref: "an:rating", label: "Mejor valoradas", labelEn: "Top rated" },
+      { ref: "an:new", label: "Nuevas", labelEn: "New" }
+    ],
+    genres: AN_GENRE_LIST.map(([id, l, le]) => ({ ref: "an:genre:" + id, label: l, labelEn: le }))
+  },
+  dv: {
+    cats: [
+      { ref: "dv:ranking", label: "Ranking de novelas", labelEn: "Novel ranking" },
+      { ref: "dv:todas", label: "Listado de novelas", labelEn: "All novels" },
+      { ref: "dv:finalizadas", label: "Novelas finalizadas", labelEn: "Finished novels" }
+    ],
+    genres: []
+  }
+};
+function catalogEntryFor(ref) {
+  const p = parseBrowseRef(ref);
+  if (!p) return null;
+  const spec = SOURCE_CATALOG[p.src];
+  const srcName = SOURCES[p.src].name;
+  if (spec) {
+    const hit = spec.cats.find((c) => c.ref === ref) || spec.genres.find((g) => g.ref === ref);
+    if (hit) {
+      return {
+        src: p.src,
+        ref,
+        label: hit.label,
+        labelEn: hit.labelEn,
+        fullTitle: srcName + " · " + hit.label,
+        fullTitleEn: srcName + " · " + hit.labelEn
+      };
+    }
+  }
+  const tail = p.kind === "genre" && p.arg ? ZT_GENRES && ZT_GENRES[p.arg] || String(p.arg).replace(/-/g, " ") : p.kind;
+  return {
+    src: p.src,
+    ref,
+    label: tail,
+    labelEn: tail,
+    fullTitle: srcName + " · " + tail,
+    fullTitleEn: srcName + " · " + tail
+  };
 }
-async function search4(query) {
+function parseBrowseRef(ref) {
+  const parts = String(ref || "").split(":");
+  if (!SOURCES[parts[0]]) return null;
+  const [src, kind, ...rest] = parts;
+  return { src, kind: kind || "all", arg: rest.join(":") };
+}
+async function search5(query) {
   const q = String(query && (query.q || query) || "").trim();
   if (!q) return { items: [], next: null };
   const srcs = Object.keys(SOURCES);
@@ -2242,13 +2851,17 @@ async function rowsFor(src, lang) {
   const rows = [];
   try {
     const name = SOURCES[src].name;
-    if (SOURCES[src].kind === "zonatmo") {
+    const kind = SOURCES[src].kind;
+    if (kind === "zonatmo" || kind === "zonatmoorg") {
       const rec = await a.list(src, { page: 1, order: "new", postsPerPage: 20 });
       if (rec.items.length) rows.push({ id: src + "-new", title: name + " · Actualizados", titleEn: name + " · Recently updated", items: rec.items, ref: src + ":new" });
       const pop = await a.tops(src, { page: 1, postsPerPage: 20 });
       if (pop.items.length) rows.push({ id: src + "-pop", title: name + " · Lo más visto", titleEn: name + " · Most read", items: pop.items, ref: src + ":pop" });
       const top = await a.list(src, { page: 1, order: "score", postsPerPage: 20 });
       if (top.items.length) rows.push({ id: src + "-top", title: name + " · Mejor valorados", titleEn: name + " · Top rated", items: top.items, ref: src + ":score" });
+    } else if (esNovela(src)) {
+      const homeRows = await novelHome(src);
+      for (const r of homeRows || []) rows.push(r);
     } else {
       const rec = await a.latest(src);
       if (rec.items.length) rows.push({ id: src + "-new", title: name + " · Últimas actualizaciones", titleEn: name + " · Latest updates", items: rec.items, ref: src + ":latest" });
@@ -2272,23 +2885,33 @@ async function home2() {
   }
   return rows;
 }
-async function browse(ref, cursor) {
+async function browse2(ref, cursor) {
   const parsed = parseBrowseRef(ref);
   if (!parsed) throw kino.error("not_found", "lista desconocida");
   const page = Math.max(1, Number(cursor) || 1);
   const { src, kind, arg } = parsed;
+  if (esNovela(src)) {
+    return novelBrowse(src, kind, cursor, arg);
+  }
   const a = adapter(src);
+  const k = SOURCES[src].kind;
   let res;
-  if (kind === "pop") res = await a.tops(src, { page, postsPerPage: 24 });
-  else if (kind === "new") res = await a.list(src, { page, order: "new", postsPerPage: 24 });
-  else if (kind === "score") res = await a.list(src, { page, order: "score", postsPerPage: 24 });
-  else if (kind === "az") res = await a.list(src, { page, order: "az", postsPerPage: 24 });
-  else if (kind === "old") res = await a.list(src, { page, order: "old", postsPerPage: 24 });
-  else if (kind === "genre") res = await a.list(src, { page, genreId: arg, postsPerPage: 24 });
-  else if (kind === "latest") res = page > 1 ? a.list(src, { page }) : a.latest(src);
-  else if (kind === "on-going" || kind === "end" || kind === "on-hold" || kind === "canceled" || kind === "upcoming") res = await a.list(src, { page, estado: kind });
-  else if (kind === "all") res = SOURCES[src].kind === "zonatmo" ? a.list(src, { page, order: "new", postsPerPage: 24 }) : a.list(src, { page });
-  else throw kino.error("not_found", "lista desconocida");
+  if (k === "zonatmo" || k === "zonatmoorg") {
+    if (kind === "pop") res = await a.tops(src, { page, postsPerPage: 24 });
+    else if (kind === "new") res = await a.list(src, { page, order: "new", postsPerPage: 24 });
+    else if (kind === "score") res = await a.list(src, { page, order: "score", postsPerPage: 24 });
+    else if (kind === "az") res = await a.list(src, { page, order: "az", postsPerPage: 24 });
+    else if (kind === "old") res = await a.list(src, { page, order: "old", postsPerPage: 24 });
+    else if (kind === "genre") res = await a.list(src, { page, genreId: arg, postsPerPage: 24 });
+    else if (kind === "all") res = await a.list(src, { page, order: "new", postsPerPage: 24 });
+    else throw kino.error("not_found", "lista desconocida");
+  } else {
+    if (kind === "latest") res = page > 1 ? await a.list(src, { page }) : await a.latest(src);
+    else if (kind === "on-going" || kind === "end" || kind === "on-hold" || kind === "canceled" || kind === "upcoming") res = await a.list(src, { page, estado: kind });
+    else if (kind === "genre" && arg) res = await a.list(src, { page, genero: arg });
+    else if (kind === "all") res = await a.list(src, { page });
+    else throw kino.error("not_found", "lista desconocida");
+  }
   return res;
 }
 async function section(arg) {
@@ -2336,298 +2959,13 @@ async function categories() {
   tiles.push({ id: "ms-todo", title: "Explorar ManhwaSS", ref: "ms:all" });
   tiles.push({ id: "mh-todo", title: "Explorar ManhwaShot", ref: "mh:all" });
   tiles.push({ id: "zt-todo", title: "Explorar ZonaTMO", ref: "zt:all" });
+  tiles.push({ id: "zo-todo", title: "Explorar ZonaTMO.org", ref: "zo:all" });
+  tiles.push({ id: "sk-todo", title: "Explorar Skynovels", ref: "sk:updated" });
+  tiles.push({ id: "mk-todo", title: "Explorar MatchaNovels", ref: "mk:latest" });
+  tiles.push({ id: "as-todo", title: "Explorar Astral Novels", ref: "as:all" });
+  tiles.push({ id: "an-todo", title: "Explorar Anslid", ref: "an:latest" });
+  tiles.push({ id: "dv-todo", title: "Explorar DevilNovels", ref: "dv:todas" });
   return tiles.slice(0, 24);
-}
-
-// src/zonatmoorg.js
-var zonatmoorg_exports = {};
-__export(zonatmoorg_exports, {
-  chapter: () => chapter4,
-  chapters: () => chapters2,
-  detail: () => detail4,
-  latest: () => latest2,
-  list: () => list3,
-  login: () => login3,
-  search: () => search5,
-  tops: () => tops2
-});
-var HOST = SOURCES.zo.host;
-var MAX_CAPS2 = 490;
-async function getHtml2(path, timeoutMs) {
-  const r = await fetchText(join("zo", path), {
-    heads: { Accept: "text/html", Referer: HOST + "/" },
-    timeoutMs: timeoutMs || 45e3
-  });
-  if (!r.ok) {
-    const e = new Error("HTTP " + r.status);
-    if (r.status === 404) {
-      e.code = "not_found";
-      e.userMessage = "Esta obra no está disponible en ZonaTMO.org.";
-    }
-    netError(e, "ZonaTMO.org");
-  }
-  return r.text;
-}
-async function libHtml(page, order, q, dir) {
-  const url = join("zo", "/biblioteca?title=" + encodeURIComponent(q || "") + "&filter_by=title&order_item=" + (order || "likes_count") + "&order_dir=" + (dir === "asc" ? "asc" : "desc") + "&_pg=1&page=" + page);
-  const r = await fetchText(url, {
-    heads: {
-      Accept: "application/json, text/javascript, */*; q=0.01",
-      Referer: HOST + "/biblioteca",
-      "X-Requested-With": "XMLHttpRequest"
-    },
-    timeoutMs: 25e3
-  });
-  if (!r.ok) netError(new Error("HTTP " + r.status), "ZonaTMO.org (biblioteca)");
-  let frag = "";
-  const j = r.text.indexOf("{");
-  if (j >= 0) {
-    try {
-      frag = JSON.parse(r.text.slice(j)).html || "";
-    } catch {
-    }
-  }
-  return frag || r.text;
-}
-function clean2(s) {
-  return String(s).replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&nbsp;/g, " ").replace(/&#\d+;/g, "").replace(/\s+/g, " ").trim();
-}
-function absUrl(u) {
-  u = String(u || "").trim();
-  if (!u || /^data:/.test(u)) return "";
-  if (u.indexOf("//") === 0) return "https:" + u;
-  if (u.indexOf("/") === 0) return HOST + u;
-  return u;
-}
-function natCmp(a, b) {
-  const A = String(a).match(/\d+|\D+/g) || [], B = String(b).match(/\d+|\D+/g) || [];
-  for (let i = 0; i < Math.max(A.length, B.length); i++) {
-    const x = A[i] || "", y = B[i] || "";
-    if (/^\d+$/.test(x) && /^\d+$/.test(y)) {
-      const d = parseInt(x, 10) - parseInt(y, 10);
-      if (d) return d;
-    } else {
-      const c = x.localeCompare(y);
-      if (c) return c;
-    }
-  }
-  return 0;
-}
-function deSlug(slug) {
-  return String(slug).split(".").join("/");
-}
-function seriesCards(html, max) {
-  const out = [], seen = {};
-  const re = /href="(?:https:\/\/zonatmo\.org)?\/library\/([a-z_-]+)\/(\d+)\/([a-z0-9-]+)\/?"/g;
-  let m;
-  while ((m = re.exec(html)) !== null && out.length < (max || 40)) {
-    const type = m[1], id = m[2], name = m[3];
-    if (seen[id] || type === "page") continue;
-    seen[id] = true;
-    if (type === "novel" || type === "novela") continue;
-    const win = html.slice(m.index, m.index + 3500);
-    let title = "";
-    const th = win.match(/<h4[^>]*\btitle="([^"]{1,200})"/) || win.match(/<h4[^>]*>\s*([^<]{1,200})</);
-    if (th) title = clean2(th[1]);
-    if (!title) title = name.replace(/-/g, " ");
-    let poster = "";
-    const im = win.match(/<img[^>]+(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/);
-    if (im) poster = absUrl(im[1]);
-    if (!poster) {
-      const bg = win.match(/data-bg="([^"]+)"/);
-      if (bg) poster = absUrl(bg[1]);
-    }
-    if (!poster) {
-      const st = win.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\s*\)/);
-      if (st) poster = absUrl(st[1]);
-    }
-    out.push({ slug: type + "." + id + "." + name, poster, title });
-  }
-  return out;
-}
-function cardsToItems(src, cards) {
-  return cards.map((c) => toItem(src, { slug: c.slug, title: c.title, poster: c.poster })).filter(Boolean);
-}
-function chapterList(html) {
-  const map = /* @__PURE__ */ new Map();
-  const rowRe = /<li[^>]*upload-link[^>]*>/g;
-  let m;
-  while ((m = rowRe.exec(html)) !== null) {
-    const end = html.indexOf("</li>", m.index);
-    const row = html.slice(m.index, end > 0 ? end : m.index + 6e3);
-    const num = ((row.match(/data-chapter-number="([^"]*)"/) || row.match(/class="chapter-number"[^>]*data-number="([^"]*)"/) || [])[1] || "").trim();
-    const numN = (num.match(/\d+(?:\.\d+)?/) || [""])[0];
-    const numL = numN && numN.indexOf(".") >= 0 ? String(parseFloat(numN)) : numN;
-    const upRe = /href="(?:https:\/\/zonatmo\.org)?\/view_uploads\/(\d+)\/?"/g;
-    let u;
-    while ((u = upRe.exec(row)) !== null) {
-      const id = u[1];
-      if (map.has(id)) continue;
-      const near = row.slice(Math.max(0, u.index - 600), u.index + 600);
-      const sm = near.match(/href="[^"]*\/groups\/[^"]*"[^>]*>([^<]{1,60})</);
-      const scan = sm ? clean2(sm[1]) : "";
-      map.set(id, { id, num: numL || id, scan });
-    }
-  }
-  if (!map.size) {
-    const re = /href="(?:https:\/\/zonatmo\.org)?\/view_uploads\/(\d+)\/?"/g;
-    let u;
-    while ((u = re.exec(html)) !== null) {
-      if (map.has(u[1])) continue;
-      const near = html.slice(Math.max(0, u.index - 500), u.index + 500);
-      const numN = ((near.match(/data-chapter-number="([^"]*)"/) || near.match(/Cap[ií]tulo\s*(\d+(?:\.\d+)?)/i) || [])[1] || "").trim() || u[1];
-      map.set(u[1], { id: u[1], num: numN, scan: "" });
-    }
-  }
-  const arr = [...map.values()];
-  arr.sort((a, b) => natCmp(a.num, b.num) || (a.scan || "").localeCompare(b.scan || ""));
-  return arr.slice(0, MAX_CAPS2);
-}
-var SERIE_CACHE = /* @__PURE__ */ new Map();
-var INFLIGHT_SERIE = /* @__PURE__ */ new Map();
-var SERIE_TTL = 6e5;
-function serieCachePut(slug, chapters3) {
-  SERIE_CACHE.set(slug, { chapters: chapters3, ts: Date.now() });
-  if (SERIE_CACHE.size > 10) {
-    const first = SERIE_CACHE.keys().next().value;
-    SERIE_CACHE.delete(first);
-  }
-}
-async function fetchSeriesHtml(slug) {
-  let p = INFLIGHT_SERIE.get(slug);
-  if (!p) {
-    p = getHtml2("/library/" + deSlug(slug) + "/").finally(() => {
-      if (INFLIGHT_SERIE.get(slug) === p) INFLIGHT_SERIE.delete(slug);
-    });
-    INFLIGHT_SERIE.set(slug, p);
-  }
-  return p;
-}
-async function chaptersDe(slug, html0) {
-  const c = SERIE_CACHE.get(slug);
-  if (c && Date.now() - c.ts < SERIE_TTL) return c.chapters;
-  const html = html0 || await fetchSeriesHtml(slug);
-  const chapters3 = chapterList(html);
-  if (chapters3.length) serieCachePut(slug, chapters3);
-  return chapters3;
-}
-function seriesMeta(html, slug) {
-  const pick = (re) => {
-    const m = html.match(re);
-    return m ? clean2(m[1]) : "";
-  };
-  let poster = "";
-  const im = html.match(/<img[^>]*class="[^"]*book-thumbnail[^"]*"[^>]*>/);
-  if (im) poster = absUrl((im[0].match(/(?:data-src|src)="([^"]+)"/) || [])[1]);
-  if (!poster) poster = pick(/property="og:image"[^>]*content="([^"]+)"/) || pick(/content="([^"]+)"[^>]*property="og:image"/);
-  let overview = "";
-  const sy = html.match(/id="manga-synopsis"[^>]*>([\s\S]{0,3000}?)<\/(?:p|div)>/);
-  if (sy) overview = clean2(sy[1].replace(/<[^>]+>/g, " "));
-  if (!overview) overview = pick(/property="og:description"[^>]*content="([^"]+)"/);
-  const genres = [];
-  const gre = /href="[^"]*\/tag\/[^"]*"[^>]*>([^<]{1,50})</g;
-  let g;
-  while ((g = gre.exec(html)) !== null && genres.length < 20) {
-    const t = clean2(g[1]);
-    if (t && genres.indexOf(t) < 0) genres.push(t);
-  }
-  return {
-    slug,
-    title: pick(/<h1[^>]*class="[^"]*element-title[^"]*"[^>]*>([^<]{1,200})</) || pick(/property="og:title"[^>]*content="([^"]+)"/) || deSlug(slug).split("/")[2].replace(/-/g, " "),
-    poster: poster || void 0,
-    overview: overview.slice(0, 600) || void 0,
-    genres: genres.slice(0, 5)
-  };
-}
-function readerImages(html, uploadId) {
-  const out = [], seen = {};
-  const re = new RegExp(`https?:\\/\\/[^"'\\s>]+\\/chapters\\/` + uploadId + "\\/\\d+\\.(?:webp|jpe?g|png|avif|gif)", "g");
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    if (seen[m[0]]) continue;
-    seen[m[0]] = true;
-    out.push(m[0]);
-  }
-  if (!out.length) {
-    const re2 = /<img[^>]*class="[^"]*reader-image[^"]*"[^>]*>/g;
-    let t;
-    while ((t = re2.exec(html)) !== null) {
-      const src = (t[0].match(/(?:data-src|data-lazy-src|data-original|src)="([^"]+)"/) || [])[1];
-      if (!src || seen[src]) continue;
-      seen[src] = true;
-      const u = absUrl(src);
-      if (u) out.push(u);
-    }
-  }
-  const num = (u) => parseInt((u.match(/\/(\d+)\.[a-z0-9]+(?:\?|$)/i) || [])[1], 10) || 0;
-  out.sort((a, b) => num(a) - num(b));
-  return out;
-}
-function chapterSlugDe(s) {
-  const m = String(s || "").match(/^up-(\d+)\.n(.+)$/);
-  return m ? { id: m[1], num: m[2] } : null;
-}
-var ORDEN = { new: "created_at", score: "likes_count", az: "title", old: "created_at" };
-async function list3(src, { page = 1, order = "new", search: search6, postsPerPage = 24 } = {}) {
-  const item = ORDEN[order] || "likes_count";
-  const dir = order === "az" || order === "old" ? "asc" : "desc";
-  const html = await libHtml(page, item, search6 || "", dir);
-  const cards = seriesCards(html, postsPerPage || 24);
-  return { items: cardsToItems(src, cards), next: cards.length >= (postsPerPage || 24) && page < 30 ? String(page + 1) : null };
-}
-async function tops2(src, { page = 1, postsPerPage = 24 } = {}) {
-  return list3(src, { page, order: "score", postsPerPage });
-}
-async function latest2(src) {
-  return list3(src, { page: 1, order: "new", postsPerPage: 24 });
-}
-async function search5(src, q, { page = 1, postsPerPage = 24 } = {}) {
-  return list3(src, { page, order: "likes_count", search: q, postsPerPage });
-}
-async function detail4(src, slug) {
-  const html = await fetchSeriesHtml(slug);
-  const meta = seriesMeta(html, slug);
-  const chapters3 = await chaptersDe(slug, html);
-  return { ...meta, totalChapters: chapters3.length };
-}
-async function chapters2(src, slug, { order = "asc" } = {}) {
-  const list0 = await chaptersDe(slug);
-  const arr = list0.slice();
-  if (order === "desc") arr.reverse();
-  return {
-    items: arr.map((c) => ({
-      id: "up-" + c.id + ".n" + c.num,
-      slug: "up-" + c.id + ".n" + c.num,
-      number: c.num,
-      title: "Capítulo " + c.num + (c.scan ? " · " + c.scan : ""),
-      group: c.scan || void 0,
-      pago: false
-    })),
-    next: null,
-    // el HTML de la obra trae todos los capítulos: no hay paginación
-    total: arr.length
-  };
-}
-async function chapter4(src, slug, chapterSlug) {
-  const ch = chapterSlugDe(chapterSlug);
-  if (!ch) netError({ message: "capítulo desconocido" }, "el capítulo");
-  const html = await getHtml2("/view_uploads/" + ch.id + "/", 45e3);
-  const pages = readerImages(html, ch.id);
-  if (!pages.length) netError({ message: "sin páginas" }, "las páginas del capítulo");
-  let prev = null, next = null;
-  try {
-    const lista = await chaptersDe(slug);
-    const i = lista.findIndex((x) => x.id === ch.id);
-    if (i >= 0) {
-      if (i > 0) prev = "up-" + lista[i - 1].id + ".n" + lista[i - 1].num;
-      if (i < lista.length - 1) next = "up-" + lista[i + 1].id + ".n" + lista[i + 1].num;
-    }
-  } catch {
-  }
-  return { pages, number: ch.num, title: "Capítulo " + ch.num, direction: "ltr", prev, next };
-}
-async function login3() {
-  netError({ message: "ZonaTMO.org no usa cuentas: el sitio público no las pide" }, "el inicio de sesión");
 }
 
 // src/themes.js
@@ -2812,16 +3150,36 @@ async function readProgress(mr) {
   const d = all[mr];
   return d && d.cr ? { cr: d.cr, n: d.n || "", page: d.page || 1 } : null;
 }
+function defaultRefFor(src) {
+  const cats = SOURCE_CATALOG[src] && SOURCE_CATALOG[src].cats;
+  return cats && cats[0] && cats[0].ref || src + ":all";
+}
+function inferShelfRef(src, row, idx) {
+  if (row && row.ref && parseBrowseRef(row.ref)) return row.ref;
+  const id = String(row && row.id || "");
+  if (id === src + "-new") return src === "ms" || src === "mh" ? src + ":latest" : src + ":new";
+  if (id === src + "-pop") return src + ":pop";
+  if (id === src + "-top") return src + ":score";
+  if (id === src + "-emi") return src + ":on-going";
+  if (id === src + "-end") return src + ":end";
+  if (id.indexOf(src + "-") === 0) {
+    const candidate = src + ":" + id.slice(src.length + 1);
+    if (catalogEntryFor(candidate)) return candidate;
+  }
+  const cats = SOURCE_CATALOG[src] && SOURCE_CATALOG[src].cats;
+  if (cats && cats[idx]) return cats[idx].ref;
+  return defaultRefFor(src);
+}
 function tabSpecs(src) {
   if (src === "zt" || src === "zo") return [
-    { id: src + "-new", src, title: SOURCES[src].name + " · Actualizados", titleEn: SOURCES[src].name + " · Updated", params: { page: 1, order: "new", postsPerPage: 12 } },
-    { id: src + "-pop", src, title: SOURCES[src].name + " · Lo más visto", titleEn: SOURCES[src].name + " · Most read", params: { tops: true, page: 1, postsPerPage: 12 } },
-    { id: src + "-top", src, title: SOURCES[src].name + " · Mejor valorados", titleEn: SOURCES[src].name + " · Top rated", params: { page: 1, order: "score", postsPerPage: 12 } }
+    { id: src + "-new", src, ref: src + ":new", title: SOURCES[src].name + " · Actualizados", titleEn: SOURCES[src].name + " · Updated", params: { page: 1, order: "new", postsPerPage: 12 } },
+    { id: src + "-pop", src, ref: src + ":pop", title: SOURCES[src].name + " · Lo más visto", titleEn: SOURCES[src].name + " · Most read", params: { tops: true, page: 1, postsPerPage: 12 } },
+    { id: src + "-top", src, ref: src + ":score", title: SOURCES[src].name + " · Mejor valorados", titleEn: SOURCES[src].name + " · Top rated", params: { page: 1, order: "score", postsPerPage: 12 } }
   ];
   if (src === "ms" || src === "mh") return [
-    { id: src + "-new", src, title: SOURCES[src].name + " · Últimas actualizaciones", titleEn: SOURCES[src].name + " · Latest", params: { latest: true } },
-    { id: src + "-emi", src, title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
-    { id: src + "-end", src, title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } }
+    { id: src + "-new", src, ref: src + ":latest", title: SOURCES[src].name + " · Últimas actualizaciones", titleEn: SOURCES[src].name + " · Latest", params: { latest: true } },
+    { id: src + "-emi", src, ref: src + ":on-going", title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
+    { id: src + "-end", src, ref: src + ":end", title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } }
   ];
   return [];
 }
@@ -2829,11 +3187,11 @@ async function loadHomeShelves(src, en) {
   try {
     const ck = cacheKey("home", src);
     const cached = cacheGet(ck, TTL.rows);
-    if (cached && cached.length) return { shelves: cached, cf: false, cfKind: null, err: null };
+    if (cached && cached.length && cached[0].ref) return { shelves: cached, cf: false, cfKind: null, err: null };
     let shelves;
     if (isNovel(src)) {
       const raw = await novelHome(src);
-      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
+      shelves = (raw || []).map((r, idx) => ({ id: r.id, ref: r.ref || inferShelfRef(src, r, idx), title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
     } else {
       const specs = tabSpecs(src);
       const settled = await Promise.allSettled(specs.map(fetchOneRow));
@@ -2875,7 +3233,7 @@ async function fetchOneRow(spec) {
   else res = await a.list(spec.src, spec.params);
   const items = res.items.slice(0, 12).map(compactCard);
   if (items.length) cacheSet(cacheKey("rows", spec.id), items);
-  return { id: spec.id, title: spec.title, titleEn: spec.titleEn, ref: spec.pop, items };
+  return { id: spec.id, ref: spec.ref, title: spec.title, titleEn: spec.titleEn, items };
 }
 async function progressEntries() {
   const out = [];
@@ -3086,7 +3444,7 @@ function panelSources(src, en) {
   }
   return rows;
 }
-function buildHeroSlide(item, shelfTitle, src, en, tv) {
+function buildHeroSlide(item, shelfTitle, firstRef, src, en, tv) {
   const nombre = SOURCES[src].name;
   const sub = (shelfTitle ? shelfTitle + " · " : "") + (isNovel(src) ? en ? "Light Novel" : "Novela Ligera" : "Manga · Manhwa");
   const hasHttps = typeof item.p === "string" && item.p.indexOf("https://") === 0;
@@ -3099,7 +3457,7 @@ function buildHeroSlide(item, shelfTitle, src, en, tv) {
     canRequestFocus: tv ? true : void 0,
     buttons: [
       { type: "ElevatedButton", icon: "play", labelText: "Abrir obra", labelTextEn: "Open title", onPressed: { go: { screen: { args: { r: item.s, t: item.t } } } } },
-      { type: "Button", variant: "secondary", icon: "list", labelText: "Ver " + nombre, labelTextEn: "Browse " + nombre, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } } }
+      { type: "Button", variant: "secondary", icon: "list", labelText: "Catálogo " + nombre, labelTextEn: "Browse " + nombre, onPressed: { go: { screen: { route: "fuente", args: { s: src, ref: firstRef || defaultRefFor(src) } } } } }
     ]
   };
 }
@@ -3117,13 +3475,14 @@ function viewMain(ctx) {
   }
   if (!loading && shelves.length) {
     const firstShelf = shelves[0];
+    const firstRef = inferShelfRef(src, firstShelf, 0);
     const heroItems = [];
     const seenHero = /* @__PURE__ */ new Set();
     for (const sh of shelves) {
       for (const it of sh.items || []) {
         if (!it || !it.s || !it.p || it.p.indexOf("https://") !== 0 || seenHero.has(it.s)) continue;
         seenHero.add(it.s);
-        heroItems.push({ it, shTitle: sh.title || firstShelf.title || "" });
+        heroItems.push({ it, shTitle: sh.title || firstShelf.title || "", shRef: inferShelfRef(src, sh, 0) });
         if (heroItems.length >= 4) break;
       }
       if (heroItems.length >= 4) break;
@@ -3135,13 +3494,13 @@ function viewMain(ctx) {
         padEnds: false,
         autoPlayMs: 6500,
         margin: { x: 8, y: 4 },
-        children: heroItems.map((h) => buildHeroSlide(h.it, h.shTitle, src, en, tv))
+        children: heroItems.map((h) => buildHeroSlide(h.it, h.shTitle, h.shRef || firstRef, src, en, tv))
       });
     } else if (heroItems.length === 1) {
       kids.push({
         type: "Column",
         padding: { x: 16, y: 4 },
-        children: [buildHeroSlide(heroItems[0].it, heroItems[0].shTitle, src, en, tv)]
+        children: [buildHeroSlide(heroItems[0].it, heroItems[0].shTitle, heroItems[0].shRef || firstRef, src, en, tv)]
       });
     }
   }
@@ -3176,7 +3535,8 @@ function viewMain(ctx) {
   } else if (shelves.length) {
     shelves.forEach((row, idx) => {
       const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
-      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
+      const rowRef = inferShelfRef(src, row, idx);
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, ref: rowRef, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
     });
   } else if (state.herr) {
     if (state.cf && ctx.device !== "tv") {
@@ -3203,18 +3563,6 @@ function viewMain(ctx) {
   } else {
     kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
-  kids.push({
-    type: "Card",
-    variant: "outlined",
-    border: { width: 1, color: "primary" },
-    background: "surfaceVariant",
-    borderRadius: "large",
-    margin: { x: 16, y: 12 },
-    padding: { x: 12, y: 8 },
-    children: [
-      { type: "TextButton", icon: "list", labelText: "Ver más de " + SOURCES[src].name, labelTextEn: "More from " + SOURCES[src].name, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } }, fill: true, padding: { x: 16, y: 8 } }
-    ]
-  });
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16, y: 4 } });
   const capsula = {
     type: "Card",
@@ -3301,36 +3649,90 @@ function viewMain(ctx) {
   root.every = [{ ms: 1e3, event: "capsTick" }];
   return root;
 }
-async function loadFuenteAll(src, en) {
+async function loadFuenteCategory(src, ref, cursor, en) {
+  const parsed = parseBrowseRef(ref);
+  const targetSrc = parsed && SOURCES[parsed.src] ? parsed.src : src;
+  const targetRef = parsed && SOURCES[parsed.src] ? ref : defaultRefFor(targetSrc);
+  const meta = catalogEntryFor(targetRef);
+  const pageNum = Math.max(1, Number(cursor) || 1);
   try {
-    const ck = cacheKey("fuente", src);
+    const ck = cacheKey("cat", targetRef + ":" + pageNum);
     const cached = cacheGet(ck, TTL.rows);
-    if (cached && cached.length) return { shelves: cached, err: null, cf: false, cfKind: null };
-    let shelves = [];
-    if (isNovel(src)) {
-      const raw = await novelHome(src, { full: true });
-      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
-    } else {
-      const specs = tabSpecs(src).map((sp) => ({ ...sp, params: { ...sp.params || {}, postsPerPage: 60 } }));
-      const settled = await Promise.allSettled(specs.map(fetchOneRow));
-      for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
+    if (cached && Array.isArray(cached.items) && cached.items.length) {
+      return {
+        src: targetSrc,
+        ref: targetRef,
+        title: meta && meta.fullTitle || SOURCES[targetSrc].name,
+        titleEn: meta && meta.fullTitleEn || SOURCES[targetSrc].name,
+        items: cached.items,
+        next: cached.next || null,
+        err: null,
+        cf: false,
+        cfKind: null
+      };
     }
-    if (shelves.length) cacheSet(ck, shelves);
-    if (!shelves.length) return probeCf(src, en, shelves);
-    return { shelves, err: null, cf: false, cfKind: null };
+    const pageRes = await browse2(targetRef, cursor || null);
+    const items = (pageRes && pageRes.items || []).map(compactCard).filter(Boolean);
+    const next = pageRes && pageRes.next || null;
+    if (items.length) cacheSet(ck, { items, next });
+    if (!items.length && pageNum === 1) {
+      const cfInfo = await probeCf(targetSrc, en, []);
+      return {
+        src: targetSrc,
+        ref: targetRef,
+        title: meta && meta.fullTitle || SOURCES[targetSrc].name,
+        titleEn: meta && meta.fullTitleEn || SOURCES[targetSrc].name,
+        items: [],
+        next: null,
+        err: cfInfo.err,
+        cf: cfInfo.cf,
+        cfKind: cfInfo.cfKind
+      };
+    }
+    return {
+      src: targetSrc,
+      ref: targetRef,
+      title: meta && meta.fullTitle || SOURCES[targetSrc].name,
+      titleEn: meta && meta.fullTitleEn || SOURCES[targetSrc].name,
+      items,
+      next,
+      err: null,
+      cf: false,
+      cfKind: null
+    };
   } catch (e) {
-    return probeCf(src, en, [], SOURCES[src].name + ": " + String(e && e.userMessage || e && e.message || "la fuente no respondió").slice(0, 140));
+    const cfInfo = await probeCf(targetSrc, en, [], SOURCES[targetSrc].name + ": " + String(e && e.userMessage || e && e.message || "la fuente no respondió").slice(0, 140));
+    return {
+      src: targetSrc,
+      ref: targetRef,
+      title: meta && meta.fullTitle || SOURCES[targetSrc].name,
+      titleEn: meta && meta.fullTitleEn || SOURCES[targetSrc].name,
+      items: [],
+      next: null,
+      err: cfInfo.err,
+      cf: cfInfo.cf,
+      cfKind: cfInfo.cfKind
+    };
   }
 }
 function viewFuente(ctx) {
   const { state, lang } = ctx;
   const en = lang === "en";
   const args = ctx.route && (ctx.route.args || ctx.route.params) || null;
-  const src = state.fuente && state.fuente.src || args && args.s || state.hsrc || "zt";
-  const nombre = SOURCES[src] ? SOURCES[src].name : String(src);
   const f = state.fuente || null;
-  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 8 } });
-  const kids = [
+  const rawRef = f && f.ref || args && args.ref || "";
+  const refParsed = parseBrowseRef(rawRef);
+  const src = f && f.src && SOURCES[f.src] ? f.src : refParsed && SOURCES[refParsed.src] ? refParsed.src : args && args.s && SOURCES[args.s] ? args.s : state.hsrc || "zt";
+  const activeRef = refParsed && refParsed.src === src ? rawRef : defaultRefFor(src);
+  const nombre = SOURCES[src] ? SOURCES[src].name : String(src);
+  const meta = catalogEntryFor(activeRef);
+  const catTitle = f && f.title || meta && meta.fullTitle || nombre + " · Todo";
+  const catTitleEn = f && f.titleEn || meta && meta.fullTitleEn || nombre + " · All";
+  const spec = SOURCE_CATALOG[src] || { cats: [], genres: [] };
+  const catOpts = (spec.cats || []).map((c) => ({ value: c.ref, label: en ? c.labelEn : c.label }));
+  const genOpts = (spec.genres || []).map((g) => ({ value: g.ref, label: en ? g.labelEn : g.label }));
+  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 4 } });
+  const headerKids = [
     {
       type: "Card",
       variant: "filled",
@@ -3344,7 +3746,7 @@ function viewFuente(ctx) {
         gap: 8,
         children: [
           { type: "Row", mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [
-            { type: "Text", text: nombre, style: "h3" },
+            { type: "Text", text: en ? catTitleEn : catTitle, textEn: catTitleEn, style: "h3", flex: 1 },
             { type: "Badge", text: isNovel(src) ? "NOVELA" : "MANGA", color: "primary" }
           ] },
           salir()
@@ -3352,14 +3754,49 @@ function viewFuente(ctx) {
       }]
     }
   ];
+  if (catOpts.length) {
+    headerKids.push({
+      type: "Chips",
+      key: "catChip",
+      value: catOpts.some((o) => o.value === activeRef) ? activeRef : [],
+      options: catOpts,
+      onChanged: "catSel",
+      padding: { x: 16, y: 4 }
+    });
+  }
+  if (genOpts.length) {
+    headerKids.push({
+      type: "Chips",
+      key: "genChip",
+      value: genOpts.some((o) => o.value === activeRef) ? activeRef : [],
+      options: genOpts,
+      onChanged: "catSel",
+      padding: { x: 16, y: 4 }
+    });
+  }
+  if (f && !Array.isArray(f.items) && Array.isArray(f.shelves)) {
+    const legacyKids = [...headerKids];
+    if (!f.shelves.length) {
+      legacyKids.push(empty("Sin datos de " + nombre + " por ahora", "No data from " + nombre + " yet"));
+    } else {
+      f.shelves.forEach((row, idx) => {
+        const primerP2 = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+        legacyKids.push({ type: "titleRail", headers: imgHeads(primerP2 && primerP2.p), title: row.title || "", titleEn: row.titleEn, ref: inferShelfRef(src, row, idx), items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
+      });
+    }
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: legacyKids }, { navValue: "home" });
+  }
+  const bodyKids = [...headerKids];
   if (!f) {
-    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+    bodyKids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "Skeleton", shape: "card", height: 200 },
       { type: "Skeleton", shape: "card", height: 200 },
-      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } }
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar", arg: activeRef }, padding: { x: 16, y: 4 } }
     ] });
-  } else if (f.cf && ctx.device !== "tv") {
-    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
+  }
+  if (f.cf && ctx.device !== "tv") {
+    bodyKids.push({ type: "Column", gap: 12, padding: 16, children: [
       {
         type: "errorState",
         icon: "lock",
@@ -3368,20 +3805,46 @@ function viewFuente(ctx) {
         text: nombre + " está tras Cloudflare: resuélvelo desde el Home o prueba más tarde.",
         textEn: nombre + " is behind Cloudflare: solve it from the Home or try later."
       },
-      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } }
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar", arg: activeRef }, padding: { x: 16, y: 4 } }
     ] });
-  } else if (f.err) {
-    kids.push(errorBox(f.err, "reintentar"));
-  } else if (!(f.shelves || []).length) {
-    kids.push(empty("Sin datos de " + nombre + " por ahora", "No data from " + nombre + " yet"));
-  } else {
-    f.shelves.forEach((row, idx) => {
-      const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
-      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
-    });
-    kids.push({ type: "TextButton", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, padding: { x: 16, y: 8 } });
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
   }
-  return scaffold(nombre + " · Todo", nombre + " · Everything", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home" });
+  if (f.err) {
+    bodyKids.push(errorBox(f.err, "reintentar", activeRef));
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
+  }
+  const items = (f.items || []).map(expandOne).filter(Boolean);
+  if (!items.length) {
+    bodyKids.push(empty("Sin títulos en esta categoría por ahora", "No titles in this category yet"));
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
+  }
+  const primerP = (f.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+  bodyKids.push({
+    type: "titleGrid",
+    flex: 1,
+    columns: deviceCols(ctx),
+    headers: imgHeads(primerP && primerP.p),
+    items,
+    onEndReached: f.next ? { event: "catMas" } : void 0,
+    loadingMore: Boolean(f.loadingMore),
+    done: !f.next
+  });
+  if (f.next) {
+    bodyKids.push({
+      type: "Button",
+      variant: "secondary",
+      icon: "expand_more",
+      labelText: "Cargar más títulos",
+      labelTextEn: "Load more titles",
+      loading: Boolean(f.loadingMore),
+      onPressed: { event: "catMas" },
+      fill: true,
+      padding: { x: 16, y: 8 }
+    });
+  }
+  const root = scaffold(catTitle, catTitleEn, ctx, { type: "Column", crossAxisAlignment: "stretch", children: bodyKids }, { navValue: "home" });
+  root.layout = "fill";
+  return root;
 }
 var BIB_TAGS = [
   { k: "leyendo", t: "Leyendo", te: "Reading" },
@@ -3879,8 +4342,17 @@ async function screenEvent(ctx) {
     case "atras":
       if (!ctx.route || !ctx.route.name || ctx.route.name === "main") return { close: true };
       return { route: { pop: true } };
-    case "reintentar":
+    case "reintentar": {
+      if (ctx.route && ctx.route.name === "fuente") {
+        const cur = state && state.fuente;
+        const rArg = String(arg || cur && cur.ref || "");
+        const p = parseBrowseRef(rArg);
+        const s = cur && cur.src || p && p.src || state && state.hsrc || "zt";
+        const f = await loadFuenteCategory(s, rArg || defaultRefFor(s), null, en);
+        return { state: { fuente: f } };
+      }
       return handleOpen(ctx);
+    }
     case "nada":
       return null;
     case "navBar": {
@@ -3898,9 +4370,42 @@ async function screenEvent(ctx) {
       const src = String(arg || value || "zt");
       if (!SOURCES[src]) return null;
       const cached = cacheGet(cacheKey("home", src), TTL.rows);
-      if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
+      if (cached && cached.length && cached[0].ref) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
       const sh = await loadHomeShelves(src, en);
       return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), cfKind: sh.cfKind || null, error: null, done: true, capsOpen: false } };
+    }
+    case "catSel": {
+      const targetRef = String(value || arg || "");
+      const parsed = parseBrowseRef(targetRef);
+      if (!parsed || !SOURCES[parsed.src]) return null;
+      const f = await loadFuenteCategory(parsed.src, targetRef, null, en);
+      return { state: { fuente: f } };
+    }
+    case "catMas": {
+      const cur = state && state.fuente;
+      if (!cur || !cur.next || cur.loadingMore) return null;
+      const more = await loadFuenteCategory(cur.src, cur.ref, cur.next, en);
+      if (more.err && !more.items.length) {
+        return { toast: more.err, state: { fuente: { ...cur, loadingMore: false, next: null } } };
+      }
+      const seen = new Set((cur.items || []).map((x) => x.s));
+      const merged = (cur.items || []).slice();
+      for (const it of more.items || []) {
+        if (!seen.has(it.s)) {
+          seen.add(it.s);
+          merged.push(it);
+        }
+      }
+      return {
+        state: {
+          fuente: {
+            ...cur,
+            items: merged,
+            next: more.next || null,
+            loadingMore: false
+          }
+        }
+      };
     }
     case "cfAbrir": {
       const argL = String(arg || "");
@@ -4225,9 +4730,12 @@ async function runSearch(q, soloSrc) {
 async function handleOpen(ctx) {
   const { route } = ctx;
   const args = route && (route.args || route.params) || null;
-  if (args && args.s && SOURCES[args.s]) {
-    const f = await loadFuenteAll(args.s, ctx.lang === "en");
-    return { state: { fuente: { src: args.s, shelves: f.shelves, err: f.err, cf: f.cf, cfKind: f.cfKind }, herr: null, error: null, note: null } };
+  const argRef = args && args.ref ? String(args.ref) : "";
+  const refParsed = parseBrowseRef(argRef);
+  const srcFromArgs = args && args.s && SOURCES[args.s] ? args.s : refParsed && SOURCES[refParsed.src] ? refParsed.src : null;
+  if (srcFromArgs) {
+    const f = await loadFuenteCategory(srcFromArgs, argRef || defaultRefFor(srcFromArgs), null, ctx.lang === "en");
+    return { state: { fuente: f, herr: null, error: null, note: null } };
   }
   if (args && args.r && args.m) {
     try {
@@ -4337,7 +4845,7 @@ async function action(key) {
     const user = kino.config.get("ms_user");
     const pass = kino.config.get("ms_pass");
     if (!user || !pass) return { message: t("Escribe primero tu usuario y contraseña de Manhwa arriba.", "Type your Manhwa user and password above first.") };
-    const r = await login2("ms", user, pass);
+    const r = await login3("ms", user, pass);
     if (r.ok) return { message: t("Entraste en Manhwa: la sesión quedó en las cookies del plugin.", "Signed in to Manhwa: the session is in the plugin's cookies.") };
     return { message: r.message || t("No se entró.", "Sign-in failed.") };
   }
@@ -4351,12 +4859,12 @@ async function validateSettings(values) {
 }
 export {
   action,
-  browse,
+  browse2 as browse,
   categories,
   home2 as home,
   screen,
   screenEvent,
-  search4 as search,
+  search5 as search,
   section,
   settingsStatus,
   validateSettings

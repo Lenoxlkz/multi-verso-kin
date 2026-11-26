@@ -18,6 +18,7 @@ import * as zt from "./zonatmo.js";
 import * as zoA from "./zonatmoorg.js";
 import * as ms from "./manhwa.js";
 import * as nv from "./novels.js";
+import { browse, SOURCE_CATALOG, catalogEntryFor, parseBrowseRef } from "./catalog.js";
 import { THEMES } from "./themes.js";
 
 // El adaptador de novelas expone la misma interfaz (search/home/detail/chapter) que los de manga.
@@ -202,18 +203,40 @@ async function readProgress(mr) {
 
 // ---------- filas del Home, con caché instantánea ----------
 
+function defaultRefFor(src) {
+  const cats = SOURCE_CATALOG[src] && SOURCE_CATALOG[src].cats;
+  return (cats && cats[0] && cats[0].ref) || (src + ":all");
+}
+
+function inferShelfRef(src, row, idx) {
+  if (row && row.ref && parseBrowseRef(row.ref)) return row.ref;
+  const id = String((row && row.id) || "");
+  if (id === src + "-new") return (src === "ms" || src === "mh") ? src + ":latest" : src + ":new";
+  if (id === src + "-pop") return src + ":pop";
+  if (id === src + "-top") return src + ":score";
+  if (id === src + "-emi") return src + ":on-going";
+  if (id === src + "-end") return src + ":end";
+  if (id.indexOf(src + "-") === 0) {
+    const candidate = src + ":" + id.slice(src.length + 1);
+    if (catalogEntryFor(candidate)) return candidate;
+  }
+  const cats = SOURCE_CATALOG[src] && SOURCE_CATALOG[src].cats;
+  if (cats && cats[idx]) return cats[idx].ref;
+  return defaultRefFor(src);
+}
+
 /** Secciones del Home SOLO para las fuentes de manga, tal y como las muestra cada sitio:
  *  ZonaTMO: actualizados / lo más visto / mejor valorados; ManhwaSS: últimas / en emisión / completados. */
 function tabSpecs(src) {
   if (src === "zt" || src === "zo") return [
-    { id: src + "-new", src, title: SOURCES[src].name + " · Actualizados", titleEn: SOURCES[src].name + " · Updated", params: { page: 1, order: "new", postsPerPage: 12 } },
-    { id: src + "-pop", src, title: SOURCES[src].name + " · Lo más visto", titleEn: SOURCES[src].name + " · Most read", params: { tops: true, page: 1, postsPerPage: 12 } },
-    { id: src + "-top", src, title: SOURCES[src].name + " · Mejor valorados", titleEn: SOURCES[src].name + " · Top rated", params: { page: 1, order: "score", postsPerPage: 12 } },
+    { id: src + "-new", src, ref: src + ":new", title: SOURCES[src].name + " · Actualizados", titleEn: SOURCES[src].name + " · Updated", params: { page: 1, order: "new", postsPerPage: 12 } },
+    { id: src + "-pop", src, ref: src + ":pop", title: SOURCES[src].name + " · Lo más visto", titleEn: SOURCES[src].name + " · Most read", params: { tops: true, page: 1, postsPerPage: 12 } },
+    { id: src + "-top", src, ref: src + ":score", title: SOURCES[src].name + " · Mejor valorados", titleEn: SOURCES[src].name + " · Top rated", params: { page: 1, order: "score", postsPerPage: 12 } },
   ];
   if (src === "ms" || src === "mh") return [
-    { id: src + "-new", src, title: SOURCES[src].name + " · Últimas actualizaciones", titleEn: SOURCES[src].name + " · Latest", params: { latest: true } },
-    { id: src + "-emi", src, title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
-    { id: src + "-end", src, title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } },
+    { id: src + "-new", src, ref: src + ":latest", title: SOURCES[src].name + " · Últimas actualizaciones", titleEn: SOURCES[src].name + " · Latest", params: { latest: true } },
+    { id: src + "-emi", src, ref: src + ":on-going", title: SOURCES[src].name + " · En emisión", titleEn: SOURCES[src].name + " · Ongoing", params: { page: 1, estado: "on-going" } },
+    { id: src + "-end", src, ref: src + ":end", title: SOURCES[src].name + " · Completados", titleEn: SOURCES[src].name + " · Completed", params: { page: 1, estado: "end" } },
   ];
   return [];
 }
@@ -223,11 +246,11 @@ async function loadHomeShelves(src, en) {
   try {
     const ck = cacheKey("home", src);
     const cached = cacheGet(ck, TTL.rows);
-    if (cached && cached.length) return { shelves: cached, cf: false, cfKind: null, err: null };
+    if (cached && cached.length && cached[0].ref) return { shelves: cached, cf: false, cfKind: null, err: null };
     let shelves;
     if (isNovel(src)) {
       const raw = await nv.novelHome(src);
-      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
+      shelves = (raw || []).map((r, idx) => ({ id: r.id, ref: r.ref || inferShelfRef(src, r, idx), title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
     } else {
       const specs = tabSpecs(src);
       const settled = await Promise.allSettled(specs.map(fetchOneRow));
@@ -277,7 +300,7 @@ async function fetchOneRow(spec) {
   else res = await a.list(spec.src, spec.params);
   const items = res.items.slice(0, 12).map(compactCard);
   if (items.length) cacheSet(cacheKey("rows", spec.id), items);
-  return { id: spec.id, title: spec.title, titleEn: spec.titleEn, ref: spec.pop, items };
+  return { id: spec.id, ref: spec.ref, title: spec.title, titleEn: spec.titleEn, items };
 }
 
 /** Refresca las 6 filas en paralelo; cada fila entra si pudo. */
@@ -520,7 +543,7 @@ function panelSources(src, en) {
 }
 
 /** Construye una tarjeta hero editorial para el carrusel de portada (PageView + heroCard). */
-function buildHeroSlide(item, shelfTitle, src, en, tv) {
+function buildHeroSlide(item, shelfTitle, firstRef, src, en, tv) {
   const nombre = SOURCES[src].name;
   const sub = (shelfTitle ? shelfTitle + " · " : "") + (isNovel(src) ? (en ? "Light Novel" : "Novela Ligera") : "Manga · Manhwa");
   const hasHttps = typeof item.p === "string" && item.p.indexOf("https://") === 0;
@@ -533,7 +556,7 @@ function buildHeroSlide(item, shelfTitle, src, en, tv) {
     canRequestFocus: tv ? true : undefined,
     buttons: [
       { type: "ElevatedButton", icon: "play", labelText: "Abrir obra", labelTextEn: "Open title", onPressed: { go: { screen: { args: { r: item.s, t: item.t } } } } },
-      { type: "Button", variant: "secondary", icon: "list", labelText: "Ver " + nombre, labelTextEn: "Browse " + nombre, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } } },
+      { type: "Button", variant: "secondary", icon: "list", labelText: "Catálogo " + nombre, labelTextEn: "Browse " + nombre, onPressed: { go: { screen: { route: "fuente", args: { s: src, ref: firstRef || defaultRefFor(src) } } } } },
     ],
   };
 }
@@ -555,13 +578,14 @@ function viewMain(ctx) {
   // Escaparate Hero (PageView de hasta 4 obras destacadas con portada https)
   if (!loading && shelves.length) {
     const firstShelf = shelves[0];
+    const firstRef = inferShelfRef(src, firstShelf, 0);
     const heroItems = [];
     const seenHero = new Set();
     for (const sh of shelves) {
       for (const it of sh.items || []) {
         if (!it || !it.s || !it.p || it.p.indexOf("https://") !== 0 || seenHero.has(it.s)) continue;
         seenHero.add(it.s);
-        heroItems.push({ it, shTitle: sh.title || firstShelf.title || "" });
+        heroItems.push({ it, shTitle: sh.title || firstShelf.title || "", shRef: inferShelfRef(src, sh, 0) });
         if (heroItems.length >= 4) break;
       }
       if (heroItems.length >= 4) break;
@@ -573,13 +597,13 @@ function viewMain(ctx) {
         padEnds: false,
         autoPlayMs: 6500,
         margin: { x: 8, y: 4 },
-        children: heroItems.map((h) => buildHeroSlide(h.it, h.shTitle, src, en, tv)),
+        children: heroItems.map((h) => buildHeroSlide(h.it, h.shTitle, h.shRef || firstRef, src, en, tv)),
       });
     } else if (heroItems.length === 1) {
       kids.push({
         type: "Column",
         padding: { x: 16, y: 4 },
-        children: [buildHeroSlide(heroItems[0].it, heroItems[0].shTitle, src, en, tv)],
+        children: [buildHeroSlide(heroItems[0].it, heroItems[0].shTitle, heroItems[0].shRef || firstRef, src, en, tv)],
       });
     }
   }
@@ -617,7 +641,8 @@ function viewMain(ctx) {
   } else if (shelves.length) {
     shelves.forEach((row, idx) => {
       const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
-      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
+      const rowRef = inferShelfRef(src, row, idx);
+      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, ref: rowRef, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
     });
   } else if (state.herr) {
     if (state.cf && ctx.device !== "tv") {
@@ -643,14 +668,6 @@ function viewMain(ctx) {
   } else {
     kids.push(empty("Sin datos de " + SOURCES[src].name + " por ahora", "No data from " + SOURCES[src].name + " yet"));
   }
-  // «Ver más» de la fuente (RCA 2026-11, #2): tarjeta destacada para abrir TODO el contenido
-  kids.push({
-    type: "Card", variant: "outlined", border: { width: 1, color: "primary" }, background: "surfaceVariant", borderRadius: "large",
-    margin: { x: 16, y: 12 }, padding: { x: 12, y: 8 },
-    children: [
-      { type: "TextButton", icon: "list", labelText: "Ver más de " + SOURCES[src].name, labelTextEn: "More from " + SOURCES[src].name, onPressed: { go: { screen: { route: "fuente", args: { s: src } } } }, fill: true, padding: { x: 16, y: 8 } },
-    ],
-  });
   if (state.note) kids.push({ type: "Text", text: String(state.note).slice(0, 160), style: "body", color: "muted", padding: { x: 16, y: 4 } });
 
   // ---- cápsula editorial fijada arriba + panel desplegable (overlay con scrim) ----
@@ -726,51 +743,110 @@ function viewMain(ctx) {
   return root;
 }
 
-// ---------- fuente: la pantalla dedicada del «Ver más» ----------
+// ---------- fuente: catálogo paginado por categoría y género ----------
 
-/** Contenido COMPLETO de una fuente para su pantalla dedicada: las mismas filas que el Home
- *  pero con muchos más títulos por fila (60). Caché propia y sonda CF igual que el Home. */
-async function loadFuenteAll(src, en) {
+/** Carga una página real del catálogo de una categoría o género concreto usando browse(ref, cursor). */
+async function loadFuenteCategory(src, ref, cursor, en) {
+  const parsed = parseBrowseRef(ref);
+  const targetSrc = (parsed && SOURCES[parsed.src]) ? parsed.src : src;
+  const targetRef = (parsed && SOURCES[parsed.src]) ? ref : defaultRefFor(targetSrc);
+  const meta = catalogEntryFor(targetRef);
+  const pageNum = Math.max(1, Number(cursor) || 1);
   try {
-    const ck = cacheKey("fuente", src);
+    const ck = cacheKey("cat", targetRef + ":" + pageNum);
     const cached = cacheGet(ck, TTL.rows);
-    if (cached && cached.length) return { shelves: cached, err: null, cf: false, cfKind: null };
-    let shelves = [];
-    if (isNovel(src)) {
-      const raw = await nv.novelHome(src, { full: true });
-      shelves = (raw || []).map((r) => ({ id: r.id, title: r.title, titleEn: r.titleEn, items: (r.items || []).map(compactCard).filter(Boolean) }));
-    } else {
-      const specs = tabSpecs(src).map((sp) => ({ ...sp, params: { ...(sp.params || {}), postsPerPage: 60 } }));
-      const settled = await Promise.allSettled(specs.map(fetchOneRow));
-      for (const p of settled) if (p.status === "fulfilled" && p.value && p.value.items.length) shelves.push(p.value);
+    if (cached && Array.isArray(cached.items) && cached.items.length) {
+      return {
+        src: targetSrc,
+        ref: targetRef,
+        title: (meta && meta.fullTitle) || SOURCES[targetSrc].name,
+        titleEn: (meta && meta.fullTitleEn) || SOURCES[targetSrc].name,
+        items: cached.items,
+        next: cached.next || null,
+        err: null,
+        cf: false,
+        cfKind: null,
+      };
     }
-    if (shelves.length) cacheSet(ck, shelves);
-    if (!shelves.length) return probeCf(src, en, shelves);
-    return { shelves, err: null, cf: false, cfKind: null };
+    const pageRes = await browse(targetRef, cursor || null);
+    const items = ((pageRes && pageRes.items) || []).map(compactCard).filter(Boolean);
+    const next = (pageRes && pageRes.next) || null;
+    if (items.length) cacheSet(ck, { items, next });
+    if (!items.length && pageNum === 1) {
+      const cfInfo = await probeCf(targetSrc, en, []);
+      return {
+        src: targetSrc,
+        ref: targetRef,
+        title: (meta && meta.fullTitle) || SOURCES[targetSrc].name,
+        titleEn: (meta && meta.fullTitleEn) || SOURCES[targetSrc].name,
+        items: [],
+        next: null,
+        err: cfInfo.err,
+        cf: cfInfo.cf,
+        cfKind: cfInfo.cfKind,
+      };
+    }
+    return {
+      src: targetSrc,
+      ref: targetRef,
+      title: (meta && meta.fullTitle) || SOURCES[targetSrc].name,
+      titleEn: (meta && meta.fullTitleEn) || SOURCES[targetSrc].name,
+      items,
+      next,
+      err: null,
+      cf: false,
+      cfKind: null,
+    };
   } catch (e) {
-    // los adaptadores lanzan con HTTP 403/503: la sonda decide si fue un desafío de Cloudflare
-    return probeCf(src, en, [], SOURCES[src].name + ": " + String((e && e.userMessage) || (e && e.message) || "la fuente no respondió").slice(0, 140));
+    const cfInfo = await probeCf(targetSrc, en, [], SOURCES[targetSrc].name + ": " + String((e && e.userMessage) || (e && e.message) || "la fuente no respondió").slice(0, 140));
+    return {
+      src: targetSrc,
+      ref: targetRef,
+      title: (meta && meta.fullTitle) || SOURCES[targetSrc].name,
+      titleEn: (meta && meta.fullTitleEn) || SOURCES[targetSrc].name,
+      items: [],
+      next: null,
+      err: cfInfo.err,
+      cf: cfInfo.cf,
+      cfKind: cfInfo.cfKind,
+    };
   }
 }
 
-/** Vista «fuente»: TODO el contenido de la fuente elegida (el destino del «Ver más» del Home),
- *  con un botón de Salir claro arriba y al final (la barra también da Atrás). */
+/** Compatibilidad y punto de entrada del catálogo completo por fuente/categoría. */
+async function loadFuenteAll(src, en, ref) {
+  return loadFuenteCategory(src, ref || defaultRefFor(src), null, en);
+}
+
+/** Vista «fuente»: catálogo paginado real de la categoría o género elegido de una fuente,
+ *  con selector de categorías/géneros, scroll infinito (`onEndReached`), carga manual y botón Salir. */
 function viewFuente(ctx) {
   const { state, lang } = ctx;
   const en = lang === "en";
   const args = (ctx.route && (ctx.route.args || ctx.route.params)) || null;
-  const src = (state.fuente && state.fuente.src) || (args && args.s) || state.hsrc || "zt";
-  const nombre = SOURCES[src] ? SOURCES[src].name : String(src);
   const f = state.fuente || null;
-  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 8 } });
-  const kids = [
+  const rawRef = (f && f.ref) || (args && args.ref) || "";
+  const refParsed = parseBrowseRef(rawRef);
+  const src = (f && f.src && SOURCES[f.src]) ? f.src : (refParsed && SOURCES[refParsed.src]) ? refParsed.src : (args && args.s && SOURCES[args.s]) ? args.s : state.hsrc || "zt";
+  const activeRef = (refParsed && refParsed.src === src) ? rawRef : defaultRefFor(src);
+  const nombre = SOURCES[src] ? SOURCES[src].name : String(src);
+  const meta = catalogEntryFor(activeRef);
+  const catTitle = (f && f.title) || (meta && meta.fullTitle) || (nombre + " · Todo");
+  const catTitleEn = (f && f.titleEn) || (meta && meta.fullTitleEn) || (nombre + " · All");
+  const spec = SOURCE_CATALOG[src] || { cats: [], genres: [] };
+  const catOpts = (spec.cats || []).map((c) => ({ value: c.ref, label: en ? c.labelEn : c.label }));
+  const genOpts = (spec.genres || []).map((g) => ({ value: g.ref, label: en ? g.labelEn : g.label }));
+
+  const salir = () => ({ type: "Button", variant: "secondary", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, fill: true, padding: { x: 16, y: 4 } });
+
+  const headerKids = [
     {
       type: "Card", variant: "filled", background: "surfaceVariant", border: { width: 1, color: "primary" }, borderRadius: "large",
       margin: { x: 16, y: 8 }, padding: 12,
       children: [{
         type: "Column", gap: 8, children: [
           { type: "Row", mainAxisAlignment: "spaceBetween", crossAxisAlignment: "center", children: [
-            { type: "Text", text: nombre, style: "h3" },
+            { type: "Text", text: en ? catTitleEn : catTitle, textEn: catTitleEn, style: "h3", flex: 1 },
             { type: "Badge", text: isNovel(src) ? "NOVELA" : "MANGA", color: "primary" },
           ] },
           salir(),
@@ -778,30 +854,95 @@ function viewFuente(ctx) {
       }],
     },
   ];
+  if (catOpts.length) {
+    headerKids.push({
+      type: "Chips",
+      key: "catChip",
+      value: catOpts.some((o) => o.value === activeRef) ? activeRef : [],
+      options: catOpts,
+      onChanged: "catSel",
+      padding: { x: 16, y: 4 },
+    });
+  }
+  if (genOpts.length) {
+    headerKids.push({
+      type: "Chips",
+      key: "genChip",
+      value: genOpts.some((o) => o.value === activeRef) ? activeRef : [],
+      options: genOpts,
+      onChanged: "catSel",
+      padding: { x: 16, y: 4 },
+    });
+  }
+
+  // Respaldo de compatibilidad si llega state.fuente con shelves legadas
+  if (f && !Array.isArray(f.items) && Array.isArray(f.shelves)) {
+    const legacyKids = [...headerKids];
+    if (!f.shelves.length) {
+      legacyKids.push(empty("Sin datos de " + nombre + " por ahora", "No data from " + nombre + " yet"));
+    } else {
+      f.shelves.forEach((row, idx) => {
+        const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+        legacyKids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, ref: inferShelfRef(src, row, idx), items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
+      });
+    }
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: legacyKids }, { navValue: "home" });
+  }
+
+  const bodyKids = [...headerKids];
   if (!f) {
-    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+    bodyKids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "Skeleton", shape: "card", height: 200 },
       { type: "Skeleton", shape: "card", height: 200 },
-      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } },
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar", arg: activeRef }, padding: { x: 16, y: 4 } },
     ] });
-  } else if (f.cf && ctx.device !== "tv") {
-    kids.push({ type: "Column", gap: 12, padding: 16, children: [
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
+  }
+  if (f.cf && ctx.device !== "tv") {
+    bodyKids.push({ type: "Column", gap: 12, padding: 16, children: [
       { type: "errorState", icon: "lock", title: f.cfKind === "blocked" ? "La fuente está bloqueada" : "Desafío de Cloudflare", titleEn: f.cfKind === "blocked" ? "The source is blocked" : "Cloudflare challenge",
         text: nombre + " está tras Cloudflare: resuélvelo desde el Home o prueba más tarde.", textEn: nombre + " is behind Cloudflare: solve it from the Home or try later." },
-      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar" }, padding: { x: 16, y: 4 } },
+      { type: "TextButton", labelText: "Reintentar", labelTextEn: "Retry", onPressed: { event: "reintentar", arg: activeRef }, padding: { x: 16, y: 4 } },
     ] });
-  } else if (f.err) {
-    kids.push(errorBox(f.err, "reintentar"));
-  } else if (!(f.shelves || []).length) {
-    kids.push(empty("Sin datos de " + nombre + " por ahora", "No data from " + nombre + " yet"));
-  } else {
-    f.shelves.forEach((row, idx) => {
-      const primerP = (row.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
-      kids.push({ type: "titleRail", headers: imgHeads(primerP && primerP.p), title: row.title || "", titleEn: row.titleEn, items: (row.items || []).map(expandOne).filter(Boolean), size: idx === 0 ? "medium" : "small" });
-    });
-    kids.push({ type: "TextButton", icon: "arrow_back", labelText: "Salir (volver al Home)", labelTextEn: "Exit (back to Home)", onPressed: { event: "atras" }, padding: { x: 16, y: 8 } });
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
   }
-  return scaffold(nombre + " · Todo", nombre + " · Everything", ctx, { type: "SingleChildScrollView", children: kids }, { navValue: "home" });
+  if (f.err) {
+    bodyKids.push(errorBox(f.err, "reintentar", activeRef));
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
+  }
+  const items = (f.items || []).map(expandOne).filter(Boolean);
+  if (!items.length) {
+    bodyKids.push(empty("Sin títulos en esta categoría por ahora", "No titles in this category yet"));
+    return scaffold(catTitle, catTitleEn, ctx, { type: "SingleChildScrollView", children: bodyKids }, { navValue: "home" });
+  }
+
+  const primerP = (f.items || []).find((x) => x.p && x.p.indexOf("http") === 0);
+  bodyKids.push({
+    type: "titleGrid",
+    flex: 1,
+    columns: deviceCols(ctx),
+    headers: imgHeads(primerP && primerP.p),
+    items,
+    onEndReached: f.next ? { event: "catMas" } : undefined,
+    loadingMore: Boolean(f.loadingMore),
+    done: !f.next,
+  });
+  if (f.next) {
+    bodyKids.push({
+      type: "Button",
+      variant: "secondary",
+      icon: "expand_more",
+      labelText: "Cargar más títulos",
+      labelTextEn: "Load more titles",
+      loading: Boolean(f.loadingMore),
+      onPressed: { event: "catMas" },
+      fill: true,
+      padding: { x: 16, y: 8 },
+    });
+  }
+  const root = scaffold(catTitle, catTitleEn, ctx, { type: "Column", crossAxisAlignment: "stretch", children: bodyKids }, { navValue: "home" });
+  root.layout = "fill";
+  return root;
 }
 
 // ---------- biblioteca: Me Gustas y etiquetas ----------
@@ -1316,8 +1457,17 @@ export async function screenEvent(ctx) {
       if (!ctx.route || !ctx.route.name || ctx.route.name === "main") return { close: true };
       return { route: { pop: true } };
 
-    case "reintentar":
+    case "reintentar": {
+      if (ctx.route && ctx.route.name === "fuente") {
+        const cur = state && state.fuente;
+        const rArg = String(arg || (cur && cur.ref) || "");
+        const p = parseBrowseRef(rArg);
+        const s = (cur && cur.src) || (p && p.src) || (state && state.hsrc) || "zt";
+        const f = await loadFuenteCategory(s, rArg || defaultRefFor(s), null, en);
+        return { state: { fuente: f } };
+      }
       return handleOpen(ctx);
+    }
 
     case "nada":
       return null;
@@ -1339,9 +1489,44 @@ export async function screenEvent(ctx) {
       const src = String(arg || value || "zt");
       if (!SOURCES[src]) return null;
       const cached = cacheGet(cacheKey("home", src), TTL.rows);
-      if (cached && cached.length) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
+      if (cached && cached.length && cached[0].ref) return { state: { hsrc: src, hrows: cached, herr: null, cf: false, capsOpen: false } };
       const sh = await loadHomeShelves(src, en);
       return { state: { hsrc: src, hrows: sh.shelves, herr: sh.err, cf: Boolean(sh.cf), cfKind: sh.cfKind || null, error: null, done: true, capsOpen: false } };
+    }
+
+    case "catSel": {
+      const targetRef = String(value || arg || "");
+      const parsed = parseBrowseRef(targetRef);
+      if (!parsed || !SOURCES[parsed.src]) return null;
+      const f = await loadFuenteCategory(parsed.src, targetRef, null, en);
+      return { state: { fuente: f } };
+    }
+
+    case "catMas": {
+      const cur = state && state.fuente;
+      if (!cur || !cur.next || cur.loadingMore) return null;
+      const more = await loadFuenteCategory(cur.src, cur.ref, cur.next, en);
+      if (more.err && !more.items.length) {
+        return { toast: more.err, state: { fuente: { ...cur, loadingMore: false, next: null } } };
+      }
+      const seen = new Set((cur.items || []).map((x) => x.s));
+      const merged = (cur.items || []).slice();
+      for (const it of more.items || []) {
+        if (!seen.has(it.s)) {
+          seen.add(it.s);
+          merged.push(it);
+        }
+      }
+      return {
+        state: {
+          fuente: {
+            ...cur,
+            items: merged,
+            next: more.next || null,
+            loadingMore: false,
+          },
+        },
+      };
     }
 
     case "cfAbrir": {
@@ -1685,10 +1870,13 @@ async function runSearch(q, soloSrc) {
 async function handleOpen(ctx) {
   const { route } = ctx;
   const args = (route && (route.args || route.params)) || null;
-  // la pantalla dedicada de una fuente («Ver más» del Home): carga TODO el contenido de esa fuente
-  if (args && args.s && SOURCES[args.s]) {
-    const f = await loadFuenteAll(args.s, ctx.lang === "en");
-    return { state: { fuente: { src: args.s, shelves: f.shelves, err: f.err, cf: f.cf, cfKind: f.cfKind }, herr: null, error: null, note: null } };
+  // la pantalla dedicada de categoría/género de una fuente: carga el catálogo paginado real
+  const argRef = args && args.ref ? String(args.ref) : "";
+  const refParsed = parseBrowseRef(argRef);
+  const srcFromArgs = (args && args.s && SOURCES[args.s]) ? args.s : (refParsed && SOURCES[refParsed.src]) ? refParsed.src : null;
+  if (srcFromArgs) {
+    const f = await loadFuenteCategory(srcFromArgs, argRef || defaultRefFor(srcFromArgs), null, ctx.lang === "en");
+    return { state: { fuente: f, herr: null, error: null, note: null } };
   }
   if (args && args.r && args.m) {
     // Un enlace profundo con capítulo («Seguir leyendo») abre el DETALLE del manga: de ahí sale
