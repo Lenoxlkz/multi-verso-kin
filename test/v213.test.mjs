@@ -17,7 +17,7 @@ const env = readFileSync(root + "src/env.js", "utf8");
 const manifest = JSON.parse(readFileSync(root + "kino-plugin.json", "utf8"));
 
 test("v2.13.0: manifest y controles estáticos del RCA", () => {
-  assert.equal(manifest.version, "2.18.0");
+  assert.equal(manifest.version, "2.19.0");
   // la extracción ya no mira hacia atrás (contaminación entre tarjetas)
   assert.ok(!src.includes("2600"), "novelCards sigue con la ventana de 2600 hacia atrás");
   // v2.14.0: el buscador vuelve a ser el de 2.12.1 (sin exigir </a>) y el extractor estricto

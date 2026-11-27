@@ -50,7 +50,7 @@ test("los capítulos traen TODOS los del HTML (sin paginación) y vecinos comple
 });
 
 test("la versión avanza a 2.11.0 y el build lleva el adaptador nuevo", () => {
-  assert.equal(manifest.version, "2.18.0");
+  assert.equal(manifest.version, "2.19.0");
   assert.ok(built.includes('"/view_uploads/" + ch.id + "/"'), "el build no lleva el adaptador zo");
   assert.ok(built.includes("X-Requested-With"), "el build no lleva la receta AJAX");
 });

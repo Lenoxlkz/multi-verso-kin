@@ -65,7 +65,7 @@ test("«Abrir en el navegador» apunta a la raíz del dominio", () => {
 });
 
 test("la versión avanza y el build lleva el adaptador nuevo", () => {
-  assert.equal(manifest.version, "2.18.0");
+  assert.equal(manifest.version, "2.19.0");
   assert.ok(built.includes('"/" + slug + "/" + capSlug + "/" + id + "/"'), "el build no lleva el adaptador dv");
   assert.ok(built.includes("esNovela(s) ? novelSearch(s, q)"), "el build no lleva la búsqueda de novelas");
 });

@@ -25,7 +25,7 @@ const novelsSrc = readFileSync(root + "src/novels.js", "utf8");
 const manifest = JSON.parse(readFileSync(root + "kino-plugin.json", "utf8"));
 
 test("v2.18.0: manifest y piezas nuevas", () => {
-  assert.equal(manifest.version, "2.18.0");
+  assert.equal(manifest.version, "2.19.0");
   // #1: contadores fuera del título
   assert.ok(dvSrc.includes("function quitaVistas"), "falta quitaVistas");
   assert.ok(dvSrc.includes("function esContador"), "falta esContador");
