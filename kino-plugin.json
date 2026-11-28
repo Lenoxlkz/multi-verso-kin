@@ -1,7 +1,7 @@
 {
   "id": "multi-verso-kin",
   "name": "Multi-verso Kin",
-  "version": "2.19.0",
+  "version": "2.20.0",
   "apiVersion": 20,
   "entry": "plugin.js",
   "description": "Manga, manhwa y novelas ligeras: ZonaTMO, ManhwaSS, Olympus, LeerCapitulo, Ikigai, LectorFenix, MHScans, ManhwaWeb, Skynovels, MatchaNovels, Astral, Anslid y DevilNovels.",

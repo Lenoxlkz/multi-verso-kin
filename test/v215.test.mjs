@@ -24,7 +24,7 @@ const envSrc = readFileSync(root + "src/env.js", "utf8");
 const manifest = JSON.parse(readFileSync(root + "kino-plugin.json", "utf8"));
 
 test("v2.16.0: manifest y piezas del motor progresivo", () => {
-  assert.equal(manifest.version, "2.19.0");
+  assert.equal(manifest.version, "2.20.0");
   // el AJAX real del sitio (plan A)
   assert.ok(dvSrc.includes("dv_load_chapters"), "falta el AJAX dv_load_chapters");
   assert.ok(dvSrc.includes("wp-admin/admin-ajax.php"), "falta el endpoint admin-ajax");

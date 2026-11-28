@@ -251,7 +251,7 @@ test("v2.24 · catalog + screen integran las 15 fuentes, categories <= 24 y árb
   }
 
   const mf = JSON.parse(fs.readFileSync(path.join(ROOT, "kino-plugin.json"), "utf8"));
-  assert.equal(mf.version, "2.19.0");
+  assert.equal(mf.version, "2.20.0");
   assert.equal("signature" in mf, false);
   assert.ok(mf.hosts.includes("mhscans.com"));
   assert.ok(mf.hosts.includes("manhwaweb.com"));

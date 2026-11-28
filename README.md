@@ -1,13 +1,19 @@
 # Multi-verso Kin
 
-Un plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer **manga, manhwa y novelas ligeras en español** de nueve fuentes:
+Un plugin de [Kino](https://kinotvapp.github.io/kino-plugins/) para leer **manga, manhwa y novelas ligeras en español** de **quince fuentes**:
 
 | Fuente | Sitio | Qué da |
 | --- | --- | --- |
 | ZonaTMO | `zonatmo.net` | API JSON: recientes, lo más visto, mejor valorados, géneros, búsqueda |
-| ZonaTMO.org | `zonatmo.org` | El mismo software que zonatmo.net (gemelo: si uno falla, prueba el otro) |
+| ZonaTMO.org | `zonatmo.org` | Scraping HTML/AJAX clásico de TMO (gemelo y respaldo de ZonaTMO) |
 | ManhwaSS | `manhwass.lat` | Webtoon: últimas actualizaciones, en emisión, completados, búsqueda |
 | ManhwaShot | `manhwashot.lat` | La misma aplicación que manhwass.lat (gemelo) |
+| Olympus | `olympusxyz.com` | Cómics y novelas por API JSON: catálogo, rankings, capítulos y texto |
+| LeerCapitulo | `www.leercapitulo.co` | Manga/manhwa: catálogo paginado, búsqueda JSON, lectura por página |
+| Ikigai | `visualikigai.cmpunjabrashancard.pk` | Fuente mixta (cómics y novelas ligeras): catálogo SSR, filtros y lector dual |
+| LectorFenix | `lectorfenix.com` | Manga y manhwa: portada por secciones, catálogo filtrado y lector |
+| MHScans | `mhscans.com` | Fuente mixta (cómics y novelas): Astro SSR, capítulos paginados y soporte de CDN |
+| ManhwaWeb | `manhwaweb.com` | API REST completa: recientes, populares, nuevos, géneros y lectura de capítulos |
 | Skynovels | `skynovels.net` | API JSON: home por secciones, detalle, capítulos de texto, búsqueda |
 | MatchaNovels | `matchanovels.com` | API pública: catálogo por orden y estado, detalle, capítulos de texto |
 | Astral | `astralnovelstranslations.wordpress.com` | Site de WordPress.com: catálogo por página, detalle, capítulos |
@@ -29,6 +35,29 @@ Instalación en Kino: **Ajustes ▸ Plugins ▸ Agregar plugin** y pega `Lenoxlk
 - **Temas de toda la app**: cuatro temas (uno por fuente de manga), con un botón para ponerlos desde la pestaña de ajustes del plugin.
 - **Compartir**: botón en la barra y en el detalle (teléfono), con la tarjeta del título.
 - **Solo catálogo** (`catalogOnly`): el plugin no reproduce video y Kino nunca lo pide como fuente de reproducción.
+
+## Novedades v2.20
+
+**Seis nuevas fuentes integradas, búsqueda equitativa y endurecimiento de seguridad del proxy de imágenes:**
+
+- **6 nuevas fuentes activas (15 en total)**:
+  - **Olympus** (`olympusxyz.com`) — cómics y novelas mediante API JSON y soporte de medios en `media.imagesolymp.xyz`.
+  - **LeerCapitulo** (`www.leercapitulo.co`) — catálogo, búsqueda y lector adaptado a su formato de imágenes.
+  - **Ikigai** (`visualikigai.cmpunjabrashancard.pk`) — fuente mixta (cómics en `ikigaimangas.cloud` y novelas en texto limpio).
+  - **LectorFenix** (`lectorfenix.com`) — secciones de portada, catálogo filtrado y lector con reintento ante cortes `403/429/503` en CDN.
+  - **MHScans** (`mhscans.com`) — fuente mixta (cómics con soporte para rutas `/uploads/pages/` y subdominios `*.mhscans.com` lazy `data-src`, además de novelas limpias desde `.novel-content` y selector deduplicado de capítulos).
+  - **ManhwaWeb** (`manhwaweb.com`) — integración por API (`api.manhwaweb.com`) con inyección automática de `Referer: https://manhwaweb.com/` para los servidores `img1mw.xyz`–`img4mw.xyz` y `uploads.manhwaweb.com`.
+- **Orquestación con Crawlee y búsqueda equitativa**: el servidor web y el adaptador de `ZonaTMO.org` y nuevas fuentes utilizan Crawlee (`CheerioCrawler` / `gotScraping`) con rotación opcional de proxies por fuente; además, la búsqueda global ahora intercala los resultados en **round-robin** entre todas las fuentes activas para que ninguna quede fuera del límite de 100 resultados.
+- **Navegación «Ver más de [Fuente · Categoría]»**: cada estante abre su catálogo completo paginado y se unificó la experiencia visual tanto en el simulador web como en Kino.
+- **Hallazgo de seguridad corregido en el proxy de imágenes (`/api/image`) y descargador binario**:
+  - *Qué ocurría*: el parámetro `url` de `/api/image` en `server.mjs` llegaba directamente a `fetch(..., { redirect: "follow" })` con solo una validación superficial de texto en el nombre de host, y el descargador binario de Crawlee seguía redirecciones sin revalidar destino. Un atacante sin autenticación podía especificar dominios externos arbitrarios, aprovechar redirecciones abiertas, usar formatos numéricos/IPv6 equivalentes o resolución DNS hacia direcciones internas (bucle local `127.0.0.1`/`::1`, redes privadas RFC 1918 o endpoints de metadatos en la nube como `169.254.169.254`).
+  - *Cómo se resolvió (`lib/image-ssrf-guard.mjs`, `server.mjs`, `lib/zo-crawlee.mjs`)*:
+    1. **Lista estricta de dominios y reconstrucción canónica**: solo se aceptan URLs `http`/`https` en puertos estándar pertenecientes a los dominios declarados en `kino-plugin.json` y CDNs verificados de las fuentes, reconstruyendo la URL saliente desde un origen canónico autorizado (sin credenciales ni hosts arbitrarios).
+    2. **Resolución DNS previa y bloqueo IPv4/IPv6**: se resuelve el dominio antes de conectar y se bloquea cualquier IP privada, de bucle local, link-local/metadatos, CGNAT, multicast, reservada, direcciones IP literales o mapeadas IPv4-en-IPv6 (`::ffff:*`, `2002:*`, etc.).
+    3. **Redirecciones controladas salto a salto**: tanto `fetch` (`redirect: "manual"`) como `gotScraping` (`followRedirect: false`) desactivan las redirecciones automáticas y vuelven a validar cada cabecera `Location` con las mismas reglas (máximo 3 saltos).
+    4. **Protección de cabeceras y contenido**: la cabecera `Referer` opcional solo se acepta para orígenes HTTPS autorizados, el parseo de rutas usa una base fija (`http://localhost`) y se rechazan respuestas HTML/JSON/XML.
+- **Actualización de entrega en Kino**: versión subida a `2.20.0` (manifiesto sin firma obsoleta para permitir actualización directa o firma limpia con `node sdk/seal.mjs --sign`).
+- **Tests**: 145 pruebas unitarias pasando (incluyendo `test/ssrf-guard.test.mjs`, `test/v222-batch1.test.mjs`, `test/v223-batch2.test.mjs` y `test/v224-batch3.test.mjs`), validación del SDK aprobada y verificación en vivo sobre el servidor.
 
 ## Novedades v2.18
 
@@ -242,6 +271,12 @@ Firma de nuevo después de cualquier cambio en `plugin.js` o en `version`: `vali
 - **MatchaNovels** (`novels.js`): API pública (`matchanovels.com/api/v1/public/novels`) por orden y estado; portadas `cover_image_url` absolutizadas.
 - **Astral** (`novels.js`): WordPress.com (público + Jetpack para imágenes): catálogo por página, detalle, capítulos por `content`. Sus imágenes **sí** exigen `Referer` del propio host (mapa `IMG_REFERER`).
 - **Anslid** (`novels.js`): Madara estándar: archivo `/novela/?m_orderby=`, búsqueda XHR `wp-manga-search-manga`, detalle con `data-src` de portada (lazy-load: nunca el placeholder `dflazy.jpg`), capítulos `/ajax/chapters/`.
+- **Olympus** (`olympusxyz.com`, `olympus.js`): API JSON (`/api/series/list`, `/api/series`, `/api/rankings`, `/api/series/{slug}`) para cómics y novelas, con medios en `media.imagesolymp.xyz`.
+- **LeerCapitulo** (`leercapitulo.co`, `leercapitulo.js`): scraping SSR del catálogo `/manga/`, búsqueda JSON `/search/?q=` y lector de capítulos.
+- **Ikigai** (`visualikigai.cmpunjabrashancard.pk`, `ikigai.js`): catálogo SSR paginado, soporte dual para cómics (`ikigaimangas.cloud`) y novelas ligeras en texto limpio.
+- **LectorFenix** (`lectorfenix.com`, `lectorfenix.js`): secciones de portada, detalle y páginas de capítulo con reintento automático en servidor ante límites temporales del CDN.
+- **MHScans** (`mhscans.com`, `mhscans.js`): catálogo `/library`, capítulos paginados `/comics/{slug}/chapters?page=&asc=1` y lector dual para cómics (`/uploads/pages/` y subdominios `*.mhscans.com` con `data-src`) y novelas (`.novel-content`).
+- **ManhwaWeb** (`manhwaweb.com`, `manhwaweb.js`): API JSON (`api.manhwaweb.com/latest/new-manhwa`, `/manhwa/nuevos`, `/manhwa/library`, `/manhwa/see/{slug}`) con cabecera `Referer: https://manhwaweb.com/` automática para `img1mw.xyz`–`img4mw.xyz` y `uploads.manhwaweb.com`.
 - **DevilNovels** (`devilnovels.js`, desde v2.12): WordPress PROPIO, no Madara: novela en la raíz (`/<slug>/`), capítulo hijo con id de post (`/<slug>/<capitulo>/<id>/`), búsqueda `/?s=`, listados `/listado-de-novelas` y `/novelas-finalizadas`, capítulos ordenados por id de post y texto del contenedor de contenido con plan B.
 
 Si un sitio cambia su interfaz, el primer lugar que hay que revisar son esas rutas y selectores.

@@ -10,6 +10,7 @@ import { kitScreenCall } from "./sdk/kit-call.mjs";
 import { normalizeNode } from "./sdk/screen.mjs";
 import { UA, SOURCES, HOME_TABS, NOVEL_SOURCES } from "./src/env.js";
 import { createZoCrawleeOrchestrator, isCrawleeManagedUrl } from "./lib/zo-crawlee.mjs";
+import { buildImageHostAllowlist, isAllowedImageContentType, validateAndBuildImageUrl, validateSafeReferer } from "./lib/image-ssrf-guard.mjs";
 import * as plugin from "./plugin.js";
 
 const zoCrawlee = createZoCrawleeOrchestrator();
@@ -30,6 +31,7 @@ if (!checkedManifest.ok) {
   throw new Error(`Invalid kino-plugin.json: ${checkedManifest.field}: ${checkedManifest.message}`);
 }
 const baseManifest = checkedManifest.manifest;
+const imageAllowlist = buildImageHostAllowlist(baseManifest.hosts || []);
 // Enable enhancements.22 progress capability in the local host runtime
 const runtimeManifest = {
   ...baseManifest,
@@ -346,16 +348,41 @@ function normalizeForHost(node, lang) {
   return out;
 }
 
-function isBlockedImageHost(hostname) {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".lan") || h.endsWith(".localhost")) return true;
-  if (h === "::1" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true;
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (m) {
-    const [a, b] = [Number(m[1]), Number(m[2])];
-    if (a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return true;
+const MAX_IMAGE_REDIRECTS = 3;
+
+async function fetchImageSafely(initialSafeUrl, headers, signal) {
+  let hopUrl = initialSafeUrl;
+  for (let hop = 0; hop <= MAX_IMAGE_REDIRECTS; hop++) {
+    const upstream = await fetch(hopUrl.href, { headers, redirect: "manual", signal });
+    if (upstream.status >= 300 && upstream.status < 400) {
+      const location = upstream.headers.get("location");
+      if (!location || hop === MAX_IMAGE_REDIRECTS) {
+        return { status: 502, ok: false, contentType: "text/plain", buf: Buffer.alloc(0) };
+      }
+      let nextCandidate;
+      try {
+        nextCandidate = new URL(location, hopUrl.href).href;
+      } catch {
+        return { status: 400, ok: false, contentType: "text/plain", buf: Buffer.alloc(0) };
+      }
+      const nextCheck = await validateAndBuildImageUrl(nextCandidate, imageAllowlist);
+      if (!nextCheck.ok) {
+        return { status: nextCheck.status, ok: false, contentType: "text/plain", buf: Buffer.alloc(0), error: nextCheck.reason };
+      }
+      hopUrl = nextCheck.safeUrl;
+      continue;
+    }
+    const contentType = upstream.headers.get("content-type") || "image/jpeg";
+    if (!upstream.ok) {
+      return { status: upstream.status, ok: false, contentType, buf: Buffer.alloc(0) };
+    }
+    if (!isAllowedImageContentType(contentType)) {
+      return { status: 415, ok: false, contentType: "text/plain", buf: Buffer.alloc(0), error: "Unsupported media type" };
+    }
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    return { status: upstream.status, ok: true, contentType, buf };
   }
-  return false;
+  return { status: 502, ok: false, contentType: "text/plain", buf: Buffer.alloc(0) };
 }
 
 function readJsonBody(req, maxBytes = 1024 * 1024) {
@@ -433,29 +460,22 @@ function setCachedImage(key, entry) {
 }
 
 async function handleImageProxy(reqUrl, res) {
-  const target = reqUrl.searchParams.get("url");
+  const rawTarget = reqUrl.searchParams.get("url");
   const refParam = reqUrl.searchParams.get("ref");
-  if (!target) {
+  if (!rawTarget) {
     res.writeHead(400);
     return res.end("Missing url");
   }
-  let parsed;
-  try {
-    parsed = new URL(target);
-  } catch {
-    res.writeHead(400);
-    return res.end("Invalid url");
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    res.writeHead(400);
-    return res.end("Unsupported protocol");
-  }
-  if (isBlockedImageHost(parsed.hostname)) {
-    res.writeHead(403);
-    return res.end("Blocked host");
+
+  const verified = await validateAndBuildImageUrl(rawTarget, imageAllowlist);
+  if (!verified.ok) {
+    res.writeHead(verified.status);
+    return res.end(verified.reason);
   }
 
-  const cacheKey = `${target}|${refParam || ""}`;
+  const safeUrl = verified.safeUrl;
+  const safeRefParam = validateSafeReferer(refParam, imageAllowlist);
+  const cacheKey = `${safeUrl.href}|${safeRefParam || ""}`;
   const cached = getCachedImage(cacheKey);
   if (cached) {
     res.writeHead(200, {
@@ -469,12 +489,12 @@ async function handleImageProxy(reqUrl, res) {
     "User-Agent": UA,
     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
   };
-  const bareHost = parsed.hostname.replace(/^www\./, "");
-  const refRule = IMG_REFERER[parsed.hostname] || IMG_REFERER[bareHost];
-  if (refParam && /^https:\/\/[^\s/?#]+/.test(refParam)) {
-    headers["Referer"] = refParam;
+  const bareHost = verified.canonicalHost.replace(/^www\./, "");
+  const refRule = IMG_REFERER[verified.canonicalHost] || IMG_REFERER[bareHost];
+  if (safeRefParam) {
+    headers["Referer"] = safeRefParam;
   } else if (refRule) {
-    headers["Referer"] = typeof refRule === "string" ? refRule : `${parsed.protocol}//${parsed.host}/`;
+    headers["Referer"] = typeof refRule === "string" ? refRule : `${verified.fixedOrigin}/`;
   }
 
   let promise = imgInflight.get(cacheKey);
@@ -483,21 +503,25 @@ async function handleImageProxy(reqUrl, res) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12000);
       try {
-        let status, ok, contentType, buf;
-        if (isCrawleeManagedUrl(target)) {
-          const zRes = await zoCrawlee.fetchBinary(target, headers, 12000);
+        let status, ok, contentType, buf, customErr;
+        if (isCrawleeManagedUrl(safeUrl.href)) {
+          const zRes = await zoCrawlee.fetchBinary(safeUrl.href, headers, 12000, { allowlist: imageAllowlist });
           status = zRes.status;
           ok = zRes.ok;
           contentType = zRes.contentType;
           buf = zRes.buf;
+          if (ok && !isAllowedImageContentType(contentType)) {
+            return { status: 415, error: "Unsupported media type" };
+          }
         } else {
-          const upstream = await fetch(target, { headers, redirect: "follow", signal: controller.signal });
-          status = upstream.status;
-          ok = upstream.ok;
-          contentType = upstream.headers.get("content-type") || "image/jpeg";
-          buf = ok ? Buffer.from(await upstream.arrayBuffer()) : Buffer.alloc(0);
+          const fRes = await fetchImageSafely(safeUrl, headers, controller.signal);
+          status = fRes.status;
+          ok = fRes.ok;
+          contentType = fRes.contentType;
+          buf = fRes.buf;
+          customErr = fRes.error;
         }
-        if (!ok) return { status, error: "Upstream error" };
+        if (!ok) return { status, error: customErr || "Upstream error" };
         if (buf.length > 10 * 1024 * 1024) return { status: 413, error: "Image too large" };
         const entry = { contentType, buf, ts: Date.now() };
         setCachedImage(cacheKey, entry);
@@ -537,7 +561,7 @@ function settingsPayload() {
 }
 
 const server = http.createServer(async (req, res) => {
-  const reqUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  const reqUrl = new URL(req.url || "/", "http://localhost");
   const pathName = reqUrl.pathname;
 
   try {
